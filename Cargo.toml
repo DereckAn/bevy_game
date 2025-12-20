@@ -5,3 +5,10 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.17.3"
+
+# Compilación rápida en desarrollo
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
