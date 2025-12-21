@@ -1,8 +1,7 @@
 mod voxel;
 
-use voxel::{Chunk, generate_mesh};
 use bevy::prelude::*;
-use bevy::prelude::{Camera3d, DirectionalLight, Mesh3d, MeshMaterial3d, StandardMaterial};
+use voxel::{Chunk, generate_mesh};
 
 fn main() {
     App::new()
@@ -11,39 +10,43 @@ fn main() {
         .run();
 }
 
-
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Chunk
-    let chunk =  Chunk::new(IVec3::ZERO);
-    let mesh = generate_mesh(&chunk);
+    // Generar varios chunks
+    for cx in -1..=1 {
+        for cz in -1..=1 {
+            let chunk = Chunk::new(IVec3::new(cx, 0, cz));
+            let mesh = generate_mesh(&chunk);
 
-    commands.spawn((
-        Mesh3d(meshes.add(mesh)),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color:Color::srgb(0.3, 0.5, 0.3),
-            ..default()
-        })),
-        Transform::default(),
-        chunk,
-        ));
+            commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.3, 0.5, 0.3),
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                chunk,
+            ));
+        }
+    }
 
     // Luz
     commands.spawn((
         DirectionalLight {
-            illuminance: 10000.0,
+            illuminance: 15000.0,
             shadows_enabled: true,
             ..default()
         },
-        Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
-        ));
+        Transform::from_xyz(4.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
 
-    // Camara
+    // Cámara
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(3.0, 3.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
-        ));
+        Transform::from_xyz(2.0, 3.0, 2.0).looking_at(Vec3::new(0.0, 1.5, 0.0), Vec3::Y),
+    ));
 }
