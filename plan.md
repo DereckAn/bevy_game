@@ -1,9 +1,9 @@
 ## Plan de Desarrollo - Fase por Fase
 
 ### Fase 1: Fundamentos (2-4 semanas)
-- [ ] Setup proyecto Bevy
-- [ ] Sistema de chunks voxel básico (32³, ~0.1m por voxel)
-- [ ] Terreno simple con Surface Nets (suave, no blocky)
+- [x] Setup proyecto Bevy
+- [x] Sistema de chunks voxel básico (32³, ~0.1m por voxel)
+- [x] Terreno simple con Surface Nets (suave, no blocky)
 - [ ] Cámara primera persona
 - [ ] Movimiento del jugador (WASD + salto)
 - [ ] Física básica con `bevy_rapier3d`
