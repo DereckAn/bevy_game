@@ -4,7 +4,7 @@
 - [x] Setup proyecto Bevy
 - [x] Sistema de chunks voxel básico (32³, ~0.1m por voxel)
 - [x] Terreno simple con Surface Nets (suave, no blocky)
-- [ ] Cámara primera persona
+- [x] Cámara primera persona
 - [ ] Movimiento del jugador (WASD + salto)
 - [ ] Física básica con `bevy_rapier3d`
 
