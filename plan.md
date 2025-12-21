@@ -44,3 +44,61 @@
 - [ ] Más tipos de zombies
 
 ---
+
+### 2. **Modularización por Feature**
+Cada feature en su carpeta:
+```
+src/
+├── main.rs
+├── voxel/        # Feature: mundo voxel
+├── player/       # Feature: jugador
+├── enemy/        # Feature: enemigos
+├── combat/       # Feature: combate
+├── networking/   # Feature: multijugador
+└── ui/           # Feature: interfaz
+```
+
+## Estructura Profesional Recomendada
+
+```
+src/
+├── main.rs                 # Solo inicializa App + plugins
+├── lib.rs                  # Exporta todo (para tests)
+├── core/                   # Recursos compartidos
+│   ├── mod.rs
+│   ├── constants.rs        # CHUNK_SIZE, VOXEL_SIZE, etc.
+│   ├── resources.rs        # GameState, Settings
+│   └── events.rs           # Eventos globales
+├── voxel/
+│   ├── mod.rs              # VoxelPlugin
+│   ├── chunk.rs            # Component + datos
+│   ├── meshing.rs          # Sistema de mesh
+│   ├── generation.rs       # Generación procedural
+│   └── destruction.rs      # Destrucción de terreno
+├── player/
+│   ├── mod.rs              # PlayerPlugin
+│   ├── components.rs       # Player, Inventory, etc.
+│   ├── movement.rs         # Sistema movimiento
+│   ├── camera.rs           # Sistema cámara FPS
+│   └── input.rs            # Manejo de input
+├── enemy/
+│   ├── mod.rs              # EnemyPlugin
+│   ├── components.rs       # Zombie, Health, AI
+│   ├── spawning.rs         # Sistema spawn
+│   ├── ai.rs               # Pathfinding, comportamiento
+│   └── combat.rs           # Ataque al jugador
+├── combat/
+│   ├── mod.rs
+│   ├── damage.rs           # Sistema de daño
+│   ├── weapons.rs          # Armas
+│   └── hitbox.rs           # Detección de colisiones
+├── networking/
+│   ├── mod.rs
+│   ├── client.rs
+│   ├── server.rs
+│   └── sync.rs             # Sincronización de entidades
+└── ui/
+    ├── mod.rs
+    ├── hud.rs              # Vida, stamina
+    └── menu.rs             # Menú principal
+```

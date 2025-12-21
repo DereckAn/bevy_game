@@ -11,6 +11,15 @@ use super::{CHUNK_SIZE, Chunk, VOXEL_SIZE};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
+enum Face {
+    Bottom,
+    Top,
+    Left,
+    Right,
+    Front,
+    Back,
+}
+
 // ============================================================================
 // FUNCIONES PÚBLICAS
 // ============================================================================
@@ -40,70 +49,51 @@ pub fn generate_mesh(chunk: &Chunk) -> Mesh {
     for x in 0..CHUNK_SIZE {
         for y in 0..CHUNK_SIZE {
             for z in 0..CHUNK_SIZE {
-                if let Some(pos) = surface_net_vertex(chunk, x, y, z) {
-                    vertex_indices[x][y][z] = positions.len() as i32;
-                    positions.push(pos);
-
-                    // Calcular normal por gradiente
-                    let normal = calculate_normal(chunk, x, y, z);
-                    normals.push(normal);
+                if chunk.get_density(x,y,z) <= 0.0 {
+                    continue; // Es aire, saltar
                 }
+
+                let base = Vec3::new(
+                    (chunk.position.x * CHUNK_SIZE as i32 + x as i32) as f32,
+                    (chunk.position.y * CHUNK_SIZE as i32 + y as i32) as f32,
+                    (chunk.position.z * CHUNK_SIZE as i32 + z as i32) as f32
+                ) * VOXEL_SIZE;
+
+                // Cara +y (arriba)
+                if y == CHUNK_SIZE - 1 || chunk.get_density(x, y + 1, z) <= 0.0 {
+                    add_face(&mut positions, &mut normals, &mut indices, base, Face::Top);
+                }
+
+                // Cada -Y (abajo)
+                if y == 0 || chunk.get_density(x, y - 1, z) <= 0.0 {
+                    add_face(&mut positions, &mut normals, &mut indices, base, Face::Bottom);
+                }   
+
+                // Cara +X
+                if x == CHUNK_SIZE - 1 || chunk.get_density(x + 1, y, z) <= 0.0 {
+                    add_face(&mut positions, &mut normals, &mut indices, base, Face::Right);
+                }
+
+                // Cara -X
+                if x == 0 || chunk.get_density(x - 1, y, z) <= 0.0 {
+                    add_face(&mut positions, &mut normals, &mut indices, base, Face::Left);
+                }   
+
+                // Cara +Z
+                if z == CHUNK_SIZE - 1 || chunk.get_density(x, y, z + 1) <= 0.0 {
+                    add_face(&mut positions, &mut normals, &mut indices, base, Face::Front);
+                }   
+
+                // Cara -Z 
+                if z == 0 || chunk.get_density(x, y, z - 1) <= 0.0 {
+                    add_face(&mut positions, &mut normals, &mut indices, base, Face::Back);
+                }   
+
+
             }
         }
     }
 
-    // Paso 2: Conectar vértices con quads
-    for x in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
-            for z in 0..CHUNK_SIZE {
-                if vertex_indices[x][y][z] < 0 {
-                    continue;
-                }
-
-                // Conectar en X
-                if x > 0 && y > 0 {
-                    try_create_quad(
-                        &vertex_indices,
-                        &mut indices,
-                        [x, y, z],
-                        [x, y - 1, z],
-                        [x - 1, y - 1, z],
-                        [x - 1, y, z],
-                        chunk.get_density(x, y, z) > 0.0,
-                    );
-                }
-
-                // Conectar en Y
-                if x > 0 && z > 0 {
-                    try_create_quad(
-                        &vertex_indices,
-                        &mut indices,
-                        [x, y, z],
-                        [x - 1, y, z],
-                        [x - 1, y, z - 1],
-                        [x, y, z - 1],
-                        chunk.get_density(x, y, z) > 0.0,
-                    );
-                }
-
-                // Conectar en Z
-                if y > 0 && z > 0 {
-                    try_create_quad(
-                        &vertex_indices,
-                        &mut indices,
-                        [x, y, z],
-                        [x, y, z - 1],
-                        [x, y - 1, z - 1],
-                        [x, y - 1, z],
-                        chunk.get_density(x, y, z) > 0.0,
-                    );
-                }
-            }
-        }
-    }
-
-
-    
     println!("Vertices: {}, Indices: {}", positions.len(), indices.len());
 
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
@@ -118,148 +108,61 @@ pub fn generate_mesh(chunk: &Chunk) -> Mesh {
 // FUNCIONES PRIVADAS
 // ============================================================================
 
-/// Calcula la posición del vértice Surface Net para una celda.
-/// 
-/// Examina los 8 corners del cubo y, si la superficie cruza la celda,
-/// calcula el punto promedio de todos los cruces en las aristas.
-/// 
-/// # Retorna
-/// - `Some([x, y, z])`: Posición del vértice en coordenadas mundiales
-/// - `None`: Si la celda está completamente dentro o fuera de la superficie
-fn surface_net_vertex(chunk: &Chunk, x: usize, y: usize, z: usize) -> Option<[f32; 3]> {
-    // Obtiene densidad de los 8 Corners de Cubo
-    // Orden: 0-3 = cara inferior, 4-7 = cara superior  
-    let corners = [
-        chunk.get_density(x, y, z),
-        chunk.get_density(x + 1, y, z),
-        chunk.get_density(x + 1, y, z + 1),
-        chunk.get_density(x, y, z + 1),
-        chunk.get_density(x, y + 1, z),
-        chunk.get_density(x + 1, y + 1, z),
-        chunk.get_density(x + 1, y + 1, z + 1),
-        chunk.get_density(x, y + 1, z + 1),
-    ];
 
-    // Contar cuántos están dentro/fuera de la superficie
-    let mut inside = 0;
-    let mut outside = 0;
-    for &c in &corners {
-        if c > 0.0 {
-            inside += 1;
-        } else {
-            outside += 1;
-        }
-    }
+fn add_face(
+    positions: &mut Vec<[f32; 3]>, 
+    normals: &mut Vec<[f32; 3]>, 
+    indices: &mut Vec<u32>, 
+    base: Vec3, 
+    face: Face,
+){
+    let s = VOXEL_SIZE;
+    let idx = positions.len() as u32;
 
-    // Si todos dentro o todos fuera, no hay superficie
-    if inside == 0 || outside == 0 {
-        return None;
-    }
+     let (verts, normal) = match face {
+        Face::Top => ([
+            [base.x, base.y + s, base.z],
+            [base.x + s, base.y + s, base.z],
+            [base.x + s, base.y + s, base.z + s],
+            [base.x, base.y + s, base.z + s],
+        ], [0.0, 1.0, 0.0]),
+        Face::Bottom => ([
+            [base.x, base.y, base.z + s],
+            [base.x + s, base.y, base.z + s],
+            [base.x + s, base.y, base.z],
+            [base.x, base.y, base.z],
+        ], [0.0, -1.0, 0.0]),
+        Face::Right => ([
+            [base.x + s, base.y, base.z],
+            [base.x + s, base.y + s, base.z],
+            [base.x + s, base.y + s, base.z + s],
+            [base.x + s, base.y, base.z + s],
+        ], [1.0, 0.0, 0.0]),
+        Face::Left => ([
+            [base.x, base.y, base.z + s],
+            [base.x, base.y + s, base.z + s],
+            [base.x, base.y + s, base.z],
+            [base.x, base.y, base.z],
+        ], [-1.0, 0.0, 0.0]),
+        Face::Front => ([
+            [base.x + s, base.y, base.z + s],
+            [base.x + s, base.y + s, base.z + s],
+            [base.x, base.y + s, base.z + s],
+            [base.x, base.y, base.z + s],
+        ], [0.0, 0.0, 1.0]),
+        Face::Back => ([
+            [base.x, base.y, base.z],
+            [base.x, base.y + s, base.z],
+            [base.x + s, base.y + s, base.z],
+            [base.x + s, base.y, base.z],
+        ], [0.0, 0.0, -1.0]),
+    };
 
-    // Calcular posición promedio de cruces en las aristas
-    let mut sum = Vec3::ZERO;
-    let mut count = 0;
+    positions.extend_from_slice(&verts);
+    normals.extend_from_slice(&[normal; 4]);
+    indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
 
-    let edges: [(usize, usize, Vec3, Vec3); 12] = [
-        (0, 1, Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)),
-        (1, 2, Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 1.0)),
-        (2, 3, Vec3::new(1.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0)),
-        (3, 0, Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 0.0)),
-        (4, 5, Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0)),
-        (5, 6, Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 1.0)),
-        (6, 7, Vec3::new(1.0, 1.0, 1.0), Vec3::new(0.0, 1.0, 1.0)),
-        (7, 4, Vec3::new(0.0, 1.0, 1.0), Vec3::new(0.0, 1.0, 0.0)),
-        (0, 4, Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)),
-        (1, 5, Vec3::new(1.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 0.0)),
-        (2, 6, Vec3::new(1.0, 0.0, 1.0), Vec3::new(1.0, 1.0, 1.0)),
-        (3, 7, Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 1.0)),
-    ];
-
-    for (i0, i1, p0, p1) in edges {
-        let d0 = corners[i0];
-        let d1 = corners[i1];
-
-        if (d0 > 0.0) != (d1 > 0.0) {
-            let t = d0 / (d0 - d1);
-            sum += p0.lerp(p1, t);
-            count += 1;
-        }
-    }
-
-    if count == 0 {
-        return None;
-    }
-
-    let local_pos = sum / count as f32;
-
-     // Agregar offset del chunk
-    let chunk_offset = Vec3::new(
-        chunk.position.x as f32 * CHUNK_SIZE as f32,
-        chunk.position.y as f32 * CHUNK_SIZE as f32,
-        chunk.position.z as f32 * CHUNK_SIZE as f32,
-    );
-
-    
-    let world_pos = (chunk_offset + Vec3::new(x as f32, y as f32, z as f32) + local_pos) * VOXEL_SIZE;
-
-    Some([world_pos.x, world_pos.y, world_pos.z])
 }
-
-/// Calcula la normal de la superficie usnado diferencias finitas del gradiente.
-/// 
-/// La normal apunta en direccion opuesta al gradiente de densidad. 
-/// (desde solido hasta aire)
-fn calculate_normal(chunk: &Chunk, x: usize, y: usize, z: usize) -> [f32; 3] {
-    let d = 1;
-
-    // Gradiente = diferencia de densidad en cada eje
-    let dx = chunk.get_density((x + d).min(CHUNK_SIZE), y, z)
-        - chunk.get_density(x.saturating_sub(d), y, z);
-    let dy = chunk.get_density(x, (y + d).min(CHUNK_SIZE), z)
-        - chunk.get_density(x, y.saturating_sub(d), z);
-    let dz = chunk.get_density(x, y, (z + d).min(CHUNK_SIZE))
-        - chunk.get_density(x, y, z.saturating_sub(d));
-
-    let normal = Vec3::new(-dx, -dy, -dz).normalize_or_zero();
-    [normal.x, normal.y, normal.z]
-}
-
-/// Intenta crear un quad (2 triangulos) entre 4 vertices.
-/// 
-/// # Parametros 
-/// - 'vertex_indices': Mapa de coordenadas a indices de vertice
-/// - 'indice': Vector de indices del mesh (se añaden aqui)
-/// - a,b,c,d: Coordenadas de lo s4 vertices del quad
-/// 'flip': Si es tru, invierte el winding order (para orientar correctamente.) 
-
-fn try_create_quad(
-    vertex_indices: &[[[i32; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
-    indices: &mut Vec<u32>,
-    a: [usize; 3],
-    b: [usize; 3],
-    c: [usize; 3],
-    d: [usize; 3],
-    flip: bool,
-) {
-    let ia = vertex_indices[a[0]][a[1]][a[2]];
-    let ib = vertex_indices[b[0]][b[1]][b[2]];
-    let ic = vertex_indices[c[0]][c[1]][c[2]];
-    let id = vertex_indices[d[0]][d[1]][d[2]];
-
-    if ia < 0 || ib < 0 || ic < 0 || id < 0 {
-        return;
-    }
-
-    if flip {
-        indices.extend_from_slice(&[ia as u32, ib as u32, ic as u32]);
-        indices.extend_from_slice(&[ia as u32, ic as u32, id as u32]);
-    } else {
-        indices.extend_from_slice(&[ia as u32, ic as u32, ib as u32]);
-        indices.extend_from_slice(&[ia as u32, id as u32, ic as u32]);
-    }
-}
-
-
 
 // ============================================================================
 // TESTS
@@ -293,18 +196,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_normal_computation() {
-        let chunk = Chunk::new(IVec3::ZERO);
-        let normal = calculate_normal(&chunk, 16, 16, 16);
-        
-        // La normal debe estar normalizada (longitud ≈ 1)
-        let length = (normal[0].powi(2) + normal[1].powi(2) + normal[2].powi(2)).sqrt();
-        assert!(
-            (length - 1.0).abs() 
-
-< 0.01 || length < 0.01,
-            "Normal should be normalized or zero"
-        );
-    }
 }

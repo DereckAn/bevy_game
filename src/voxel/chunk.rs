@@ -139,8 +139,6 @@ mod tests {
         let d1 = chunk1.get_density(CHUNK_SIZE, 0, 0);
         let d2 = chunk2.get_density(0, 0, 0);
         // Deberían ser iguales en el borde compartido
-        assert!((d1 - d2).abs() < 0.001, "Adjacent chunks should match at
-
- borders");
+        assert!((d1 - d2).abs() < 0.001, "Adjacent chunks should match at borders");
     }
 }

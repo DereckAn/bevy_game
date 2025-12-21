@@ -29,15 +29,14 @@ fn main() {
 /// - `commands`: Comandos para crear entidades y recursos en el mundo.
 /// - `meshes`: Recursos para almacenar y gestionar las mallas 3D.
 /// - `materials`: Recursos para almacenar y gestionar los materiales estándar.
-
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Generar varios chunks
-    for cx in -1..=1 {
-        for cz in -1..=1 {
+    for cx in -5..=5 {
+        for cz in -5..=5 {
             let chunk = Chunk::new(IVec3::new(cx, 0, cz));
             let mesh = generate_mesh(&chunk);
 
