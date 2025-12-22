@@ -23,7 +23,10 @@ pub struct PhysicsPlugin;                          // Estructura vacía que impl
 impl Plugin for PhysicsPlugin {                    // Plugin es un trait de Bevy que define cómo configurar sistemas
     fn build(&self, app: &mut App) {               // Función requerida que configura la aplicación
         app                                        // Encadena configuraciones en la aplicación
-            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default()) // Añade el plugin principal de física Rapier
+            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default()); // Añade el plugin principal de física Rapier
+            // Comentado el debug renderer para mejor rendimiento visual
+            // .add_plugins(RapierDebugRenderPlugin::default()); 
+            
             // Explicación de RapierPhysicsPlugin:
             // - RapierPhysicsPlugin: plugin que integra Rapier con Bevy
             // - <NoUserData>: tipo genérico que indica que no usamos datos personalizados en colisiones

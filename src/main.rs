@@ -11,6 +11,7 @@ mod core;      // Declara el módulo 'core' (busca src/core/mod.rs)
 mod voxel;     // Declara el módulo 'voxel' (busca src/voxel/mod.rs)
 mod player;    // Declara el módulo 'player' (busca src/player/mod.rs)
 mod physics;   // Declara el módulo 'physics' (busca src/physics/mod.rs)
+mod debug;     // Declara el módulo 'debug' (busca src/debug/mod.rs)
 
 // ============================================================================
 // IMPORTS (TRAER CÓDIGO DE OTROS MÓDULOS)
@@ -21,6 +22,7 @@ use core::GameSettings;                                  // Importa GameSettings
 use voxel::{Chunk, generate_mesh};                      // Importa Chunk y generate_mesh desde nuestro módulo voxel
 use player::PlayerPlugin;                               // Importa PlayerPlugin desde nuestro módulo player
 use physics::{PhysicsPlugin, create_terrain_collider, RigidBody}; // Importa componentes de física
+use debug::DebugPlugin;                                 // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -33,6 +35,7 @@ fn main() {                                             // Función principal qu
         .add_plugins(DefaultPlugins)                    // Añade plugins básicos (ventana, input, render, etc.)
         .add_plugins(PhysicsPlugin)                     // Añade nuestro plugin de física (Rapier)
         .add_plugins(PlayerPlugin)                      // Añade nuestro plugin del jugador (movimiento, cámara)
+        .add_plugins(DebugPlugin)                       // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new())           // Inserta recurso global GameSettings en el mundo
         .add_systems(Startup, setup)                    // Registra la función 'setup' para ejecutar al inicio
         .run();                                         // Inicia el loop principal del juego
