@@ -32,7 +32,7 @@ impl Plugin for PhysicsPlugin {                    // Plugin es un trait de Bevy
             // - <NoUserData>: tipo genérico que indica que no usamos datos personalizados en colisiones
             // - ::default(): usa configuración por defecto (gravedad, timestep, etc.)
             
-            .add_plugins(RapierDebugRenderPlugin::default()); // Añade plugin de debug visual
+            // .add_plugins(RapierDebugRenderPlugin::default()); // Añade plugin de debug visual
             // Explicación de RapierDebugRenderPlugin:
             // - Dibuja wireframes de colisionadores para debug
             // - Muestra líneas verdes/rojas alrededor de objetos físicos

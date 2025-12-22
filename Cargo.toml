@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.17.3"
-bevy_inspector_egui = "0.35.0"
+bevy-inspector-egui = "0.35.0"
 bevy_rapier3d = "0.32.0"
 noise = "0.9.0"
 
