@@ -3,65 +3,97 @@
 //! Este módulo inicializa la aplicación Bevy, configura los plugins necesarios 
 //! y genera la escena inicial con chunks de terreno e iluminación.
 
-mod core;
-mod voxel;
-mod player;
+// ============================================================================
+// DECLARACIÓN DE MÓDULOS
+// ============================================================================
 
-use bevy::prelude::*;
-use core::GameSettings;
-use voxel::{Chunk, generate_mesh};
-use player::PlayerPlugin;
+mod core;      // Declara el módulo 'core' (busca src/core/mod.rs)
+mod voxel;     // Declara el módulo 'voxel' (busca src/voxel/mod.rs)
+mod player;    // Declara el módulo 'player' (busca src/player/mod.rs)
+mod physics;   // Declara el módulo 'physics' (busca src/physics/mod.rs)
+
+// ============================================================================
+// IMPORTS (TRAER CÓDIGO DE OTROS MÓDULOS)
+// ============================================================================
+
+use bevy::prelude::*;                                    // Importa todo lo común de Bevy (App, Commands, etc.)
+use core::GameSettings;                                  // Importa GameSettings desde nuestro módulo core
+use voxel::{Chunk, generate_mesh};                      // Importa Chunk y generate_mesh desde nuestro módulo voxel
+use player::PlayerPlugin;                               // Importa PlayerPlugin desde nuestro módulo player
+use physics::{PhysicsPlugin, create_terrain_collider, RigidBody}; // Importa componentes de física
+
+// ============================================================================
+// FUNCIÓN PRINCIPAL
+// ============================================================================
 
 // Punto de entrada de la aplicación
 // Configura bevy con plugins por defecto, el plugin del jugador y el sistema de setup
-fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .add_plugins(PlayerPlugin)
-        .insert_resource(GameSettings::new())
-        .add_systems(Startup, setup)
-        .run();
+fn main() {                                             // Función principal que ejecuta Rust al iniciar
+    App::new()                                          // Crea una nueva aplicación de Bevy
+        .add_plugins(DefaultPlugins)                    // Añade plugins básicos (ventana, input, render, etc.)
+        .add_plugins(PhysicsPlugin)                     // Añade nuestro plugin de física (Rapier)
+        .add_plugins(PlayerPlugin)                      // Añade nuestro plugin del jugador (movimiento, cámara)
+        .insert_resource(GameSettings::new())           // Inserta recurso global GameSettings en el mundo
+        .add_systems(Startup, setup)                    // Registra la función 'setup' para ejecutar al inicio
+        .run();                                         // Inicia el loop principal del juego
 }
+
+// ============================================================================
+// SISTEMA DE INICIALIZACIÓN
+// ============================================================================
 
 /// Sistema de inicialización que genera la escena. 
 /// 
-/// Crea una grilla de 3x3 chunks centrada en el origen y añade iluminación
+/// Crea una grilla de 11x11 chunks centrada en el origen y añade iluminación
 /// 
 /// # Parámetros
 /// - `commands`: Comandos para crear entidades y recursos en el mundo.
 /// - `meshes`: Recursos para almacenar y gestionar las mallas 3D.
 /// - `materials`: Recursos para almacenar y gestionar los materiales estándar.
 fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut commands: Commands,                             // Sistema de comandos para crear/modificar entidades
+    mut meshes: ResMut<Assets<Mesh>>,                  // Recurso mutable para gestionar mallas 3D
+    mut materials: ResMut<Assets<StandardMaterial>>,    // Recurso mutable para gestionar materiales
 ) {
-    // Generar varios chunks
-    for cx in -5..=5 {
-        for cz in -5..=5 {
-            let chunk = Chunk::new(IVec3::new(cx, 0, cz));
-            let mesh = generate_mesh(&chunk);
-
-            commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgb(0.3, 0.5, 0.3),
-                    cull_mode: None,
-                    ..default()
+    // ========================================================================
+    // GENERACIÓN DE TERRENO
+    // ========================================================================
+    
+    // Generar varios chunks en una grilla de 11x11 (de -5 a +5 en X y Z)
+    for cx in -5..=5 {                                 // Loop de X: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
+        for cz in -5..=5 {                             // Loop de Z: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
+            let chunk = Chunk::new(IVec3::new(cx, 0, cz)); // Crea un nuevo chunk en posición (cx, 0, cz)
+            let mesh = generate_mesh(&chunk);           // Genera la malla 3D del chunk usando Surface Nets
+            
+            // Crear entidad del chunk con todos sus componentes
+            commands.spawn((                            // Crea una nueva entidad con los siguientes componentes:
+                Mesh3d(meshes.add(mesh.clone())),       // Componente de malla 3D (clona porque también lo usa física)
+                MeshMaterial3d(materials.add(StandardMaterial { // Componente de material 3D
+                    base_color: Color::srgb(0.3, 0.5, 0.3),     // Color verde (R=0.3, G=0.5, B=0.3)
+                    cull_mode: None,                             // No descartar caras (mostrar ambos lados)
+                    ..default()                                  // Usar valores por defecto para el resto
                 })),
-                Transform::default(),
-                chunk,
+                Transform::default(),                    // Componente de transformación (posición, rotación, escala)
+                chunk,                                   // Nuestro componente Chunk personalizado
+                // Física del terreno
+                RigidBody::Fixed,                        // Cuerpo rígido fijo (no se mueve)
+                create_terrain_collider(&mesh),          // Colisionador generado desde la malla
             ));
         }
     }
 
+    // ========================================================================
+    // ILUMINACIÓN
+    // ========================================================================
+    
     // Luz direccional (simula el sol)
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 15000.0,
-            shadows_enabled: true,
-            ..default()
+    commands.spawn((                                    // Crea entidad de luz
+        DirectionalLight {                              // Componente de luz direccional
+            illuminance: 15000.0,                       // Intensidad de la luz en lux
+            shadows_enabled: true,                      // Habilitar sombras
+            ..default()                                 // Valores por defecto para el resto
         },
-        Transform::from_xyz(4.0, 10.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(4.0, 10.0, 4.0)           // Posición de la luz en (4, 10, 4)
+            .looking_at(Vec3::ZERO, Vec3::Y),          // Apunta hacia el origen (0,0,0), con Y como "arriba"
     ));
 }

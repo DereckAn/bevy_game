@@ -6,8 +6,8 @@
 - [x] Sistema de chunks voxel básico (32³, ~0.1m por voxel)
 - [x] Terreno simple con Surface Nets (suave, no blocky)
 - [x] Cámara primera persona
-- [ ] Movimiento del jugador (WASD + salto)
-- [ ] Física básica con `bevy_rapier3d`
+- [x] Movimiento del jugador (WASD + salto)
+- [x] Física básica con `bevy_rapier3d`
 
 ### Fase 2: Combate Básico (2-3 semanas)
 
