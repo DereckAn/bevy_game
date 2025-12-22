@@ -1,31 +1,33 @@
-//! # Punto de entrada principal del vuego voxels
+//! # Punto de entrada principal del juego voxels
 //! 
-//! este modulo inicializa la aplicacion Bevy, configura los plugins necesarios 
-//! y genera la escena inicial con chunks de terreno e iluminacio 
+//! Este módulo inicializa la aplicación Bevy, configura los plugins necesarios 
+//! y genera la escena inicial con chunks de terreno e iluminación.
 
-
+mod core;
 mod voxel;
 mod player;
 
 use bevy::prelude::*;
+use core::GameSettings;
 use voxel::{Chunk, generate_mesh};
 use player::PlayerPlugin;
 
-// Punto de entrada de la aplicacion
-// Configura bevy con plugins por defecto, el plugin del jugador y el sustema de setup
+// Punto de entrada de la aplicación
+// Configura bevy con plugins por defecto, el plugin del jugador y el sistema de setup
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(PlayerPlugin)
+        .insert_resource(GameSettings::new())
         .add_systems(Startup, setup)
         .run();
 }
 
-/// Sistema de inicializacion que genera la escena. 
+/// Sistema de inicialización que genera la escena. 
 /// 
-/// Crea una grilla de 3x3 chunks centrada en el origen y a˜ãde iluminacion
+/// Crea una grilla de 3x3 chunks centrada en el origen y añade iluminación
 /// 
-/// # Parametros
+/// # Parámetros
 /// - `commands`: Comandos para crear entidades y recursos en el mundo.
 /// - `meshes`: Recursos para almacenar y gestionar las mallas 3D.
 /// - `materials`: Recursos para almacenar y gestionar los materiales estándar.
