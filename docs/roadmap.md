@@ -17,7 +17,7 @@
 **Objetivo**: Jugador puede destruir voxels y recolectar recursos
 
 #### Features Core:
-- [ ] **VoxelType System**
+- [x] **VoxelType System**
   - Tipos: Dirt, Stone, Wood, Metal
   - Propiedades: hardness, drop_rate, texture
   - Resistencia diferente por tipo

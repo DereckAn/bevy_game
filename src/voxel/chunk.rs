@@ -5,36 +5,40 @@
 
 use bevy::prelude::*;
 use noise::{NoiseFn, Perlin};
-
-// ============================================================================
-// CONSTANTES
-// ============================================================================
-// Tamaño del chunk en voxels por lado (32^3 = 32,768 voxels)
-pub const CHUNK_SIZE: usize = 32;
-// Escala de cada voxel en unidades del mundo 
-pub const VOXEL_SIZE: f32 = 0.1;
-
-// ============================================================================
-// TIPOS
-// ============================================================================
-
-// Tipo de voxel (actualmente no usado, reservado para futuro)
-#[derive(Copy, Clone, PartialEq, Default)]
-pub enum Voxel {
-    #[default]
-    Air,
-    Solid(f32), // f32 = densidad (-1.0 a 1.0)
-}
+use crate::core::constants::{CHUNK_SIZE, VOXEL_SIZE};
+use super::voxel_types::VoxelType;
 
 
-/// Representa un chunk del mundo con su campo de densidad. 
+/// Representa un chunk del mundo con su campo de densidad y tipos de voxels.
 /// 
-/// El campo de densidad tiene tamaño 'CHUNK_SIZE + 1' para permitir
-/// iterpolar correctamente en lo bordes del chunk.
+/// # Diseño de Datos
+/// 
+/// El chunk mantiene DOS arrays paralelos:
+/// 
+/// 1. **densities**: Campo de densidad para Surface Nets (terreno suave)
+///    - Tamaño: (CHUNK_SIZE + 1)³ para interpolación en bordes
+///    - Positivo = sólido, Negativo = aire
+///    - Usado por el sistema de meshing
+/// 
+/// 2. **voxel_types**: Tipo de material de cada voxel
+///    - Tamaño: CHUNK_SIZE³ (no necesita +1 porque no se interpola)
+///    - Usado para gameplay (destrucción, drops, colores)
+///    - Solo 1 byte por voxel gracias a #[repr(u8)]
+/// 
+/// # Memoria por Chunk
+/// - Densities: (33³) × 4 bytes = ~143 KB
+/// - Types: (32³) × 1 byte = ~32 KB
+/// - **Total: ~175 KB por chunk**
 #[derive(Component)]
 pub struct Chunk{
-    // Campo de densidad 3D. Poistivo = solido, Negativo = aire
+    // Campo de densidad 3D. Positivo = solido, Negativo = aire
+    // Tamaño +1 para permitir interpolación en bordes
     pub densities: [[[f32; CHUNK_SIZE + 1]; CHUNK_SIZE + 1]; CHUNK_SIZE + 1],
+    
+    // Tipo de material de cada voxel
+    // Usado para gameplay: destrucción, drops, colores
+    pub voxel_types: [[[VoxelType; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+    
     // Posicion del chunk en coordenadas de chunk (no mundo)
     pub position: IVec3
 }
@@ -58,6 +62,7 @@ impl Chunk {
         let perlin = Perlin::new(12345);
         let mut chunk = Self {
             densities: [[[0.0; CHUNK_SIZE + 1]; CHUNK_SIZE + 1]; CHUNK_SIZE + 1],
+            voxel_types: [[[VoxelType::Air; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
             position
         };
 
@@ -80,6 +85,12 @@ impl Chunk {
 
                     // Densidad positiva debajo de la superficie, negativa arriba
                     chunk.densities[x][y][z] = density as f32;
+                    
+                    // Determinar tipo de voxel basado en densidad y altura
+                    // Solo para voxels dentro del chunk (no el borde +1)
+                    if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                        chunk.voxel_types[x][y][z] = VoxelType::from_density(density as f32, world_y);
+                    }
                 }
             }
         }

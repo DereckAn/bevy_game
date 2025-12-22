@@ -6,10 +6,13 @@
 //! ## Estructura
 //! - 'chunk': Define la estructura de datos del chunk y generacion de terreno
 //! - 'meshing': Contiene las funciones para generar mallas suaves a partir de los datos de densidad
+//! - 'voxel_types': Define los tipos de materiales y sus propiedades
 
 
 pub mod chunk;
 pub mod meshing;
+pub mod voxel_types;
 
 pub use chunk::*;
 pub use meshing::*;
+pub use voxel_types::*;

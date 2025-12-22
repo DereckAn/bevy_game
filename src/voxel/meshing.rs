@@ -7,9 +7,10 @@
 //! 2. Cloca un vertice en cada celda usando interpolacion de las aristas
 //! 3. Conecta vertices adyacentes con quads para formar la supercifie
 
-use super::{CHUNK_SIZE, Chunk, VOXEL_SIZE};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use crate::voxel::chunk::{Chunk};
+use crate::core::constants::{CHUNK_SIZE, VOXEL_SIZE};
 
 enum Face {
     Bottom,
