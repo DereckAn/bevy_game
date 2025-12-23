@@ -22,7 +22,7 @@
   - Propiedades: hardness, drop_rate, texture
   - Resistencia diferente por tipo
 
-- [ ] **Herramientas Básicas**
+- [x] **Herramientas Básicas**
   - Hacha (para madera)
   - Pico (para piedra/metal)
   - Pala (para tierra)
