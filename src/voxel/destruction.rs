@@ -6,9 +6,10 @@ use super::{
     Chunk, VoxelType,
     tools::{Tool, ToolType},
 };
-use crate::{core::constants::{CHUNK_SIZE, VOXEL_SIZE}, voxel::generate_mesh};
+use crate::{core::constants::{CHUNK_SIZE, VOXEL_SIZE}, voxel::generate_mesh_with_neighbors};
 use crate::player::components::Player;
 use bevy::prelude::*;
+use bevy::ecs::system::ParamSet;
 use std::collections::HashMap;
 
 // ============================================================================
@@ -96,13 +97,17 @@ pub fn world_to_voxel(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
     )
 }
 
-/// Realiza un raycast para detectar el voxel mas cercano en la linea de vision.
+/// Realiza un raycast usando algoritmo DDA para detectar el voxel mas cercano.
+///
+/// DDA (Digital Differential Analyzer) es mucho mas eficiente que point-by-point
+/// porque camina exactamente por los voxels que toca el rayo.
 ///
 /// # Parametros
-/// origin: Punto de inicio del rayo (posicion de la camara)
-/// direction: Direccion del rayo (direccion de la camara)
-/// max distance: Distancia maxima del raycast (en metros)
-/// chunks: queary de todos los chunks en el mundo
+/// - origin: Punto de inicio del rayo (posicion de la camara)
+/// - direction: Direccion del rayo (direccion de la camara)  
+/// - max_distance: Distancia maxima del raycast (en metros)
+/// - chunk_map: Mapa de chunks disponibles
+/// - chunks: Query de todos los chunks en el mundo
 ///
 /// # Retorna
 /// Some((chunk_entity, chunk_pos, local_pos, voxel_type)) si encuentra un voxel solido
@@ -114,47 +119,122 @@ pub fn raycast_voxel(
     chunk_map: &ChunkMap,
     chunks: &Query<&Chunk>,
 ) -> Option<(Entity, IVec3, IVec3, VoxelType)> {
-    // Normalizar direccion
     let dir = direction.normalize();
-
-    // Paso del raycast (mas pequeno = mas preciso pero mas costoso)
-    let step_size = VOXEL_SIZE * 0.5;
-    let max_steps = (max_distance / step_size) as i32;
-
-    // Iterar a lo largo del rayo
-    for i in 0..max_steps {
-        let distance = i as f32 * step_size;
-        let point = origin + dir * distance;
-
-        // Convertir punto a coordenadas de voxel
-        let (chunk_pos, local_pos, _) = world_to_voxel(point);
-
+    
+    // Convertir origen a coordenadas de voxel
+    let mut voxel_pos = IVec3::new(
+        (origin.x / VOXEL_SIZE).floor() as i32,
+        (origin.y / VOXEL_SIZE).floor() as i32,
+        (origin.z / VOXEL_SIZE).floor() as i32,
+    );
+    
+    // Calcular direccion del paso (1 o -1 para cada eje)
+    let step = IVec3::new(
+        if dir.x > 0.0 { 1 } else { -1 },
+        if dir.y > 0.0 { 1 } else { -1 },
+        if dir.z > 0.0 { 1 } else { -1 },
+    );
+    
+    // Calcular distancia hasta el siguiente voxel en cada eje
+    let mut t_max = Vec3::new(
+        if dir.x != 0.0 {
+            let next_boundary = if dir.x > 0.0 {
+                (voxel_pos.x + 1) as f32 * VOXEL_SIZE
+            } else {
+                voxel_pos.x as f32 * VOXEL_SIZE
+            };
+            (next_boundary - origin.x) / dir.x
+        } else {
+            f32::INFINITY
+        },
+        if dir.y != 0.0 {
+            let next_boundary = if dir.y > 0.0 {
+                (voxel_pos.y + 1) as f32 * VOXEL_SIZE
+            } else {
+                voxel_pos.y as f32 * VOXEL_SIZE
+            };
+            (next_boundary - origin.y) / dir.y
+        } else {
+            f32::INFINITY
+        },
+        if dir.z != 0.0 {
+            let next_boundary = if dir.z > 0.0 {
+                (voxel_pos.z + 1) as f32 * VOXEL_SIZE
+            } else {
+                voxel_pos.z as f32 * VOXEL_SIZE
+            };
+            (next_boundary - origin.z) / dir.z
+        } else {
+            f32::INFINITY
+        },
+    );
+    
+    // Calcular incremento de distancia para cada eje
+    let t_delta = Vec3::new(
+        if dir.x != 0.0 { VOXEL_SIZE / dir.x.abs() } else { f32::INFINITY },
+        if dir.y != 0.0 { VOXEL_SIZE / dir.y.abs() } else { f32::INFINITY },
+        if dir.z != 0.0 { VOXEL_SIZE / dir.z.abs() } else { f32::INFINITY },
+    );
+    
+    let max_steps = (max_distance / VOXEL_SIZE) as i32 + 1;
+    
+    // Algoritmo DDA principal
+    for _ in 0..max_steps {
+        // Convertir posicion de voxel a chunk y posicion local
+        let (chunk_pos, local_pos, _) = world_to_voxel(Vec3::new(
+            voxel_pos.x as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
+            voxel_pos.y as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
+            voxel_pos.z as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
+        ));
+        
+        // Verificar si tenemos este chunk
         if let Some(&chunk_entity) = chunk_map.chunks.get(&chunk_pos) {
-            let chunk = chunks.get(chunk_entity).unwrap();
-
-            // Verificar que la posicion local este dentro del chunk
-            if local_pos.x < 0
-                || local_pos.x >= CHUNK_SIZE as i32
-                || local_pos.y < 0
-                || local_pos.y >= CHUNK_SIZE as i32
-                || local_pos.z < 0
-                || local_pos.z >= CHUNK_SIZE as i32
-            {
-                continue;
-            }
-
-            // Obtener el tipo de voxel
-            let voxel_type =
-                chunk.voxel_types[local_pos.x as usize][local_pos.y as usize][local_pos.z as usize];
-
-            // Si es solido, lo encontramos
-            if voxel_type.is_solid() {
-                return Some((chunk_entity, chunk_pos, local_pos, voxel_type));
+            if let Ok(chunk) = chunks.get(chunk_entity) {
+                // Verificar limites del chunk
+                if local_pos.x >= 0 && local_pos.x < CHUNK_SIZE as i32
+                    && local_pos.y >= 0 && local_pos.y < CHUNK_SIZE as i32
+                    && local_pos.z >= 0 && local_pos.z < CHUNK_SIZE as i32
+                {
+                    let voxel_type = chunk.voxel_types[local_pos.x as usize]
+                        [local_pos.y as usize][local_pos.z as usize];
+                    
+                    if voxel_type.is_solid() {
+                        return Some((chunk_entity, chunk_pos, local_pos, voxel_type));
+                    }
+                }
             }
         }
+        
+        // Avanzar al siguiente voxel usando DDA
+        if t_max.x < t_max.y && t_max.x < t_max.z {
+            // Avanzar en X
+            voxel_pos.x += step.x;
+            t_max.x += t_delta.x;
+        } else if t_max.y < t_max.z {
+            // Avanzar en Y
+            voxel_pos.y += step.y;
+            t_max.y += t_delta.y;
+        } else {
+            // Avanzar en Z
+            voxel_pos.z += step.z;
+            t_max.z += t_delta.z;
+        }
+        
+        // Verificar si hemos excedido la distancia maxima
+        let current_distance = (Vec3::new(
+            voxel_pos.x as f32 * VOXEL_SIZE,
+            voxel_pos.y as f32 * VOXEL_SIZE,
+            voxel_pos.z as f32 * VOXEL_SIZE,
+        ) - origin).length();
+        
+        if current_distance > max_distance {
+            break;
+        }
     }
-    None // No se encontro ningun voxel solido
+    
+    None
 }
+
 
 // ============================================================================
 // BEVY SYSTEMS
@@ -190,7 +270,7 @@ pub fn start_voxel_breaking_system(
     let ray_direction = camera_transform.forward().as_vec3();
 
     // Hacer raycast para encontrar voxel
-    let Some((chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
+    let Some((_chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
         ray_origin,
         ray_direction,
         5.0, // Maximo 5 metros de distancia
@@ -243,7 +323,7 @@ pub fn start_voxel_breaking_system(
 pub fn update_voxel_breaking_system(
     time: Res<Time>,
     mut breaking_query: Query<(Entity, &mut VoxelBreaking)>,
-    mut chunks: Query<&mut Chunk>,
+    mut chunk_queries: ParamSet<(Query<&mut Chunk>, Query<&Chunk>)>,
     chunk_map: Res<ChunkMap>,
     mut commands: Commands,
     mut player_query: Query<&mut Tool, With<Player>>,
@@ -258,7 +338,8 @@ pub fn update_voxel_breaking_system(
         if breaking.progress >= 1.0 {
             // Obtener el chunk
             if let Some(&chunk_entity) = chunk_map.chunks.get(&breaking.chunk_pos) {
-                if let Ok(mut chunk) = chunks.get_mut(chunk_entity) {
+                // Primero modificar el chunk
+                let broken_voxel_type = if let Ok(mut chunk) = chunk_queries.p0().get_mut(chunk_entity) {
                     // Romper el voxel (convertir a aire)
                     let x = breaking.local_pos.x as usize;
                     let y = breaking.local_pos.y as usize;
@@ -273,12 +354,21 @@ pub fn update_voxel_breaking_system(
                     // Tambien actualzar densidad para que el meshing funcione
                     chunk.densities[x][y][z] = -1.0;
 
-                    // Todo: Generar drops aqui
-                    // TODO: Re-mesh del chunk
-                    let new_mesh = generate_mesh(&chunk);
+                    Some(broken_voxel_type)
+                } else {
+                    None
+                };
 
-                    if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity){
-                        *mesh3d = Mesh3d(meshes.add(new_mesh));
+                // Luego regenerar el mesh (después de liberar el borrow mutable)
+                if broken_voxel_type.is_some() {
+                    let chunks_read = chunk_queries.p1();
+                    if let Ok(chunk) = chunks_read.get(chunk_entity) {
+                        // TODO: Re-mesh del chunk
+                        let new_mesh = generate_mesh_with_neighbors(&chunk, &chunk_map, &chunks_read);
+
+                        if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity){
+                            *mesh3d = Mesh3d(meshes.add(new_mesh));
+                        }
                     }
 
                     // Danar herramienta del jugador
@@ -289,10 +379,13 @@ pub fn update_voxel_breaking_system(
                             // TODO: Cambiar a manos (ToolType::None) Tambien hacer que desaparesca la heramienta
                         }
                     }
-                    info!(
-                        "voxel roto {:?} en {:?}",
-                        broken_voxel_type, breaking.local_pos
-                    );
+                    
+                    if let Some(voxel_type) = broken_voxel_type {
+                        info!(
+                            "voxel roto {:?} en {:?}",
+                            voxel_type, breaking.local_pos
+                        );
+                    }
                 }
             }
 

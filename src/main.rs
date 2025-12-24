@@ -24,8 +24,8 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    Chunk, ChunkMap, generate_mesh, start_voxel_breaking_system, update_voxel_breaking_system,
-}; // Importa Chunk y generate_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
+    Chunk, ChunkMap, generate_simple_mesh, start_voxel_breaking_system, update_voxel_breaking_system,
+}; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -92,7 +92,10 @@ fn setup(
         for cz in -5..=5 {
             // Loop de Z: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
             let chunk = Chunk::new(IVec3::new(cx, 0, cz)); // Crea un nuevo chunk en posición (cx, 0, cz)
-            let mesh = generate_mesh(&chunk); // Genera la malla 3D del chunk usando Surface Nets
+            
+            // Para la inicialización, usamos la función simple sin neighbors
+            // porque aún no tenemos todos los chunks creados
+            let mesh = generate_simple_mesh(&chunk); // Genera la malla 3D del chunk
 
             // Guarda la posicion antes de moverla.
             let chunk_position = chunk.position;
