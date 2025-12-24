@@ -54,6 +54,12 @@ pub struct VoxelDrop {
 - Cálculo de "golpe efectivo" para determinar cantidad de drops
 - Explosiones que destruyen grupos de voxels
 - Sistema de colapso de edificios (marcar voxels para eliminación en lugar de física completa)
+- **Raycast optimizado:**
+  - Fase 2 MVP: Raycast punto-por-punto (simple, funcional)
+  - Fase 2.5: Algoritmo DDA (10x más rápido, estilo Minecraft)
+  - ChunkMap con HashMap para acceso O(1) a chunks
+  - Separar raycast UI (cada frame, 2m) vs destrucción (al click, 5m)
+  - Cache de último voxel mirado para evitar re-renderizado de outline
 
 **[NEW]** [drops.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/drops.rs)
 - Pool de entidades para drops de voxels

@@ -43,9 +43,6 @@ pub fn generate_mesh(chunk: &Chunk) -> Mesh {
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    // Almacena índice del vértice generado en cada celda
-    let mut vertex_indices = [[[-1i32; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE];
-
     // Paso 1: Generar vértices en celdas que cruzan la superficie
     for x in 0..CHUNK_SIZE {
         for y in 0..CHUNK_SIZE {
@@ -108,7 +105,6 @@ pub fn generate_mesh(chunk: &Chunk) -> Mesh {
 // ============================================================================
 // FUNCIONES PRIVADAS
 // ============================================================================
-
 
 fn add_face(
     positions: &mut Vec<[f32; 3]>, 

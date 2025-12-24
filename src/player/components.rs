@@ -3,7 +3,8 @@
 // ============================================================================
 
 use bevy::prelude::*;          // Importa tipos básicos de Bevy (Component, Commands, Transform, etc.)
-use bevy_rapier3d::prelude::*; // Importa tipos de física de Rapier (RigidBody, Collider, Velocity, etc.)
+use bevy_rapier3d::prelude::*;
+use crate::voxel::{Tool, ToolType}; // Importa tipos de física de Rapier (RigidBody, Collider, Velocity, etc.)
 
 // ============================================================================
 // DEFINICIÓN DE COMPONENTES
@@ -52,6 +53,7 @@ pub fn spawn_player(mut commands: Commands) { // Recibe Commands mutable para cr
         // ====================================================================
         Player::default(),     // Nuestro componente Player con valores por defecto
         PlayerController,      // Marcador para identificar esta entidad como jugador
+        Tool::new(ToolType::Shovel), // Agregar tool al jugador
         
         // ====================================================================
         // COMPONENTES DE BEVY

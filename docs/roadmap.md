@@ -52,11 +52,17 @@
 - [ ] Chunk re-meshing incremental (solo actualizar chunk modificado)
 - [ ] Batch de cambios de voxels (aplicar cada 100ms)
 - [ ] Spatial hashing para drops
+- [ ] **Raycast optimizado con DDA** (10x más rápido que punto-por-punto)
+  - Implementar algoritmo DDA (Digital Differential Analyzer)
+  - Cache de último voxel mirado
+  - Separar raycast de UI (cada frame, 2m) vs destrucción (al click, 5m)
+- [ ] **ChunkMap con HashMap** para acceso O(1) a chunks
 
 #### Tests:
 - [ ] Benchmark: destruir 1000 voxels < 16ms
 - [ ] Test: inventario lleno (256 slots) sin lag
 - [ ] Test: 500 drops simultáneos a 60 FPS
+- [ ] Benchmark: raycast DDA < 0.1ms (vs 1ms punto-por-punto)
 
 ---
 
