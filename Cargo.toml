@@ -8,6 +8,7 @@ bevy = "0.17.3"
 bevy-inspector-egui = "0.35.0"
 bevy_rapier3d = "0.32.0"
 noise = "0.9.0"
+rand = "0.8"
 
 # Compilación rápida en desarrollo
 [profile.dev]

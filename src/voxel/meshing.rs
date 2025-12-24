@@ -172,7 +172,6 @@ pub fn generate_simple_mesh(chunk: &Chunk) -> Mesh {
 // FUNCIONES PRIVADAS
 // ============================================================================
 
-
 fn add_face(
     positions: &mut Vec<[f32; 3]>, 
     normals: &mut Vec<[f32; 3]>, 

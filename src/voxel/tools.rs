@@ -5,6 +5,7 @@
 
 use bevy::prelude::*;
 use crate::voxel::voxel_types::VoxelType;
+use rand::Rng;
 
 // ============================================================================
 // TOOL TYPE ENUM
@@ -107,6 +108,103 @@ impl ToolType{
             
             // Herramienta incorrecta
             _ => 0.3,
+        }
+    }
+
+    /// Calcula cuántos voxels se obtienen al destruir con esta herramienta
+    /// 
+    /// Retorna un rango aleatorio basado en la herramienta y tipo de voxel
+    pub fn calculate_drops(&self, voxel_type: VoxelType) -> u32 {
+        let mut rng = rand::thread_rng();
+        
+        let (min, max) = match (self, voxel_type) {
+            // Aire no da drops
+            (_, VoxelType::Air) => (0, 0),
+            
+            // Manos desnudas (muy poco eficiente)
+            (ToolType::None, VoxelType::Stone) => (0, 1),
+            (ToolType::None, VoxelType::Metal) => (0, 0),
+            (ToolType::None, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (2, 3),
+            (ToolType::None, VoxelType::Wood) => (1, 2),
+            
+            // Pala (buena para tierra/arena)
+            (ToolType::Shovel, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (8, 15),
+            (ToolType::Shovel, VoxelType::Stone) => (2, 4),
+            (ToolType::Shovel, VoxelType::Wood) => (3, 5),
+            (ToolType::Shovel, VoxelType::Metal) => (0, 1),
+            
+            // Pico (bueno para piedra/metal)
+            (ToolType::Pickaxe, VoxelType::Stone) => (8, 15),
+            (ToolType::Pickaxe, VoxelType::Metal) => (3, 8),
+            (ToolType::Pickaxe, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (5, 8),
+            (ToolType::Pickaxe, VoxelType::Wood) => (4, 6),
+            
+            // Hacha (excelente para madera)
+            (ToolType::Axe, VoxelType::Wood) => (10, 30),
+            (ToolType::Axe, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (6, 10),
+            (ToolType::Axe, VoxelType::Stone) => (3, 6),
+            (ToolType::Axe, VoxelType::Metal) => (1, 3),
+            
+            // Azada (herramienta especial, por ahora como pala)
+            (ToolType::Hoe, voxel) => {
+                // Reutilizar lógica de pala
+                return ToolType::Shovel.calculate_drops(voxel);
+            }
+        };
+        
+        if min >= max {
+            min
+        } else {
+            rng.gen_range(min..=max)
+        }
+    }
+
+    /// Obtiene el patrón de destrucción para esta herramienta
+    /// 
+    /// Retorna una lista de posiciones relativas que se destruirán
+    pub fn get_destruction_pattern(&self) -> Vec<IVec3> {
+        match self {
+            // Manos: solo 1 voxel
+            ToolType::None => vec![IVec3::ZERO],
+            
+            // Pala: cráter horizontal (excavación)
+            ToolType::Shovel => vec![
+                IVec3::new(0, 0, 0),   // Centro
+                IVec3::new(1, 0, 0),   // Derecha
+                IVec3::new(-1, 0, 0),  // Izquierda
+                IVec3::new(0, 0, 1),   // Adelante
+                IVec3::new(0, 0, -1),  // Atrás
+                IVec3::new(0, -1, 0),  // Abajo (simula excavación)
+            ],
+            
+            // Pico: cráter cónico (picotazo)
+            ToolType::Pickaxe => vec![
+                IVec3::new(0, 0, 0),   // Centro
+                IVec3::new(1, 0, 0),   // Derecha
+                IVec3::new(-1, 0, 0),  // Izquierda
+                IVec3::new(0, 1, 0),   // Arriba
+                IVec3::new(0, -1, 0),  // Abajo
+                IVec3::new(0, 0, 1),   // Adelante
+                IVec3::new(0, 0, -1),  // Atrás
+            ],
+            
+            // Hacha: cráter vertical (cortar tronco)
+            ToolType::Axe => vec![
+                IVec3::new(0, 0, 0),   // Centro
+                IVec3::new(0, 1, 0),   // Arriba
+                IVec3::new(0, -1, 0),  // Abajo
+                IVec3::new(1, 0, 0),   // Derecha
+                IVec3::new(-1, 0, 0),  // Izquierda
+                IVec3::new(0, 2, 0),   // Más arriba
+                IVec3::new(0, -2, 0),  // Más abajo
+                IVec3::new(1, 1, 0),   // Diagonal
+                IVec3::new(-1, 1, 0),  // Diagonal
+                IVec3::new(1, -1, 0),  // Diagonal
+                IVec3::new(-1, -1, 0), // Diagonal
+            ],
+            
+            // Azada: como pala por ahora
+            ToolType::Hoe => ToolType::Shovel.get_destruction_pattern(),
         }
     }
 }

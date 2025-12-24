@@ -6,10 +6,13 @@ use super::{
     Chunk, VoxelType,
     tools::{Tool, ToolType},
 };
-use crate::{core::constants::{CHUNK_SIZE, VOXEL_SIZE}, voxel::generate_mesh_with_neighbors};
 use crate::player::components::Player;
-use bevy::prelude::*;
+use crate::{
+    core::constants::{CHUNK_SIZE, VOXEL_SIZE},
+    voxel::generate_mesh_with_neighbors,
+};
 use bevy::ecs::system::ParamSet;
+use bevy::prelude::*;
 use std::collections::HashMap;
 
 // ============================================================================
@@ -64,7 +67,7 @@ pub fn calculate_break_time(voxel_type: VoxelType, tool_type: ToolType) -> f32 {
     let base_time = 1.0;
 
     if effectiveness == 0.0 || speed == 0.0 {
-        return 999.0; // Practicamente impoisble de romper 
+        return 999.0; // Practicamente impoisble de romper
     }
 
     base_time * hardness / (effectiveness * speed)
@@ -120,21 +123,21 @@ pub fn raycast_voxel(
     chunks: &Query<&Chunk>,
 ) -> Option<(Entity, IVec3, IVec3, VoxelType)> {
     let dir = direction.normalize();
-    
+
     // Convertir origen a coordenadas de voxel
     let mut voxel_pos = IVec3::new(
         (origin.x / VOXEL_SIZE).floor() as i32,
         (origin.y / VOXEL_SIZE).floor() as i32,
         (origin.z / VOXEL_SIZE).floor() as i32,
     );
-    
+
     // Calcular direccion del paso (1 o -1 para cada eje)
     let step = IVec3::new(
         if dir.x > 0.0 { 1 } else { -1 },
         if dir.y > 0.0 { 1 } else { -1 },
         if dir.z > 0.0 { 1 } else { -1 },
     );
-    
+
     // Calcular distancia hasta el siguiente voxel en cada eje
     let mut t_max = Vec3::new(
         if dir.x != 0.0 {
@@ -168,16 +171,28 @@ pub fn raycast_voxel(
             f32::INFINITY
         },
     );
-    
+
     // Calcular incremento de distancia para cada eje
     let t_delta = Vec3::new(
-        if dir.x != 0.0 { VOXEL_SIZE / dir.x.abs() } else { f32::INFINITY },
-        if dir.y != 0.0 { VOXEL_SIZE / dir.y.abs() } else { f32::INFINITY },
-        if dir.z != 0.0 { VOXEL_SIZE / dir.z.abs() } else { f32::INFINITY },
+        if dir.x != 0.0 {
+            VOXEL_SIZE / dir.x.abs()
+        } else {
+            f32::INFINITY
+        },
+        if dir.y != 0.0 {
+            VOXEL_SIZE / dir.y.abs()
+        } else {
+            f32::INFINITY
+        },
+        if dir.z != 0.0 {
+            VOXEL_SIZE / dir.z.abs()
+        } else {
+            f32::INFINITY
+        },
     );
-    
+
     let max_steps = (max_distance / VOXEL_SIZE) as i32 + 1;
-    
+
     // Algoritmo DDA principal
     for _ in 0..max_steps {
         // Convertir posicion de voxel a chunk y posicion local
@@ -186,25 +201,28 @@ pub fn raycast_voxel(
             voxel_pos.y as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
             voxel_pos.z as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
         ));
-        
+
         // Verificar si tenemos este chunk
         if let Some(&chunk_entity) = chunk_map.chunks.get(&chunk_pos) {
             if let Ok(chunk) = chunks.get(chunk_entity) {
                 // Verificar limites del chunk
-                if local_pos.x >= 0 && local_pos.x < CHUNK_SIZE as i32
-                    && local_pos.y >= 0 && local_pos.y < CHUNK_SIZE as i32
-                    && local_pos.z >= 0 && local_pos.z < CHUNK_SIZE as i32
+                if local_pos.x >= 0
+                    && local_pos.x < CHUNK_SIZE as i32
+                    && local_pos.y >= 0
+                    && local_pos.y < CHUNK_SIZE as i32
+                    && local_pos.z >= 0
+                    && local_pos.z < CHUNK_SIZE as i32
                 {
-                    let voxel_type = chunk.voxel_types[local_pos.x as usize]
-                        [local_pos.y as usize][local_pos.z as usize];
-                    
+                    let voxel_type = chunk.voxel_types[local_pos.x as usize][local_pos.y as usize]
+                        [local_pos.z as usize];
+
                     if voxel_type.is_solid() {
                         return Some((chunk_entity, chunk_pos, local_pos, voxel_type));
                     }
                 }
             }
         }
-        
+
         // Avanzar al siguiente voxel usando DDA
         if t_max.x < t_max.y && t_max.x < t_max.z {
             // Avanzar en X
@@ -219,22 +237,22 @@ pub fn raycast_voxel(
             voxel_pos.z += step.z;
             t_max.z += t_delta.z;
         }
-        
+
         // Verificar si hemos excedido la distancia maxima
         let current_distance = (Vec3::new(
             voxel_pos.x as f32 * VOXEL_SIZE,
             voxel_pos.y as f32 * VOXEL_SIZE,
             voxel_pos.z as f32 * VOXEL_SIZE,
-        ) - origin).length();
-        
+        ) - origin)
+            .length();
+
         if current_distance > max_distance {
             break;
         }
     }
-    
+
     None
 }
-
 
 // ============================================================================
 // BEVY SYSTEMS
@@ -263,14 +281,14 @@ pub fn start_voxel_breaking_system(
 
     // Obtener la camara (posicion y direccion)
     let Ok(camera_transform) = camera_query.single() else {
-        return; // No hay camara. 
+        return; // No hay camara.
     };
 
     let ray_origin = camera_transform.translation;
     let ray_direction = camera_transform.forward().as_vec3();
 
     // Hacer raycast para encontrar voxel
-    let Some((_chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
+    let Some((chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
         ray_origin,
         ray_direction,
         5.0, // Maximo 5 metros de distancia
@@ -295,7 +313,7 @@ pub fn start_voxel_breaking_system(
 
     // Verificar si ya estamos rompiendo este voxel
     let mut found_existing = false;
-    for (entity, mut breaking) in breaking_query.iter_mut() {
+    for (entity, breaking) in breaking_query.iter_mut() {
         if breaking.chunk_pos == chunk_pos && breaking.local_pos == local_pos {
             // Ya estamos rompiendo este voxel, no hacer nada
             found_existing = true;
@@ -328,7 +346,7 @@ pub fn update_voxel_breaking_system(
     mut commands: Commands,
     mut player_query: Query<&mut Tool, With<Player>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut mesh_query: Query<&mut Mesh3d>
+    mut mesh_query: Query<&mut Mesh3d>,
 ) {
     for (entity, mut breaking) in breaking_query.iter_mut() {
         // Actualizar preogreso basado en tiempo
@@ -339,52 +357,70 @@ pub fn update_voxel_breaking_system(
             // Obtener el chunk
             if let Some(&chunk_entity) = chunk_map.chunks.get(&breaking.chunk_pos) {
                 // Primero modificar el chunk
-                let broken_voxel_type = if let Ok(mut chunk) = chunk_queries.p0().get_mut(chunk_entity) {
-                    // Romper el voxel (convertir a aire)
-                    let x = breaking.local_pos.x as usize;
-                    let y = breaking.local_pos.y as usize;
-                    let z = breaking.local_pos.z as usize;
+                let broken_voxel_type = if let Ok(mut chunk) =
+                    chunk_queries.p0().get_mut(chunk_entity)
+                {
+                    // Obtener herramienta para el patron de destruccion
+                    let tool_type = player_query
+                        .single()
+                        .map(|tool| tool.tool_type)
+                        .unwrap_or(ToolType::None);
+                    let destruction_pattern = tool_type.get_destruction_pattern();
 
-                    // guarda el tipo antes de romperlo (para drops)
-                    let broken_voxel_type = chunk.voxel_types[x][y][z];
+                    // Destruir multiples voxels segun el patron
+                    let mut total_drops = 0;
+                    for offset in destruction_pattern {
+                        let target_x = (breaking.local_pos.x + offset.x) as usize;
+                        let target_y = (breaking.local_pos.y + offset.y) as usize;
+                        let target_z = (breaking.local_pos.z + offset.z) as usize;
 
-                    // Convertir a aire
-                    chunk.voxel_types[x][y][z] = VoxelType::Air;
+                        // Verificar limites del chunk
+                        if target_x < CHUNK_SIZE && target_y < CHUNK_SIZE && target_z < CHUNK_SIZE {
+                            let voxel_type = chunk.voxel_types[target_x][target_y][target_z];
 
-                    // Tambien actualzar densidad para que el meshing funcione
-                    chunk.densities[x][y][z] = -1.0;
+                            // Solo destruir si es sólido
+                            if voxel_type.is_solid() {
+                                // Convertir a aire
+                                chunk.voxel_types[target_x][target_y][target_z] = VoxelType::Air;
+                                chunk.densities[target_x][target_y][target_z] = -1.0;
 
-                    Some(broken_voxel_type)
+                                // Calcular drops para este voxel
+                                let drops = tool_type.calculate_drops(voxel_type);
+                                total_drops += drops;
+                            }
+                        }
+                    }
+                    info!("Destruido cráter con {} drops totales", total_drops);
+                    Some(VoxelType::Air) // Retorna algo para que compile
                 } else {
                     None
                 };
 
                 // Luego regenerar el mesh (después de liberar el borrow mutable)
-                if broken_voxel_type.is_some() {
+                if let Some(_) = broken_voxel_type {
+                    // Usar el query inmutable para generar el mesh
                     let chunks_read = chunk_queries.p1();
                     if let Ok(chunk) = chunks_read.get(chunk_entity) {
-                        // TODO: Re-mesh del chunk
-                        let new_mesh = generate_mesh_with_neighbors(&chunk, &chunk_map, &chunks_read);
+                        // Generar nuevo mesh con neighbors
+                        let new_mesh =
+                            generate_mesh_with_neighbors(&chunk, &chunk_map, &chunks_read);
 
-                        if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity){
+                        if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity) {
                             *mesh3d = Mesh3d(meshes.add(new_mesh));
                         }
                     }
 
                     // Danar herramienta del jugador
                     if let Ok(mut tool) = player_query.single_mut() {
-                        let broke = tool.damage(1); // 1 punto de durabilidad 
+                        let broke = tool.damage(1); // 1 punto de durabilidad
                         if broke {
                             info!("Herramienta rota");
                             // TODO: Cambiar a manos (ToolType::None) Tambien hacer que desaparesca la heramienta
                         }
                     }
-                    
+
                     if let Some(voxel_type) = broken_voxel_type {
-                        info!(
-                            "voxel roto {:?} en {:?}",
-                            voxel_type, breaking.local_pos
-                        );
+                        info!("voxel roto {:?} en {:?}", voxel_type, breaking.local_pos);
                     }
                 }
             }
