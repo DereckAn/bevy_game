@@ -14,9 +14,11 @@ pub mod meshing;
 pub mod voxel_types;
 pub mod tools;
 pub mod destruction;
+pub mod drops;
 
 pub use chunk::*;
 pub use meshing::*;
 pub use voxel_types::*;
 pub use tools::*;
 pub use destruction::*;
+pub use drops::*;

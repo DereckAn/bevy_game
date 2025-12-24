@@ -24,7 +24,7 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    Chunk, ChunkMap, generate_simple_mesh, start_voxel_breaking_system, update_voxel_breaking_system,
+    Chunk, ChunkMap, generate_simple_mesh, start_voxel_breaking_system, update_voxel_breaking_system,update_drops_system, collect_drop_system, clean_old_drops_system
 }; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
@@ -60,7 +60,10 @@ fn main() {
         .add_systems(Update, (
             start_voxel_breaking_system,
             update_voxel_breaking_system,
-        ))
+            update_drops_system,
+            collect_drop_system,
+            clean_old_drops_system,
+        ).chain())
         .run(); // Inicia el loop principal del juego
 }
 

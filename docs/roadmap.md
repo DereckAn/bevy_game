@@ -28,11 +28,16 @@
   - Pala (para tierra)
   - Sistema de durabilidad
 
-- [x] **Destrucción Inteligente** ✅
+- [x] **Destrucción Inteligente**
   - ✅ Raycast desde cámara para detectar voxel objetivo
   - ✅ Cálculo de "golpe efectivo" basado en herramienta y durabilidad
-  - Drops variables: 10-30 voxels para árboles, 1-5 para piedra
-
+  - ✅ **Destrucción por área (cráteres)**: Diferentes patrones según herramienta
+    - Manos: 1 voxel (centro)
+    - Pala: 6 voxels (cráter horizontal - excavación)
+    - Pico: 7 voxels (cráter cónico - picotazo)
+    - Hacha: 11 voxels (cráter vertical - cortar árboles)
+  - ✅ Drops variables: 0-30 voxels según herramienta y material
+`
 - [ ] **Sistema de Drops**
   - Entidades físicas que caen al suelo
   - Auto-recolección al acercarse

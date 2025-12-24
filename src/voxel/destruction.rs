@@ -14,6 +14,7 @@ use crate::{
 use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
 use std::collections::HashMap;
+use super::VoxelDrop;
 
 // ============================================================================
 // COMPONENTS
@@ -387,6 +388,21 @@ pub fn update_voxel_breaking_system(
                                 // Calcular drops para este voxel
                                 let drops = tool_type.calculate_drops(voxel_type);
                                 total_drops += drops;
+
+                                // Spawnar drops fisicos
+                                if drops > 0 {
+                                    spawn_voxel_drop(
+                                        &mut commands,
+                                        voxel_type,
+                                        drops, 
+                                        Vec3::new(
+                                            (breaking.chunk_pos.x * CHUNK_SIZE as i32 + target_x as i32) as f32 * VOXEL_SIZE,
+                                            (breaking.chunk_pos.y * CHUNK_SIZE as i32 + target_y as i32) as f32 * VOXEL_SIZE,
+                                            (breaking.chunk_pos.z * CHUNK_SIZE as i32 + target_z as i32) as f32 * VOXEL_SIZE,
+                                        ),
+                                         time.elapsed_secs(),
+                                    );
+                                }
                             }
                         }
                     }
@@ -429,4 +445,20 @@ pub fn update_voxel_breaking_system(
             commands.entity(entity).despawn();
         }
     }
+}
+
+/// Spawna un drop fisico en el mundo
+fn spawn_voxel_drop (
+    commands: &mut Commands,
+    voxel_type: VoxelType,
+    quantity: u32,
+    world_position: Vec3,
+    current_time: f32,
+) {
+    commands.spawn((
+        VoxelDrop::new(voxel_type, quantity, current_time),
+        Transform::from_translation(world_position + Vec3::new(0.0, 0.5, 0.0)),
+        GlobalTransform::default(),
+        Visibility::default()
+    ));
 }
