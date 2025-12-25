@@ -38,11 +38,61 @@
     - Hacha: 11 voxels (cráter vertical - cortar árboles)
   - ✅ Drops variables: 0-30 voxels según herramienta y material
 `
-- [ ] **Sistema de Drops**
-  - Entidades físicas que caen al suelo
-  - Auto-recolección al acercarse
-  - Despawn después de 60 segundos
-  - Pool de 500 drops máximo
+- [x] **Sistema de Drops**
+  - ✅ Entidades físicas que caen al suelo
+  - ✅ Auto-recolección al acercarse
+  - ✅ Despawn después de 60 segundos
+  - ✅ Pool de 500 drops máximo
+  - ✅ Drops visibles con mesh y física básica
+  - ✅ Impulso inicial realista (saltan del suelo)
+  - ✅ Delay de recolección (1 segundo)
+
+#### Optimizaciones de Drops (Implementar progresivamente):
+- [ ] **Fase 2A: Detección Real del Suelo**
+  - Raycast hacia abajo para encontrar superficie real
+  - Soporte para terreno con ruido/irregular
+  - Evitar drops flotantes o que traspasen
+
+- [ ] **Fase 2B: Object Pooling Básico**
+  - Pool de 1000 entidades pre-allocadas
+  - Reutilización sin malloc/free (O(1) spawn/despawn)
+  - Reducir garbage collection
+
+- [ ] **Fase 2C: Auto-merging de Drops**
+  - Combinar drops del mismo tipo cercanos (radio 1m)
+  - Reducir entidades de 500 a ~50-100
+  - Animación de merge suave
+
+- [ ] **Fase 2D: Spatial Hashing para Drops**
+  - Grid 3D para detección O(1) de recolección
+  - Solo verificar drops en celdas cercanas al jugador
+  - Optimizar de O(n) a O(1) por frame
+
+- [ ] **Fase 2E: Sistema Híbrido (Física + Visual)**
+  - Primeros 50 drops: física completa
+  - Drops 51+: animación visual simple
+  - Drops cercanos al jugador: prioridad física
+
+- [ ] **Fase 2F: Instanced Rendering**
+  - 1 draw call por tipo de drop (no 500 draw calls)
+  - GPU buffer con transforms de todos los drops
+  - Renderizar 1000+ drops sin impacto CPU
+
+- [ ] **Fase 2G: Física Custom Optimizada**
+  - Reemplazar física Bevy por sistema custom
+  - Batch processing de 1000 drops en <0.1ms
+  - Solo gravedad + rebote básico (sin rotación compleja)
+
+- [ ] **Fase 2H: Chunk-based Drop Management**
+  - Drops "duermen" en chunks no cargados
+  - Solo procesar drops en chunks activos
+  - Persistencia de drops al cambiar chunks
+
+#### Targets de Rendimiento:
+- [ ] 1000 drops simultáneos a 60 FPS
+- [ ] Recolección O(1) usando spatial hash
+- [ ] <1MB RAM para sistema de drops
+- [ ] <0.5ms CPU por frame para 1000 drops
 
 - [ ] **Inventario Básico (256 slots)**
   - Estructura de datos eficiente
@@ -62,14 +112,20 @@
 - [ ] **ChunkMap con HashMap** para acceso O(1) a chunks (✅ Ya implementado)
 - [ ] Chunk re-meshing incremental (solo actualizar chunk modificado)
 - [ ] Batch de cambios de voxels (aplicar cada 100ms)
-- [ ] Spatial hashing para drops
+- [x] **Spatial hashing para drops** (Planificado en Fase 2D)
+- [ ] **Drop Object Pooling** (Planificado en Fase 2B)
+- [ ] **Drop Instanced Rendering** (Planificado en Fase 2F)
+- [ ] **Drop Auto-merging** (Planificado en Fase 2C)
 
 #### Tests:
 - [x] Benchmark: raycast DDA < 0.1ms (vs 1ms punto-por-punto) ✅
 - [x] Face culling: ~30% reducción de caras en bordes ✅
 - [ ] Benchmark: destruir 1000 voxels < 16ms
 - [ ] Test: inventario lleno (256 slots) sin lag
-- [ ] Test: 500 drops simultáneos a 60 FPS
+- [ ] **Test: 1000 drops simultáneos a 60 FPS** (con optimizaciones)
+- [ ] **Test: Detección de suelo real en terreno irregular**
+- [ ] **Test: Auto-merge reduce drops de 500 a <100**
+- [ ] **Test: Spatial hash O(1) vs O(n) recolección**
 
 ---
 

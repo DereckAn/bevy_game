@@ -70,7 +70,7 @@ pub fn update_drops_system(
     // Aplicar gravedad a la velocidad
     drop.velocity.y -= 9.8 * time.delta_secs();
 
-    // Friccion en x y z (se van frenando)\
+    // Friccion en x y z (se van frenando)
     drop.velocity.x *= 0.98;
     drop.velocity.z *= 0.98;
 
