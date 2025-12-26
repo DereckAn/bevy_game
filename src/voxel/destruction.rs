@@ -24,7 +24,7 @@ use super::VoxelDrop;
 #[derive(Component, Debug)]
 pub struct VoxelBreaking {
     // Posicion del chunk que contiene el voxel.
-    pub chunk_pos: IVec3,
+    pub chunk_pos: IVec2,
 
     // Posicion local del voxel dnetro del chunk (0-31).]
     pub local_pos: IVec3,
@@ -38,7 +38,7 @@ pub struct VoxelBreaking {
 
 #[derive(Resource)]
 pub struct ChunkMap {
-    pub chunks: HashMap<IVec3, Entity>,
+    pub chunks: HashMap<IVec2, Entity>,
 }
 
 // ============================================================================
@@ -78,7 +78,7 @@ pub fn calculate_break_time(voxel_type: VoxelType, tool_type: ToolType) -> f32 {
 ///
 /// # Retorna
 /// (chunk_pos, local_pos, vloxel_pos_in_chunk)
-pub fn world_to_voxel(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
+pub fn world_to_voxel(world_pos: Vec3) -> (IVec2, IVec3, IVec3) {
     // Convertir a coordenadas de voxel
     let voxel_x = (world_pos.x / VOXEL_SIZE).floor() as i32;
     let voxel_y = (world_pos.y / VOXEL_SIZE).floor() as i32;
@@ -86,7 +86,7 @@ pub fn world_to_voxel(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
 
     // Calcular la posicion del chunk
     let chunk_x = voxel_x.div_euclid(CHUNK_SIZE as i32);
-    let chunk_y = voxel_y.div_euclid(CHUNK_SIZE as i32);
+    let _chunk_y = voxel_y.div_euclid(CHUNK_SIZE as i32); // Unused in columnar chunks
     let chunk_z = voxel_z.div_euclid(CHUNK_SIZE as i32);
 
     // Calcular la posicion local del voxel dentro del chunk
@@ -95,7 +95,7 @@ pub fn world_to_voxel(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
     let local_z = voxel_z.rem_euclid(CHUNK_SIZE as i32);
 
     (
-        IVec3::new(chunk_x, chunk_y, chunk_z),
+        IVec2::new(chunk_x, chunk_z),
         IVec3::new(local_x, local_y, local_z),
         IVec3::new(voxel_x, voxel_y, voxel_z),
     )
@@ -122,7 +122,7 @@ pub fn raycast_voxel(
     max_distance: f32,
     chunk_map: &ChunkMap,
     chunks: &Query<&Chunk>,
-) -> Option<(Entity, IVec3, IVec3, VoxelType)> {
+) -> Option<(Entity, IVec2, IVec3, VoxelType)> {
     let dir = direction.normalize();
 
     // Convertir origen a coordenadas de voxel
@@ -289,7 +289,7 @@ pub fn start_voxel_breaking_system(
     let ray_direction = camera_transform.forward().as_vec3();
 
     // Hacer raycast para encontrar voxel
-    let Some((chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
+    let Some((_chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
         ray_origin,
         ray_direction,
         5.0, // Maximo 5 metros de distancia
@@ -400,8 +400,8 @@ pub fn update_voxel_breaking_system(
                                         drops, 
                                         Vec3::new(
                                             (breaking.chunk_pos.x * CHUNK_SIZE as i32 + target_x as i32) as f32 * VOXEL_SIZE,
-                                            (breaking.chunk_pos.y * CHUNK_SIZE as i32 + target_y as i32) as f32 * VOXEL_SIZE,
-                                            (breaking.chunk_pos.z * CHUNK_SIZE as i32 + target_z as i32) as f32 * VOXEL_SIZE,
+                                            target_y as f32 * VOXEL_SIZE, // Y is absolute within the world column
+                                            (breaking.chunk_pos.y * CHUNK_SIZE as i32 + target_z as i32) as f32 * VOXEL_SIZE,
                                         ),
                                         time.elapsed_secs(),
                                     );

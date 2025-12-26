@@ -94,7 +94,7 @@ fn setup(
         // Loop de X: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
         for cz in -5..=5 {
             // Loop de Z: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
-            let chunk = Chunk::new(IVec3::new(cx, 0, cz)); // Crea un nuevo chunk en posición (cx, 0, cz)
+            let chunk = Chunk::new(IVec2::new(cx, cz)); // Crea un nuevo chunk en posición (cx, 0, cz)
             
             // Para la inicialización, usamos la función simple sin neighbors
             // porque aún no tenemos todos los chunks creados

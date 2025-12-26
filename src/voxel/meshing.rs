@@ -9,6 +9,7 @@
 
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use crate::core::WORLD_HEIGHT;
 use crate::voxel::ChunkMap;
 use crate::voxel::chunk::{Chunk};
 use crate::core::constants::{CHUNK_SIZE, VOXEL_SIZE};
@@ -47,7 +48,7 @@ pub fn generate_mesh_with_neighbors(chunk: &Chunk, chunk_map: &ChunkMap, chunks:
 
     // Paso 1: Generar vertices con face culling inteligente
     for x in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
+        for y in 0..WORLD_HEIGHT {
             for z in 0..CHUNK_SIZE {
                 if chunk.get_density(x,y,z) <= 0.0 {
                     continue; // Es aire, saltar
@@ -55,8 +56,8 @@ pub fn generate_mesh_with_neighbors(chunk: &Chunk, chunk_map: &ChunkMap, chunks:
 
                 let base = Vec3::new(
                     (chunk.position.x * CHUNK_SIZE as i32 + x as i32) as f32,
-                    (chunk.position.y * CHUNK_SIZE as i32 + y as i32) as f32,
-                    (chunk.position.z * CHUNK_SIZE as i32 + z as i32) as f32
+                    y as f32,
+                    (chunk.position.y * CHUNK_SIZE as i32 + z as i32) as f32
                 ) * VOXEL_SIZE;
 
                 // Verificar cada cada con neighbors
@@ -113,7 +114,7 @@ pub fn generate_simple_mesh(chunk: &Chunk) -> Mesh {
 
     // Paso 1: Generar vértices en celdas que cruzan la superficie
     for x in 0..CHUNK_SIZE {
-        for y in 0..CHUNK_SIZE {
+        for y in 0..WORLD_HEIGHT {
             for z in 0..CHUNK_SIZE {
                 if chunk.get_density(x,y,z) <= 0.0 {
                     continue; // Es aire, saltar
@@ -121,14 +122,14 @@ pub fn generate_simple_mesh(chunk: &Chunk) -> Mesh {
 
                 let base = Vec3::new(
                     (chunk.position.x * CHUNK_SIZE as i32 + x as i32) as f32,
-                    (chunk.position.y * CHUNK_SIZE as i32 + y as i32) as f32,
-                    (chunk.position.z * CHUNK_SIZE as i32 + z as i32) as f32
+                    y as f32,
+                    (chunk.position.y * CHUNK_SIZE as i32 + z as i32) as f32
                 ) * VOXEL_SIZE;
 
                 // Face culling simple - solo dentro del mismo chunk
                 
                 // Cara +y (arriba)
-                if y == CHUNK_SIZE - 1 || chunk.get_density(x, y + 1, z) <= 0.0 {
+                if y == WORLD_HEIGHT - 1 || chunk.get_density(x, y + 1, z) <= 0.0 {
                     add_face(&mut positions, &mut normals, &mut indices, base, Face::Top);
                 }
 
@@ -245,27 +246,35 @@ fn should_render_face(
 
     // Si el vecino esta dentro del mismo chunk
     if neighbor_x >= 0 && neighbor_x < CHUNK_SIZE as i32
-    && neighbor_y >= 0 && neighbor_y < CHUNK_SIZE as i32
+    && neighbor_y >= 0 && neighbor_y < WORLD_HEIGHT as i32
     && neighbor_z >= 0 && neighbor_z < CHUNK_SIZE as i32
     {
         // Verificar densidad del vecino en el mismo chunk
         return chunk.get_density(neighbor_x as usize, neighbor_y as usize, neighbor_z as usize) <= 0.0;
     }
 
+    // Para chunks columnares, solo buscar vecinos en x,z
+    // Si Y esta fuera de rango, es aire (arriba) o solido (abajo del mundo)
+    if neighbor_y < 0 {
+        return false; // Debajo del mundo = solido, renderizar cara
+    }
+
+    if neighbor_y >= WORLD_HEIGHT as i32 {
+        return true; // Arriba del mundo = aire, renderizar cara
+    }
+
     // El vecino esta en otro chunk - calcular que chunk y posicion local
     let chunk_offset_x = if neighbor_x < 0 { -1 } else if neighbor_x >= CHUNK_SIZE as i32 { 1 } else { 0 };
-    let chunk_offset_y = if neighbor_y < 0 { -1 } else if neighbor_y >= CHUNK_SIZE as i32 { 1 } else { 0 };
     let chunk_offset_z = if neighbor_z < 0 { -1 } else if neighbor_z >= CHUNK_SIZE as i32 { 1 } else { 0 };
 
-    let neighbor_chunk_pos = IVec3::new(
+    let neighbor_chunk_pos = IVec2::new(
         chunk.position.x + chunk_offset_x,
-        chunk.position.y + chunk_offset_y,
-        chunk.position.z + chunk_offset_z,
+        chunk.position.y + chunk_offset_z, // Position.y es realmente z
     );
 
     // Calcular posicion local en el chunk vecino
     let local_x = neighbor_x.rem_euclid(CHUNK_SIZE as i32) as usize;
-    let local_y = neighbor_y.rem_euclid(CHUNK_SIZE as i32) as usize;
+    let local_y = neighbor_y as usize; // Y es absoluto en chunks columnares
     let local_z = neighbor_z.rem_euclid(CHUNK_SIZE as i32) as usize;
 
     // Buscar el chunk vecino 
@@ -291,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_should_render_face_same_chunk() {
-        let chunk = Chunk::new(IVec3::ZERO);
+        let chunk = Chunk::new(IVec2::ZERO);
         let chunk_map = ChunkMap { chunks: HashMap::new() };
         
         // Mock query - para tests simplificados
@@ -309,7 +318,7 @@ mod tests {
     #[test]
     fn test_face_culling_logic() {
         // Test de la lógica de face culling
-        let chunk = Chunk::new(IVec3::ZERO);
+        let chunk = Chunk::new(IVec2::ZERO);
         
         // Verificar que la función get_density funciona
         let density = chunk.get_density(0, 0, 0);

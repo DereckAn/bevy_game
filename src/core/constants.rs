@@ -1,7 +1,8 @@
 // Constantes globales del juego
 
 // Voxel system
-pub const CHUNK_SIZE: usize = 32;
+pub const CHUNK_SIZE: usize = 128;
+pub const WORLD_HEIGHT: usize = 512; // Altura total del mundo
 pub const VOXEL_SIZE: f32 = 0.1;
 
 // Physics
