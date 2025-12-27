@@ -2,9 +2,10 @@
 //! Chunks base de 32³ que se combinan segun LOD
 
 use bevy::prelude::*;
+ use noise::{NoiseFn, Perlin};
 use std::time::Instant;
 use std::collections::HashMap;
-use crate::core::BASE_CHUNK_SIZE;
+use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::{ChunkLOD, VoxelType};
 
 
@@ -59,11 +60,44 @@ pub struct SplitTask {
 impl BaseChunk {
     /// Crea un nuevo chunk base con heap allocation
     pub fn new(position: IVec3) -> Self {
-        Self {
+       let mut chunk = Self {
             densities: Box::new([[[0.0; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]),
             voxel_types: Box::new([[[VoxelType::Air; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]),
             position,
             last_accessed: Instant::now(),
+        };
+
+        // Generar terreno usando noise
+        chunk.generate_terrain();
+        chunk
+    }
+
+    /// Genera terreno procedural usando perlin noise
+    /// TODO: Cambiarlo para que tenga mas montanas, rios, y mas cosas parecidas a minecraft con mods
+    pub fn generate_terrain(&mut self) {
+        let perlin = Perlin::new(12345);
+
+        for x in 0..=BASE_CHUNK_SIZE {
+            for y in 0..=BASE_CHUNK_SIZE {
+                for z in 0..=BASE_CHUNK_SIZE {
+                    // Convertir a coordenadas mundales
+                    let world_x = (self.position.x * BASE_CHUNK_SIZE as i32 + x as i32) as f64 * VOXEL_SIZE as f64;
+                    let world_y = (self.position.y * BASE_CHUNK_SIZE as i32 + y as i32) as f64 * VOXEL_SIZE as f64;
+                    let world_z = (self.position.z * BASE_CHUNK_SIZE as i32 + z as i32) as f64 * VOXEL_SIZE as f64;
+
+                    // Generar altura usando noise
+                    let height = 1.5 + perlin.get([world_x * 0.2, world_z * 0.2]) * 0.5;
+                    let density = height - world_y;
+
+                    self.densities[x][y][z] = density as f32;
+
+                    // Determina tipo de voxel (solo par avoxels dentro del chunk)
+                    if x < BASE_CHUNK_SIZE && y < BASE_CHUNK_SIZE && z < BASE_CHUNK_SIZE {
+                        self.voxel_types[x][y][z] = VoxelType::from_density(density as f32, world_y);
+                    }
+
+                }
+            }
         }
     }
 

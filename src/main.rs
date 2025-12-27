@@ -27,7 +27,9 @@ use voxel::{
     Chunk, ChunkMap, generate_simple_mesh, start_voxel_breaking_system, update_voxel_breaking_system,
     update_drops_system, collect_drop_system, clean_old_drops_system,
     DynamicChunkSystem, update_chunk_lod_system, ChunkLOD 
-}; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
+};
+
+use crate::voxel::BaseChunk; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -98,7 +100,15 @@ fn setup(
         // Loop de X: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
         for cz in -5..=5 {
             // Loop de Z: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
-            let chunk = Chunk::new(IVec3::new(cx, 0, cz)); // Crea un nuevo chunk en posición (cx, 0, cz)
+
+            // Usar BaseChunk
+            let base_chunk = BaseChunk::new(IVec3::new(cx,0,cz));
+
+            let chunk = Chunk {
+            densities: base_chunk.densities.clone(),
+            voxel_types: base_chunk.voxel_types.clone(),
+            position: base_chunk.position,
+            };
             
             // Para la inicialización, usamos la función simple sin neighbors
             // porque aún no tenemos todos los chunks creados
@@ -119,6 +129,7 @@ fn setup(
                 })),
                 Transform::default(), // Componente de transformación (posición, rotación, escala)
                 chunk,                // Nuestro componente Chunk personalizado
+                ChunkLOD::Ultra,
                 // Física del terreno
                 RigidBody::Fixed,               // Cuerpo rígido fijo (no se mueve)
                 create_terrain_collider(&mesh), // Colisionador generado desde la malla

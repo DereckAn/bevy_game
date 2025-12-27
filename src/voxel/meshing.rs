@@ -160,6 +160,8 @@ pub fn generate_simple_mesh(chunk: &Chunk) -> Mesh {
         }
     }
 
+    println!("Chunk {:?} - Vertices: {}, Indices: {}", chunk.position, positions.len(), indices.len());
+
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
