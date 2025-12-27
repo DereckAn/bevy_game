@@ -25,8 +25,7 @@ use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa com
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
     Chunk, ChunkMap, generate_simple_mesh, start_voxel_breaking_system, update_voxel_breaking_system,
-    update_drops_system, collect_drop_system, clean_old_drops_system,
-    DynamicChunkSystem, update_chunk_lod_system, ChunkLOD 
+    DynamicChunkSystem, update_chunk_lod_system, ChunkLOD,
 };
 
 use crate::voxel::BaseChunk; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
@@ -64,10 +63,7 @@ fn main() {
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
         .add_systems(Update, (
             start_voxel_breaking_system,
-            update_voxel_breaking_system,
-            update_drops_system,
-            collect_drop_system,
-            clean_old_drops_system,
+            update_voxel_breaking_system,        
             update_chunk_lod_system
         ).chain())
         .run(); // Inicia el loop principal del juego

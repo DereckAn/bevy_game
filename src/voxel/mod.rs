@@ -14,7 +14,6 @@ pub mod meshing;
 pub mod voxel_types;
 pub mod tools;
 pub mod destruction;
-pub mod drops;
 pub mod lod_system;
 pub mod dynamic_chunks;
 
@@ -23,6 +22,5 @@ pub use meshing::*;
 pub use voxel_types::*;
 pub use tools::*;
 pub use destruction::*;
-pub use drops::*;
 pub use lod_system::*;
 pub use dynamic_chunks::*;

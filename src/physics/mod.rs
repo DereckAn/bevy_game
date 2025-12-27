@@ -1,41 +1,45 @@
-// ============================================================================
-// DECLARACIÓN DE MÓDULOS
-// ============================================================================
+//! Módulo de física 
+//! 
+//! Sistema de física usando Rapier para colisiones realistas de terreno y drops de voxels.
+//! Optimizado para multijugador con física determinística.
 
-pub mod components;                                // Declara el submódulo components (src/physics/components.rs)
+pub mod components;
+pub mod rapier_integration;
 
-// ============================================================================
-// IMPORTS - TRAER CÓDIGO DE OTRAS LIBRERÍAS
-// ============================================================================
+use bevy::prelude::*;
+use bevy_rapier3d::prelude::*;
 
-use bevy::prelude::*;                              // Tipos básicos de Bevy (App, Plugin)
-use bevy_rapier3d::prelude::*;                     // Plugins de física de Rapier
-pub use components::*;                             // Re-exporta todo desde components para facilitar el uso
+// Re-exportar componentes de Rapier que usamos
+pub use bevy_rapier3d::prelude::{RigidBody, Collider, Velocity, Restitution, Friction};
 
-// ============================================================================
-// PLUGIN DE FÍSICA
-// ============================================================================
+// Re-exportar nuestras funciones personalizadas
+pub use rapier_integration::{
+    RapierVoxelDrop, 
+    spawn_rapier_voxel_drop, 
+    collect_rapier_drops_system,
+    update_rapier_drops_system,
+    create_chunk_collider
+};
 
-/// Plugin que configura el sistema de física del juego usando Rapier3D
-pub struct PhysicsPlugin;                          // Estructura vacía que implementa Plugin
+/// Plugin de física que configura Rapier para el juego de voxels
+pub struct PhysicsPlugin;
 
-/// Implementación del trait Plugin para PhysicsPlugin
-impl Plugin for PhysicsPlugin {                    // Plugin es un trait de Bevy que define cómo configurar sistemas
-    fn build(&self, app: &mut App) {               // Función requerida que configura la aplicación
-        app                                        // Encadena configuraciones en la aplicación
-            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default()); // Añade el plugin principal de física Rapier
-            // Comentado el debug renderer para mejor rendimiento visual
-            // .add_plugins(RapierDebugRenderPlugin::default()); 
+impl Plugin for PhysicsPlugin {
+    fn build(&self, app: &mut App) {
+        app
+            // Agregar Rapier plugin con configuración básica
+            .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+            // .add_plugins(RapierDebugRenderPlugin::default()) // Para debug visual
             
-            // Explicación de RapierPhysicsPlugin:
-            // - RapierPhysicsPlugin: plugin que integra Rapier con Bevy
-            // - <NoUserData>: tipo genérico que indica que no usamos datos personalizados en colisiones
-            // - ::default(): usa configuración por defecto (gravedad, timestep, etc.)
-            
-            // .add_plugins(RapierDebugRenderPlugin::default()); // Añade plugin de debug visual
-            // Explicación de RapierDebugRenderPlugin:
-            // - Dibuja wireframes de colisionadores para debug
-            // - Muestra líneas verdes/rojas alrededor de objetos físicos
-            // - Útil para desarrollo, se puede quitar en producción
+            // Agregar sistemas de drops
+            .add_systems(Update, (
+                update_rapier_drops_system,
+                collect_rapier_drops_system,
+            ));
     }
+}
+
+/// Función helper para crear collider de terreno (mantener compatibilidad)
+pub fn create_terrain_collider(mesh: &Mesh) -> Collider {
+    create_chunk_collider(mesh)
 }

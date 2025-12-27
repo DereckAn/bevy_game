@@ -76,6 +76,9 @@ pub struct VoxelProperties {
     
     /// Nombre legible del material
     pub name: &'static str,
+
+    /// Densidad del voxel
+    pub density: f32,
 }
 
 // ============================================================================
@@ -99,6 +102,7 @@ impl VoxelType {
                 is_solid: false,
                 drops_self: false,
                 name: "Air",
+                density: 0.0,
             },
             
             VoxelType::Dirt => VoxelProperties {
@@ -107,6 +111,7 @@ impl VoxelType {
                 is_solid: true,
                 drops_self: true,
                 name: "Dirt",
+                density: 1.0,
             },
             
             VoxelType::Stone => VoxelProperties {
@@ -115,6 +120,7 @@ impl VoxelType {
                 is_solid: true,
                 drops_self: true,
                 name: "Stone",
+                density: 2.5, 
             },
             
             VoxelType::Wood => VoxelProperties {
@@ -123,6 +129,7 @@ impl VoxelType {
                 is_solid: true,
                 drops_self: true,
                 name: "Wood",
+                density: 1.5,
             },
             
             VoxelType::Metal => VoxelProperties {
@@ -131,6 +138,7 @@ impl VoxelType {
                 is_solid: true,
                 drops_self: true,
                 name: "Metal",
+                density: 4.0,
             },
             
             VoxelType::Grass => VoxelProperties {
@@ -139,6 +147,7 @@ impl VoxelType {
                 is_solid: true,
                 drops_self: false, // Dropea tierra en su lugar
                 name: "Grass",
+                density: 0.5,
             },
             
             VoxelType::Sand => VoxelProperties {
@@ -147,6 +156,7 @@ impl VoxelType {
                 is_solid: true,
                 drops_self: true,
                 name: "Sand",
+                density: 1.0,
             },
         }
     }

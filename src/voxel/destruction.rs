@@ -6,7 +6,7 @@ use super::{
     Chunk, VoxelType,
     tools::{Tool, ToolType},
 };
-use crate::player::components::Player;
+use crate::{physics::spawn_rapier_voxel_drop, player::components::Player};
 use crate::{
     core::constants::{CHUNK_SIZE, VOXEL_SIZE},
     voxel::generate_mesh_with_neighbors,
@@ -14,7 +14,6 @@ use crate::{
 use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
 use std::collections::HashMap;
-use super::VoxelDrop;
 
 // ============================================================================
 // COMPONENTS
@@ -390,9 +389,9 @@ pub fn update_voxel_breaking_system(
                                 let drops = tool_type.calculate_drops(voxel_type);
                                 total_drops += drops;
 
-                                // Spawnar drops fisicos
+                                // Spawnar drops fisicos usando Rapier
                                 if drops > 0 {
-                                    spawn_voxel_drop(
+                                    spawn_rapier_voxel_drop(
                                         &mut commands,
                                         &mut meshes,
                                         &mut materials,
@@ -448,37 +447,4 @@ pub fn update_voxel_breaking_system(
             commands.entity(entity).despawn();
         }
     }
-}
-
-/// Spawna un drop fisico en el mundo
-fn spawn_voxel_drop (
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    voxel_type: VoxelType,
-    quantity: u32,
-    world_position: Vec3,
-    current_time: f32,
-) {
-    // Crear mesh de cubo pequeno
-    let cube_mesh = meshes.add(Cuboid::new(0.2, 0.2, 0.2));
-
-    // Color basado en el tipo de voxel
-    let color = voxel_type.properties().color;
-    let material = materials.add(StandardMaterial {
-        base_color: color,
-        metallic: 0.1,
-        perceptual_roughness: 0.0,
-        ..default()
-    });
-
-    commands.spawn((
-        VoxelDrop::new(voxel_type, quantity, current_time),
-        Mesh3d(cube_mesh),
-        MeshMaterial3d(material),
-        Transform::from_translation(world_position + Vec3::new(0.0, 1.0, 0.0))
-        .with_scale(Vec3::splat(0.8)),
-        GlobalTransform::default(),
-        Visibility::default()
-    ));
 }
