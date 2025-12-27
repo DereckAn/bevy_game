@@ -1,12 +1,12 @@
 //! Sistema de drops de voxels
 //!
 //! Maneja los items fisicos que aparecen cuando se destruyen voxels.
+//! Incluye detección real de suelo usando raycast hacia el terreno.
 
 use crate::player::components::Player;
-
-use super::VoxelType;
+use super::{VoxelType, Chunk, ChunkMap, world_to_voxel};
 use bevy::prelude::*;
-use rand::Rng;
+use crate::core::constants::{CHUNK_SIZE, VOXEL_SIZE};
 
 /// Componente que representa un drop fisico en el mundo.
 ///
@@ -58,10 +58,60 @@ impl VoxelDrop {
     }
 }
 
+/// Encuentra la altura real del suelo usando raycast hacia abajo
+/// 
+/// Inspirado en "Lay of the Land" - usa el sistema de chunks para encontrar
+/// la superficie real del terreno y evitar que los drops traspasen.
+fn find_ground_height(
+    position: Vec3,
+    chunk_map: &ChunkMap,
+    chunks: &Query<&Chunk>,
+) -> f32 {
+    let mut test_y = position.y;
+    let step = 0.1; // Paso de búsqueda hacia abajo
+
+    // Raycast hacia abajo hasta encontrar suelo sólido
+    while test_y > -10.0 { // Buscar hasta 10 metros hacia abajo
+        let test_pos = Vec3::new(position.x, test_y, position.z);
+        let (chunk_pos, local_pos, _) = world_to_voxel(test_pos);
+
+        // Verificar si hay chunk válido
+        if let Some(&chunk_entity) = chunk_map.chunks.get(&chunk_pos) {
+            if let Ok(chunk) = chunks.get(chunk_entity) {
+                // Verificar límites del chunk
+                if local_pos.x >= 0 && local_pos.x < CHUNK_SIZE as i32 &&
+                   local_pos.y >= 0 && local_pos.y < CHUNK_SIZE as i32 && 
+                   local_pos.z >= 0 && local_pos.z < CHUNK_SIZE as i32 {
+
+                    // Verificar si es voxel sólido usando densidad
+                    let density = chunk.get_density(
+                        local_pos.x as usize,
+                        local_pos.y as usize,
+                        local_pos.z as usize
+                    );
+                    
+                    if density > 0.0 {
+                        // Encontramos suelo sólido
+                        return test_y + VOXEL_SIZE * 0.5; // Superficie del voxel
+                    }
+                }
+            }
+        }
+        test_y -= step; // Continuar hacia abajo
+    }
+    
+    // Fallback si no encuentra suelo
+    0.5
+}
+
 /// Sistema que maneja la fisica de los drops (gravedad y velocidad)
+/// 
+/// Actualizado para usar detección real de suelo en lugar de altura fija.
 pub fn update_drops_system(
     time: Res<Time>,
     mut drop_query: Query<(&mut Transform, &mut VoxelDrop)>,
+    chunk_map: Res<ChunkMap>,
+    chunks: Query<&Chunk>,
 ) {
    for (mut transform, mut drop) in drop_query.iter_mut() {
     // Aplicar velocidad
@@ -74,13 +124,16 @@ pub fn update_drops_system(
     drop.velocity.x *= 0.98;
     drop.velocity.z *= 0.98;
 
-    // Rebote en el suelo
-    if transform.translation.y < 2.0 {
-        transform.translation.y = 2.0;
-        drop.velocity.y = drop.velocity.y.abs() * 0.3; // Rebote con perdida de energia
+    // Detección real del suelo usando raycast
+    let ground_height = find_ground_height(transform.translation, &chunk_map, &chunks);
+
+    // Rebote en el suelo real
+    if transform.translation.y <= ground_height {
+        transform.translation.y = ground_height;
+        drop.velocity.y = drop.velocity.y.abs() * 0.3; // Rebote con pérdida de energía
     }
 
-    // Despues de 1 segundo, permitir recoleccion
+    // Después de 1 segundo, permitir recolección
     let current_time = time.elapsed_secs();
     if current_time - drop.spawn_time > 1.0 {
         drop.can_collect = true;

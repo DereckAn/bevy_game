@@ -1,8 +1,8 @@
-# Arquitectura Técnica - Voxel Extraction Shooter
+# Arquitectura Técnica - Voxel Extraction Shooter Multijugador
 
 ## 🏗️ Visión General
 
-Este documento describe la arquitectura técnica del juego, incluyendo sistemas ECS, flujo de datos, y decisiones técnicas clave.
+Este documento describe la arquitectura técnica del juego de extracción voxel multijugador, incluyendo sistemas ECS, flujo de datos, arquitectura de mundos múltiples, y decisiones técnicas clave para soportar mundos de misión procedurales, bases subterráneas persistentes, y edificios de hasta 20 pisos.
 
 ---
 
@@ -10,7 +10,7 @@ Este documento describe la arquitectura técnica del juego, incluyendo sistemas 
 
 ```mermaid
 graph TB
-    subgraph "Client"
+    subgraph "Client Layer"
         Input[Input System]
         Player[Player System]
         Camera[Camera System]
@@ -19,8 +19,29 @@ graph TB
         UI[UI System]
     end
     
+    subgraph "World Management"
+        WM[World Manager]
+        WS[World Streaming]
+        TS[Teleport System]
+        MM[Memory Manager]
+    end
+    
+    subgraph "Mission Worlds"
+        MW1[Mission World 1]
+        MW2[Mission World 2]
+        MW3[Mission World N...]
+        MWG[Mission World Generator]
+    end
+    
+    subgraph "Underground Bases"
+        UB1[Player Base 1]
+        UB2[Player Base 2]
+        UB3[Player Base N...]
+        BIS[Base Invasion System]
+    end
+    
     subgraph "Core Game Systems"
-        Voxel[Voxel System]
+        Voxel[Voxel System 2048H]
         Combat[Combat System]
         Enemy[Enemy System]
         Inventory[Inventory System]
@@ -28,16 +49,17 @@ graph TB
         Progression[Progression System]
     end
     
-    subgraph "World"
-        WorldGen[World Generation]
-        Weather[Weather System]
-        Physics[Physics System]
+    subgraph "Voxel Rendering (Optimized)"
+        GM[Greedy Meshing]
+        DC[Dual Contouring]
+        CS[Chunk Streaming]
+        LOD[LOD System]
     end
     
-    subgraph "Network"
+    subgraph "Network Layer"
         NetClient[Network Client]
         NetServer[Network Server]
-        Sync[Sync System]
+        Sync[Multi-World Sync]
     end
     
     Input --> Player
@@ -51,25 +73,53 @@ graph TB
     Inventory --> Crafting
     Crafting --> Progression
     
-    Voxel --> WorldGen
-    Voxel --> Physics
+    WM --> WS
+    WM --> TS
+    WM --> MM
+    WS --> MW1
+    WS --> MW2
+    WS --> MW3
+    WS --> UB1
+    WS --> UB2
+    WS --> UB3
     
-    Enemy --> Physics
+    MWG --> MW1
+    MWG --> MW2
+    MWG --> MW3
     
-    Weather --> WorldGen
+    BIS --> UB1
+    BIS --> UB2
+    BIS --> UB3
+    
+    Voxel --> GM
+    Voxel --> DC
+    Voxel --> CS
+    Voxel --> LOD
+    
+    MW1 --> Voxel
+    MW2 --> Voxel
+    MW3 --> Voxel
+    UB1 --> Voxel
+    UB2 --> Voxel
+    UB3 --> Voxel
+    
+    Enemy --> Voxel
     
     NetClient --> Sync
     NetServer --> Sync
     Sync --> Voxel
     Sync --> Enemy
     Sync --> Player
+    Sync --> WM
     
-    Render --> Voxel
+    Render --> GM
+    Render --> DC
     Render --> Enemy
     Render --> Player
     
     UI --> Inventory
     UI --> Progression
+    UI --> WM
 ```
 
 ---
@@ -134,24 +184,43 @@ struct WeakPoints {
 }
 ```
 
-#### 3. Voxel Chunk Entity
+#### 3. Voxel Chunk Entity (Updated for 2048 Height)
 ```rust
 #[derive(Component)]
 struct VoxelChunk {
     position: IVec3, // Posición del chunk en grid
-    voxels: [VoxelType; CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE],
+    voxels: Box<[VoxelType; CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE]>, // Heap allocation
     dirty: bool, // Necesita re-meshing
+    lod_level: ChunkLOD, // Level of detail para chunks distantes
+    world_id: WorldId, // ID del mundo al que pertenece
 }
 
 #[derive(Component)]
 struct ChunkMesh {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
+    triangle_count: usize, // Para métricas de greedy meshing
 }
 
 #[derive(Component)]
 struct ChunkCollider {
     collider_handle: ColliderHandle,
+}
+
+// Nuevo: LOD system para chunks verticales
+pub enum ChunkLOD {
+    Full,    // 0-100m: Full 2048 height
+    Half,    // 100-200m: 1024 height
+    Quarter, // 200-400m: 512 height
+    Minimal, // 400m+: 256 height
+}
+
+// Nuevo: Identificación de mundos
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorldId {
+    MissionWorld(u64), // Seed-based ID
+    UndergroundBase(PlayerId),
+    Overworld,
 }
 ```
 
@@ -170,12 +239,59 @@ struct Velocity {
 }
 ```
 
-#### 5. Drop Entity
+#### 5. Drop Entity (Updated for Multi-World)
 ```rust
 #[derive(Component)]
 struct VoxelDrop {
     item_stack: ItemStack,
     lifetime: f32, // Despawn después de 60s
+    world_id: WorldId, // Mundo donde existe el drop
+    ground_position: Vec3, // Posición en el suelo (dual contouring compatible)
+}
+```
+
+#### 6. World Entity (New)
+```rust
+#[derive(Component)]
+struct World {
+    world_id: WorldId,
+    world_type: WorldType,
+    loaded_chunks: HashSet<IVec3>,
+    active_players: HashSet<PlayerId>,
+    last_accessed: Instant,
+    memory_usage: usize,
+}
+
+pub enum WorldType {
+    MissionWorld {
+        biome: BiomeType,
+        missions: Vec<Mission>,
+        extraction_point: Vec3,
+        seed: u64,
+    },
+    UndergroundBase {
+        owner: PlayerId,
+        facilities: Vec<BaseFacility>,
+        invasion_status: InvasionStatus,
+    },
+    Overworld {
+        regions: HashMap<RegionId, OverworldRegion>,
+    },
+}
+
+#[derive(Component)]
+struct TeleportPoint {
+    world_id: WorldId,
+    position: Vec3,
+    teleport_type: TeleportType,
+    requirements: Vec<TeleportRequirement>,
+}
+
+pub enum TeleportType {
+    MissionToBase,
+    BaseToMission,
+    Emergency, // Durante invasiones
+    Overworld,
 }
 ```
 
@@ -183,7 +299,7 @@ struct VoxelDrop {
 
 ## 🔄 Flujo de Datos
 
-### 1. Destrucción de Voxel
+### 1. Destrucción de Voxel Multi-Mundo
 
 ```mermaid
 sequenceDiagram
@@ -191,22 +307,25 @@ sequenceDiagram
     participant I as Input System
     participant R as Raycast System
     participant V as Voxel System
-    participant M as Meshing System
+    participant GM as Greedy Meshing
     participant D as Drop System
+    participant WM as World Manager
     participant Inv as Inventory System
     
     P->>I: Click (attack)
     I->>R: Raycast from camera
-    R->>V: Hit voxel at position
+    R->>V: Hit voxel at position in current world
     V->>V: Check tool effectiveness
     V->>V: Calculate drops (10-30 voxels)
-    V->>V: Remove voxels
-    V->>M: Mark chunk as dirty
-    V->>D: Spawn drop entities
-    M->>M: Re-mesh chunk
+    V->>V: Remove voxels from chunk
+    V->>GM: Mark chunk as dirty for greedy meshing
+    V->>D: Spawn drop entities in current world
+    GM->>GM: Re-mesh chunk with greedy algorithm (70% triangle reduction)
     P->>D: Approach drop
     D->>Inv: Add items to inventory
     D->>D: Despawn drop entity
+    
+    Note over WM: Drops persist in original world during teleportation
 ```
 
 ### 2. Combat con Enemigo
@@ -234,84 +353,206 @@ sequenceDiagram
     end
 ```
 
-### 3. Sincronización Multiplayer
+### 3. Teleportación Entre Mundos
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant TP as Teleport System
+    participant WS as World Streaming
+    participant WM as World Manager
+    participant MM as Memory Manager
+    participant NS as Network Sync
+    
+    P->>TP: Request teleportation to base
+    TP->>TP: Validate requirements (missions complete?)
+    TP->>WS: Request target world load
+    WS->>MM: Check memory budget
+    MM->>MM: Free LRU worlds if needed
+    WS->>WM: Load target world
+    WM->>WM: Generate/load world data
+    WS->>TP: World ready
+    TP->>P: Remove from current world
+    TP->>P: Add to target world at position
+    TP->>NS: Sync teleportation with other players
+    
+    Note over MM: Inactive worlds compressed to save memory
+    Note over NS: Other players see teleportation effect
+```
+
+### 4. Sincronización Multiplayer Multi-Mundo
 
 ```mermaid
 sequenceDiagram
     participant C1 as Client 1
     participant S as Server
     participant C2 as Client 2
+    participant WM as World Manager
     
-    C1->>S: PlayerInput (movement, attack)
-    S->>S: Validate input
-    S->>S: Update player state
+    C1->>S: PlayerInput (movement, attack) + WorldId
+    S->>S: Validate input for specific world
+    S->>WM: Update player state in world
     S->>C1: PlayerState (authoritative)
-    S->>C2: PlayerState (other player)
     
-    C1->>S: VoxelDestruction (position, tool)
-    S->>S: Validate destruction
-    S->>S: Update voxel data
-    S->>C1: VoxelUpdate (delta)
-    S->>C2: VoxelUpdate (delta)
+    Note over S: Only sync to players in same world
+    alt Players in same world
+        S->>C2: PlayerState (other player)
+    else Players in different worlds
+        S->>S: No sync needed
+    end
     
-    Note over C1,C2: Client-side prediction
-    C1->>C1: Predict movement
-    C1->>C1: Predict voxel destruction
-    S->>C1: Correction (if needed)
-    C1->>C1: Rollback + replay
+    C1->>S: VoxelDestruction (position, tool, world_id)
+    S->>S: Validate destruction in specific world
+    S->>WM: Update voxel data in world
+    S->>C1: VoxelUpdate (delta, world_id)
+    
+    Note over S: Sync voxel changes to all players in world
+    loop For each player in world
+        S->>C2: VoxelUpdate (delta, world_id)
+    end
+    
+    C1->>S: TeleportRequest (target_world_id)
+    S->>WM: Validate and execute teleportation
+    S->>C1: TeleportComplete (new_world_id, position)
+    S->>C2: PlayerLeft (world_id) or PlayerJoined (world_id)
 ```
 
 ---
 
 ## 🗂️ Estructura de Datos
 
-### Voxel Chunk Storage
+### Voxel Chunk Storage (Updated for 2048 Height)
 
 ```rust
-// Opción 1: Array flat (más rápido)
+// Opción 1: Array flat con heap allocation (previene stack overflow)
 pub struct VoxelChunk {
-    voxels: [VoxelType; 32 * 32 * 32], // 32,768 voxels
+    voxels: Box<[VoxelType; CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE]>, // 128×2048×128 = ~33M voxels
+    world_id: WorldId,
+    lod_level: ChunkLOD,
 }
 
 impl VoxelChunk {
     fn get_voxel(&self, x: u32, y: u32, z: u32) -> VoxelType {
-        let index = x + y * 32 + z * 32 * 32;
+        let index = x + y * CHUNK_SIZE as u32 + z * CHUNK_SIZE as u32 * WORLD_HEIGHT as u32;
         self.voxels[index as usize]
+    }
+    
+    // Nuevo: Crear chunk con LOD específico
+    fn new_with_lod(world_id: WorldId, lod: ChunkLOD) -> Self {
+        let effective_height = match lod {
+            ChunkLOD::Full => WORLD_HEIGHT,
+            ChunkLOD::Half => WORLD_HEIGHT / 2,
+            ChunkLOD::Quarter => WORLD_HEIGHT / 4,
+            ChunkLOD::Minimal => WORLD_HEIGHT / 8,
+        };
+        
+        // Allocate on heap to prevent stack overflow
+        let mut voxels = vec![VoxelType::Air; CHUNK_SIZE * effective_height * CHUNK_SIZE];
+        let boxed_voxels = voxels.into_boxed_slice();
+        
+        Self {
+            voxels: unsafe { 
+                Box::from_raw(Box::into_raw(boxed_voxels) as *mut [VoxelType; CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE])
+            },
+            world_id,
+            lod_level: lod,
+        }
     }
 }
 
-// Opción 2: Sparse storage (para chunks vacíos)
+// Opción 2: Sparse storage para chunks mayormente vacíos (bases subterráneas)
 pub struct SparseVoxelChunk {
     default: VoxelType, // Air
     voxels: HashMap<IVec3, VoxelType>, // Solo voxels no-air
+    world_id: WorldId,
 }
 ```
 
-### Spatial Hashing para Entidades
+### Spatial Hashing para Entidades Multi-Mundo
 
 ```rust
 pub struct SpatialHash {
     cell_size: f32, // 10m por celda
-    cells: HashMap<IVec3, Vec<Entity>>,
+    cells_by_world: HashMap<WorldId, HashMap<IVec3, Vec<Entity>>>,
 }
 
 impl SpatialHash {
-    pub fn insert(&mut self, entity: Entity, position: Vec3) {
+    pub fn insert(&mut self, entity: Entity, position: Vec3, world_id: WorldId) {
         let cell = self.get_cell(position);
-        self.cells.entry(cell).or_default().push(entity);
+        self.cells_by_world
+            .entry(world_id)
+            .or_default()
+            .entry(cell)
+            .or_default()
+            .push(entity);
     }
     
-    pub fn query_radius(&self, position: Vec3, radius: f32) -> Vec<Entity> {
-        // Retorna entidades en celdas cercanas
+    pub fn query_radius(&self, position: Vec3, radius: f32, world_id: WorldId) -> Vec<Entity> {
+        // Retorna entidades en celdas cercanas del mundo específico
+        if let Some(world_cells) = self.cells_by_world.get(&world_id) {
+            // Query logic for specific world
+        } else {
+            Vec::new()
+        }
+    }
+    
+    pub fn clear_world(&mut self, world_id: WorldId) {
+        self.cells_by_world.remove(&world_id);
     }
 }
 ```
 
-### Inventory Storage
+### World Management Storage
+
+```rust
+pub struct WorldManager {
+    active_worlds: HashMap<WorldId, LoadedWorld>,
+    loading_worlds: HashMap<WorldId, LoadingTask>,
+    compressed_worlds: HashMap<WorldId, CompressedWorldData>,
+    memory_budget: usize, // 4GB total
+    current_memory_usage: usize,
+}
+
+pub struct LoadedWorld {
+    world_data: WorldData,
+    chunks: HashMap<IVec3, VoxelChunk>,
+    entities: Vec<Entity>,
+    last_accessed: Instant,
+    memory_usage: usize,
+}
+
+pub struct CompressedWorldData {
+    compressed_chunks: Vec<u8>, // LZ4 compressed
+    entity_data: Vec<u8>,
+    metadata: WorldMetadata,
+    compression_ratio: f32,
+}
+
+// Mission World specific data
+pub struct MissionWorldData {
+    biome: BiomeType,
+    seed: u64,
+    missions: Vec<Mission>,
+    extraction_point: Vec3,
+    completed_missions: HashSet<MissionId>,
+}
+
+// Underground Base specific data
+pub struct UndergroundBaseData {
+    owner: PlayerId,
+    facilities: Vec<BaseFacility>,
+    modifications: HashMap<IVec3, VoxelType>, // Player-made changes
+    invasion_status: InvasionStatus,
+    last_invasion: Option<Instant>,
+}
+```
+
+### Inventory Storage (Updated)
 
 ```rust
 pub struct Inventory {
     slots: [Option<ItemStack>; 256],
+    world_id: Option<WorldId>, // Track which world inventory belongs to
 }
 
 #[derive(Clone)]
@@ -326,6 +567,15 @@ pub enum ItemType {
     Tool { tool_type: ToolType, durability: u32 },
     Weapon { weapon_type: WeaponType, ammo: u32 },
     Ammo(AmmoType),
+    BaseResource(BaseResourceType), // New: Resources specific to bases
+}
+
+// New: Base-specific resources
+pub enum BaseResourceType {
+    Seeds(CropType),
+    TradingToken,
+    DefenseBlueprint,
+    FacilityUpgrade,
 }
 ```
 
@@ -333,115 +583,190 @@ pub enum ItemType {
 
 ## ⚡ Sistemas de Optimización
 
-### 1. Chunk LOD (Level of Detail)
+### 1. Greedy Meshing Algorithm (New)
+
+```rust
+pub struct GreedyMesher {
+    chunk_data: &[VoxelType],
+    dimensions: IVec3,
+}
+
+impl GreedyMesher {
+    pub fn generate_mesh(&self) -> OptimizedChunkMesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let original_triangle_count = self.calculate_naive_triangles();
+        
+        // Process each axis (X, Y, Z) for greedy meshing
+        for axis in 0..3 {
+            self.generate_axis_quads(axis, &mut vertices, &mut indices);
+        }
+        
+        let optimized_triangle_count = indices.len() / 3;
+        let reduction_percentage = 
+            ((original_triangle_count - optimized_triangle_count) as f32 / original_triangle_count as f32) * 100.0;
+        
+        OptimizedChunkMesh {
+            vertices,
+            indices,
+            triangle_reduction: reduction_percentage,
+        }
+    }
+    
+    fn generate_axis_quads(&self, axis: usize, vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
+        let u = (axis + 1) % 3;
+        let v = (axis + 2) % 3;
+        
+        // Sweep through each slice
+        for d in 0..self.dimensions[axis] {
+            // Generate mask for this slice
+            let mask = self.generate_slice_mask(axis, d);
+            
+            // Greedy meshing on the mask - find largest rectangles
+            self.mesh_slice_greedy(&mask, axis, d, vertices, indices);
+        }
+    }
+}
+
+pub struct OptimizedChunkMesh {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub triangle_reduction: f32, // Percentage reduction achieved
+}
+```
+
+### 2. Dual Contouring for Smooth Terrain (New)
+
+```rust
+pub struct DualContouringMesher {
+    density_field: Box<[f32; 129 * 129 * 129]>, // One extra for gradients
+}
+
+impl DualContouringMesher {
+    pub fn generate_terrain_mesh(&self) -> TerrainMesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        
+        // Process each voxel cell
+        for z in 0..128 {
+            for y in 0..128 {
+                for x in 0..128 {
+                    if self.has_sign_change(x, y, z) {
+                        let vertex = self.compute_vertex_position(x, y, z);
+                        vertices.push(vertex);
+                    }
+                }
+            }
+        }
+        
+        // Generate triangles using dual contouring
+        self.generate_triangles(&vertices, &mut indices);
+        
+        TerrainMesh { vertices, indices }
+    }
+    
+    fn compute_vertex_position(&self, x: usize, y: usize, z: usize) -> Vec3 {
+        // QEF (Quadratic Error Function) to find optimal vertex position
+        let gradients = self.compute_gradients(x, y, z);
+        let intersections = self.find_edge_intersections(x, y, z);
+        
+        // Solve QEF to minimize error
+        self.solve_qef(&gradients, &intersections)
+    }
+    
+    fn solve_qef(&self, gradients: &[Vec3], intersections: &[Vec3]) -> Vec3 {
+        // Minimize sum of squared distances to planes defined by gradients
+        // This creates smooth surfaces while preserving sharp features
+        // Implementation uses SVD or normal equations
+    }
+}
+```
+
+### 3. World Streaming System (New)
+
+```rust
+pub struct WorldStreamingSystem {
+    active_worlds: HashMap<WorldId, LoadedWorld>,
+    loading_worlds: HashMap<WorldId, LoadingTask>,
+    memory_budget: usize, // 4GB total
+    current_memory_usage: usize,
+}
+
+impl WorldStreamingSystem {
+    pub fn request_world_load(&mut self, world_id: WorldId, priority: LoadPriority) {
+        if self.active_worlds.contains_key(&world_id) {
+            // Already loaded, update access time
+            self.active_worlds.get_mut(&world_id).unwrap().last_accessed = Instant::now();
+            return;
+        }
+        
+        // Check memory budget
+        if self.current_memory_usage + self.estimate_world_size(&world_id) > self.memory_budget {
+            self.free_least_recently_used_worlds();
+        }
+        
+        // Start async loading
+        let task = LoadingTask::new(world_id, priority);
+        self.loading_worlds.insert(world_id, task);
+    }
+    
+    fn free_least_recently_used_worlds(&mut self) {
+        let mut worlds_by_access: Vec<_> = self.active_worlds.iter()
+            .map(|(id, world)| (*id, world.last_accessed))
+            .collect();
+        
+        worlds_by_access.sort_by_key(|(_, access_time)| *access_time);
+        
+        // Free oldest worlds until we have enough memory
+        for (world_id, _) in worlds_by_access {
+            if self.current_memory_usage + self.estimate_world_size(&world_id) <= self.memory_budget {
+                break;
+            }
+            
+            // Don't unload worlds with active players
+            if self.world_has_active_players(world_id) {
+                continue;
+            }
+            
+            self.compress_and_unload_world(world_id);
+        }
+    }
+}
+```
+
+### 4. Chunk LOD System (Updated for 2048 Height)
 
 ```rust
 pub enum ChunkLOD {
-    High,   // 0-50m: Full detail (32³ voxels)
-    Medium, // 50-100m: Half detail (16³ voxels)
-    Low,    // 100-200m: Quarter detail (8³ voxels)
-    None,   // >200m: No render
+    Full,    // 0-100m: Full 2048 height
+    Half,    // 100-200m: 1024 height
+    Quarter, // 200-400m: 512 height
+    Minimal, // 400m+: 256 height
 }
 
-fn update_chunk_lod(
-    mut chunks: Query<(&Transform, &mut ChunkLOD)>,
-    player: Query<&Transform, With<Player>>,
+fn update_chunk_lod_multi_world(
+    mut chunks: Query<(&Transform, &mut ChunkLOD, &WorldId)>,
+    players: Query<(&Transform, &CurrentWorld), With<Player>>,
 ) {
-    let player_pos = player.single().translation;
-    
-    for (chunk_transform, mut lod) in chunks.iter_mut() {
-        let distance = chunk_transform.translation.distance(player_pos);
+    for (player_transform, current_world) in players.iter() {
+        let player_pos = player_transform.translation;
         
-        *lod = match distance {
-            d if d < 50.0 => ChunkLOD::High,
-            d if d < 100.0 => ChunkLOD::Medium,
-            d if d < 200.0 => ChunkLOD::Low,
-            _ => ChunkLOD::None,
-        };
-    }
-}
-```
-
-### 2. Frustum Culling
-
-```rust
-fn frustum_culling(
-    mut chunks: Query<(&Transform, &mut Visibility), With<VoxelChunk>>,
-    camera: Query<(&Camera, &GlobalTransform)>,
-) {
-    let (camera, camera_transform) = camera.single();
-    let frustum = camera.frustum(camera_transform);
-    
-    for (chunk_transform, mut visibility) in chunks.iter_mut() {
-        let chunk_aabb = compute_chunk_aabb(chunk_transform);
-        
-        if frustum.intersects_aabb(&chunk_aabb) {
-            *visibility = Visibility::Visible;
-        } else {
-            *visibility = Visibility::Hidden;
+        // Only update LOD for chunks in player's current world
+        for (chunk_transform, mut lod, chunk_world_id) in chunks.iter_mut() {
+            if chunk_world_id != &current_world.0 {
+                continue; // Skip chunks in other worlds
+            }
+            
+            let distance = chunk_transform.translation.distance(player_pos);
+            
+            *lod = match distance {
+                d if d < 100.0 => ChunkLOD::Full,
+                d if d < 200.0 => ChunkLOD::Half,
+                d if d < 400.0 => ChunkLOD::Quarter,
+                _ => ChunkLOD::Minimal,
+            };
         }
     }
-}
-```
-
-### 3. Object Pooling
-
-```rust
-pub struct ProjectilePool {
-    inactive: Vec<Entity>,
-    active: HashSet<Entity>,
-}
-
-impl ProjectilePool {
-    pub fn spawn(&mut self, commands: &mut Commands) -> Entity {
-        if let Some(entity) = self.inactive.pop() {
-            // Reutilizar entidad existente
-            self.active.insert(entity);
-            entity
-        } else {
-            // Crear nueva entidad
-            let entity = commands.spawn(ProjectileBundle::default()).id();
-            self.active.insert(entity);
-            entity
-        }
-    }
-    
-    pub fn despawn(&mut self, entity: Entity) {
-        self.active.remove(&entity);
-        self.inactive.push(entity);
-    }
-}
-```
-
-### 4. Temporal Load Balancing
-
-```rust
-// Distribuir AI updates en múltiples frames
-pub struct AIScheduler {
-    enemies: Vec<Entity>,
-    current_index: usize,
-    enemies_per_frame: usize, // 50 enemigos por frame
-}
-
-fn update_ai_scheduled(
-    mut scheduler: ResMut<AIScheduler>,
-    mut enemies: Query<(&Transform, &mut AIState), With<Enemy>>,
-) {
-    let start = scheduler.current_index;
-    let end = (start + scheduler.enemies_per_frame).min(scheduler.enemies.len());
-    
-    for i in start..end {
-        let entity = scheduler.enemies[i];
-        if let Ok((transform, mut ai_state)) = enemies.get_mut(entity) {
-            update_single_ai(transform, &mut ai_state);
-        }
-    }
-    
-    scheduler.current_index = if end >= scheduler.enemies.len() {
-        0 // Reiniciar
-    } else {
-        end
-    };
 }
 ```
 
