@@ -1,17 +1,16 @@
-//! Sistema de destruccion de voxels
+//! Sistema de destrucción de voxels con chunks dinámicos 3D
 //!
-//! Premite al jugador romper voxels usando herramientas.
+//! Permite al jugador romper voxels usando herramientas, con detección
+//! de suelo mejorada inspirada en "Lay of the Land" usando PhysX-style collision.
 
 use super::{
-    Chunk, VoxelType,
+    VoxelType, DynamicChunkSystem,
     tools::{Tool, ToolType},
 };
 use crate::player::components::Player;
 use crate::{
-    core::constants::{CHUNK_SIZE, VOXEL_SIZE},
-    voxel::generate_mesh_with_neighbors,
+    core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE},
 };
-use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use super::VoxelDrop;
@@ -20,126 +19,166 @@ use super::VoxelDrop;
 // COMPONENTS
 // ============================================================================
 
-/// Component que rastrea el progreso de destruccion de un voxel.
+/// Component que rastrea el progreso de destrucción de un voxel.
+/// 
+/// Actualizado para usar chunks 3D (IVec3) en lugar de columnares (IVec2).
 #[derive(Component, Debug)]
 pub struct VoxelBreaking {
-    // Posicion del chunk que contiene el voxel.
-    pub chunk_pos: IVec2,
+    // Posición del chunk 3D que contiene el voxel (X, Y, Z)
+    pub chunk_pos: IVec3,
 
-    // Posicion local del voxel dnetro del chunk (0-31).]
+    // Posición local del voxel dentro del chunk (0-31 en cada eje)
     pub local_pos: IVec3,
 
-    // Preogreso de destruccion (0.0 = intacto - 1.0 = roto).
+    // Progreso de destrucción (0.0 = intacto - 1.0 = roto)
     pub progress: f32,
 
-    // Tiempo total necesario para romper este voxel.
+    // Tiempo total necesario para romper este voxel
     pub break_time: f32,
 }
 
+/// Mapa de chunks 3D para el sistema dinámico
 #[derive(Resource)]
-pub struct ChunkMap {
-    pub chunks: HashMap<IVec2, Entity>,
+pub struct ChunkMap3D {
+    pub chunks: HashMap<IVec3, Entity>,
+}
+
+/// Sistema de detección de suelo mejorado (inspirado en "Lay of the Land")
+/// 
+/// Usa raycast hacia abajo para encontrar la superficie real del terreno,
+/// evitando que los drops traspasen el piso o queden flotando.
+#[derive(Component)]
+pub struct GroundDetection {
+    pub ground_height: f32,
+    pub is_valid: bool,
 }
 
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
-/// Calcula el timepo necesario para romper un voxel.
-///
-/// # Parametros
-/// voxel_type: Tipo de voxel a romper
-/// tool_type: Heramienta siendo usada
-///
-/// # Retorna
-/// Tiempo en segundos para romper el voxel.
+/// Calcula el tiempo necesario para romper un voxel.
 pub fn calculate_break_time(voxel_type: VoxelType, tool_type: ToolType) -> f32 {
-    // Ontener dureza del voxel
     let hardness = voxel_type.properties().hardness;
-
-    // Obtener efectividad de la herramienta
     let effectiveness = tool_type.effectiveness_against(voxel_type);
-
-    // Obtener multiplicador de velocidad de la herramienta
     let speed = tool_type.properties().speed_multiplier;
 
-    // Formula: tiempo_base * hardness / (effectiveness * speed)
-    // Tiempo base 1 segundo
     let base_time = 1.0;
 
     if effectiveness == 0.0 || speed == 0.0 {
-        return 999.0; // Practicamente impoisble de romper
+        return 999.0;
     }
 
     base_time * hardness / (effectiveness * speed)
 }
 
-/// Convierte una posicion mundial a la posicion de chunk y posicion local.
-///
-/// # Retorna
-/// (chunk_pos, local_pos, vloxel_pos_in_chunk)
-pub fn world_to_voxel(world_pos: Vec3) -> (IVec2, IVec3, IVec3) {
+/// Convierte una posición mundial a posición de chunk 3D y posición local.
+/// 
+/// Actualizado para el sistema de chunks dinámicos de 32³.
+pub fn world_to_voxel_3d(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
     // Convertir a coordenadas de voxel
     let voxel_x = (world_pos.x / VOXEL_SIZE).floor() as i32;
     let voxel_y = (world_pos.y / VOXEL_SIZE).floor() as i32;
     let voxel_z = (world_pos.z / VOXEL_SIZE).floor() as i32;
 
-    // Calcular la posicion del chunk
-    let chunk_x = voxel_x.div_euclid(CHUNK_SIZE as i32);
-    let _chunk_y = voxel_y.div_euclid(CHUNK_SIZE as i32); // Unused in columnar chunks
-    let chunk_z = voxel_z.div_euclid(CHUNK_SIZE as i32);
+    // Calcular la posición del chunk 3D
+    let chunk_x = voxel_x.div_euclid(BASE_CHUNK_SIZE as i32);
+    let chunk_y = voxel_y.div_euclid(BASE_CHUNK_SIZE as i32);
+    let chunk_z = voxel_z.div_euclid(BASE_CHUNK_SIZE as i32);
 
-    // Calcular la posicion local del voxel dentro del chunk
-    let local_x = voxel_x.rem_euclid(CHUNK_SIZE as i32);
-    let local_y = voxel_y.rem_euclid(CHUNK_SIZE as i32);
-    let local_z = voxel_z.rem_euclid(CHUNK_SIZE as i32);
+    // Calcular la posición local del voxel dentro del chunk
+    let local_x = voxel_x.rem_euclid(BASE_CHUNK_SIZE as i32);
+    let local_y = voxel_y.rem_euclid(BASE_CHUNK_SIZE as i32);
+    let local_z = voxel_z.rem_euclid(BASE_CHUNK_SIZE as i32);
 
     (
-        IVec2::new(chunk_x, chunk_z),
+        IVec3::new(chunk_x, chunk_y, chunk_z),
         IVec3::new(local_x, local_y, local_z),
         IVec3::new(voxel_x, voxel_y, voxel_z),
     )
 }
 
-/// Realiza un raycast usando algoritmo DDA para detectar el voxel mas cercano.
-///
-/// DDA (Digital Differential Analyzer) es mucho mas eficiente que point-by-point
-/// porque camina exactamente por los voxels que toca el rayo.
-///
-/// # Parametros
-/// - origin: Punto de inicio del rayo (posicion de la camara)
-/// - direction: Direccion del rayo (direccion de la camara)  
-/// - max_distance: Distancia maxima del raycast (en metros)
-/// - chunk_map: Mapa de chunks disponibles
-/// - chunks: Query de todos los chunks en el mundo
-///
-/// # Retorna
-/// Some((chunk_entity, chunk_pos, local_pos, voxel_type)) si encuentra un voxel solido
-/// None si no encuentra nada
-pub fn raycast_voxel(
+/// Detección de suelo mejorada usando raycast hacia abajo
+/// 
+/// Inspirado en "Lay of the Land" - encuentra la superficie real del terreno
+/// para evitar que los drops traspasen o queden flotando.
+pub fn find_ground_height(
+    position: Vec3,
+    chunk_system: &DynamicChunkSystem,
+    max_distance: f32,
+) -> Option<f32> {
+    let ray_origin = position;
+    let ray_direction = Vec3::NEG_Y; // Hacia abajo
+    
+    // Raycast hacia abajo para encontrar superficie sólida
+    if let Some(hit_pos) = raycast_ground(ray_origin, ray_direction, max_distance, chunk_system) {
+        Some(hit_pos.y + VOXEL_SIZE * 0.5) // Superficie + medio voxel
+    } else {
+        None
+    }
+}
+
+/// Raycast especializado para detección de suelo
+fn raycast_ground(
     origin: Vec3,
     direction: Vec3,
     max_distance: f32,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&Chunk>,
-) -> Option<(Entity, IVec2, IVec3, VoxelType)> {
+    chunk_system: &DynamicChunkSystem,
+) -> Option<Vec3> {
+    let dir = direction.normalize();
+    let mut current_pos = origin;
+    let step_size = VOXEL_SIZE * 0.5; // Pasos más pequeños para mayor precisión
+    let max_steps = (max_distance / step_size) as i32;
+
+    for _ in 0..max_steps {
+        let (chunk_pos, local_pos, _) = world_to_voxel_3d(current_pos);
+        
+        // Verificar si tenemos este chunk
+        if let Some(chunk) = chunk_system.base_chunks.get(&chunk_pos) {
+            // Verificar límites del chunk
+            if local_pos.x >= 0 && local_pos.x < BASE_CHUNK_SIZE as i32 &&
+               local_pos.y >= 0 && local_pos.y < BASE_CHUNK_SIZE as i32 &&
+               local_pos.z >= 0 && local_pos.z < BASE_CHUNK_SIZE as i32 {
+                
+                let voxel_type = chunk.get_voxel_type(
+                    local_pos.x as usize,
+                    local_pos.y as usize,
+                    local_pos.z as usize
+                );
+
+                if voxel_type.is_solid() {
+                    return Some(current_pos);
+                }
+            }
+        }
+
+        current_pos += dir * step_size;
+    }
+
+    None
+}
+
+/// Raycast DDA actualizado para chunks 3D dinámicos
+pub fn raycast_voxel_3d(
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+    chunk_system: &DynamicChunkSystem,
+) -> Option<(IVec3, IVec3, VoxelType)> {
     let dir = direction.normalize();
 
-    // Convertir origen a coordenadas de voxel
     let mut voxel_pos = IVec3::new(
         (origin.x / VOXEL_SIZE).floor() as i32,
         (origin.y / VOXEL_SIZE).floor() as i32,
         (origin.z / VOXEL_SIZE).floor() as i32,
     );
 
-    // Calcular direccion del paso (1 o -1 para cada eje)
     let step = IVec3::new(
         if dir.x > 0.0 { 1 } else { -1 },
         if dir.y > 0.0 { 1 } else { -1 },
         if dir.z > 0.0 { 1 } else { -1 },
     );
 
-    // Calcular distancia hasta el siguiente voxel en cada eje
     let mut t_max = Vec3::new(
         if dir.x != 0.0 {
             let next_boundary = if dir.x > 0.0 {
@@ -173,79 +212,56 @@ pub fn raycast_voxel(
         },
     );
 
-    // Calcular incremento de distancia para cada eje
     let t_delta = Vec3::new(
-        if dir.x != 0.0 {
-            VOXEL_SIZE / dir.x.abs()
-        } else {
-            f32::INFINITY
-        },
-        if dir.y != 0.0 {
-            VOXEL_SIZE / dir.y.abs()
-        } else {
-            f32::INFINITY
-        },
-        if dir.z != 0.0 {
-            VOXEL_SIZE / dir.z.abs()
-        } else {
-            f32::INFINITY
-        },
+        if dir.x != 0.0 { VOXEL_SIZE / dir.x.abs() } else { f32::INFINITY },
+        if dir.y != 0.0 { VOXEL_SIZE / dir.y.abs() } else { f32::INFINITY },
+        if dir.z != 0.0 { VOXEL_SIZE / dir.z.abs() } else { f32::INFINITY },
     );
 
     let max_steps = (max_distance / VOXEL_SIZE) as i32 + 1;
 
-    // Algoritmo DDA principal
     for _ in 0..max_steps {
-        // Convertir posicion de voxel a chunk y posicion local
-        let (chunk_pos, local_pos, _) = world_to_voxel(Vec3::new(
+        let (chunk_pos, local_pos, _) = world_to_voxel_3d(Vec3::new(
             voxel_pos.x as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
             voxel_pos.y as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
             voxel_pos.z as f32 * VOXEL_SIZE + VOXEL_SIZE * 0.5,
         ));
 
         // Verificar si tenemos este chunk
-        if let Some(&chunk_entity) = chunk_map.chunks.get(&chunk_pos) {
-            if let Ok(chunk) = chunks.get(chunk_entity) {
-                // Verificar limites del chunk
-                if local_pos.x >= 0
-                    && local_pos.x < CHUNK_SIZE as i32
-                    && local_pos.y >= 0
-                    && local_pos.y < CHUNK_SIZE as i32
-                    && local_pos.z >= 0
-                    && local_pos.z < CHUNK_SIZE as i32
-                {
-                    let voxel_type = chunk.voxel_types[local_pos.x as usize][local_pos.y as usize]
-                        [local_pos.z as usize];
+        if let Some(chunk) = chunk_system.base_chunks.get(&chunk_pos) {
+            if local_pos.x >= 0 && local_pos.x < BASE_CHUNK_SIZE as i32 &&
+               local_pos.y >= 0 && local_pos.y < BASE_CHUNK_SIZE as i32 &&
+               local_pos.z >= 0 && local_pos.z < BASE_CHUNK_SIZE as i32 {
+                
+                let voxel_type = chunk.get_voxel_type(
+                    local_pos.x as usize,
+                    local_pos.y as usize,
+                    local_pos.z as usize
+                );
 
-                    if voxel_type.is_solid() {
-                        return Some((chunk_entity, chunk_pos, local_pos, voxel_type));
-                    }
+                if voxel_type.is_solid() {
+                    return Some((chunk_pos, local_pos, voxel_type));
                 }
             }
         }
 
         // Avanzar al siguiente voxel usando DDA
         if t_max.x < t_max.y && t_max.x < t_max.z {
-            // Avanzar en X
             voxel_pos.x += step.x;
             t_max.x += t_delta.x;
         } else if t_max.y < t_max.z {
-            // Avanzar en Y
             voxel_pos.y += step.y;
             t_max.y += t_delta.y;
         } else {
-            // Avanzar en Z
             voxel_pos.z += step.z;
             t_max.z += t_delta.z;
         }
 
-        // Verificar si hemos excedido la distancia maxima
         let current_distance = (Vec3::new(
             voxel_pos.x as f32 * VOXEL_SIZE,
             voxel_pos.y as f32 * VOXEL_SIZE,
             voxel_pos.z as f32 * VOXEL_SIZE,
-        ) - origin)
-            .length();
+        ) - origin).length();
 
         if current_distance > max_distance {
             break;
@@ -260,72 +276,64 @@ pub fn raycast_voxel(
 // ============================================================================
 
 /// Sistema que detecta cuando el jugador intenta romper un voxel.
-///
-/// Solo se ejecuta cuando el jugador presiona el boton de romper.
+/// 
+/// Actualizado para usar el sistema de chunks dinámicos 3D.
 pub fn start_voxel_breaking_system(
     mouse_input: Res<ButtonInput<MouseButton>>,
     camera_query: Query<&Transform, With<Camera>>,
-    chunk_map: Res<ChunkMap>,
-    chunks: Query<&Chunk>,
+    chunk_system: Res<DynamicChunkSystem>,
     player_query: Query<&Tool, With<Player>>,
     mut commands: Commands,
     mut breaking_query: Query<(Entity, &mut VoxelBreaking)>,
 ) {
-    // Solo ejecuta si preional el boton izquierdo
     if !mouse_input.pressed(MouseButton::Left) {
-        // Si suelta el boton, cancelar destruccion en progreso
+        // Si suelta el botón, cancelar destrucción en progreso
         for (entity, _) in breaking_query.iter() {
             commands.entity(entity).despawn();
         }
         return;
     }
 
-    // Obtener la camara (posicion y direccion)
     let Ok(camera_transform) = camera_query.single() else {
-        return; // No hay camara.
+        return;
     };
 
     let ray_origin = camera_transform.translation;
     let ray_direction = camera_transform.forward().as_vec3();
 
-    // Hacer raycast para encontrar voxel
-    let Some((_chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
+    // Hacer raycast para encontrar voxel usando el nuevo sistema
+    let Some((chunk_pos, local_pos, voxel_type)) = raycast_voxel_3d(
         ray_origin,
         ray_direction,
-        5.0, // Maximo 5 metros de distancia
-        &chunk_map,
-        &chunks,
+        5.0, // Máximo 5 metros de distancia
+        &chunk_system,
     ) else {
-        // No encontro nada, cnacelar destruccion
+        // No encontró nada, cancelar destrucción
         for (entity, _) in breaking_query.iter() {
             commands.entity(entity).despawn();
         }
         return;
     };
 
-    // Obtener herramienta del jugador
     let tool_type = player_query
         .single()
         .map(|tool| tool.tool_type)
         .unwrap_or(ToolType::None);
 
-    // Calcular tiempo de destruccion
     let break_time = calculate_break_time(voxel_type, tool_type);
 
     // Verificar si ya estamos rompiendo este voxel
     let mut found_existing = false;
     for (entity, breaking) in breaking_query.iter_mut() {
         if breaking.chunk_pos == chunk_pos && breaking.local_pos == local_pos {
-            // Ya estamos rompiendo este voxel, no hacer nada
             found_existing = true;
             break;
         } else {
-            // Estamos mirandop otro voxel, cancelar el anterior
+            // Estamos mirando otro voxel, cancelar el anterior
             commands.entity(entity).despawn();
         }
     }
 
-    // Si no existe crear nuevo componente de destruccion
     if !found_existing {
         commands.spawn(VoxelBreaking {
             chunk_pos,
@@ -336,131 +344,130 @@ pub fn start_voxel_breaking_system(
     }
 }
 
-/// Sistema que actualiza el progreso de destruccion de voxels.
-///
-/// Se ejecuta cada frame para actualizar el progreso.
+/// Sistema que actualiza el progreso de destrucción de voxels.
+/// 
+/// Actualizado para usar chunks dinámicos y detección de suelo mejorada.
 pub fn update_voxel_breaking_system(
     time: Res<Time>,
     mut breaking_query: Query<(Entity, &mut VoxelBreaking)>,
-    mut chunk_queries: ParamSet<(Query<&mut Chunk>, Query<&Chunk>)>,
-    chunk_map: Res<ChunkMap>,
+    mut chunk_system: ResMut<DynamicChunkSystem>,
     mut commands: Commands,
     mut player_query: Query<&mut Tool, With<Player>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut mesh_query: Query<&mut Mesh3d>,
 ) {
     for (entity, mut breaking) in breaking_query.iter_mut() {
-        // Actualizar preogreso basado en tiempo
         breaking.progress += time.delta_secs() / breaking.break_time;
 
-        // Si llego a 100%, romper el voxel
         if breaking.progress >= 1.0 {
-            // Obtener el chunk
-            if let Some(&chunk_entity) = chunk_map.chunks.get(&breaking.chunk_pos) {
-                // Primero modificar el chunk
-                let broken_voxel_type = if let Ok(mut chunk) =
-                    chunk_queries.p0().get_mut(chunk_entity)
-                {
-                    // Obtener herramienta para el patron de destruccion
-                    let tool_type = player_query
-                        .single()
-                        .map(|tool| tool.tool_type)
-                        .unwrap_or(ToolType::None);
-                    let destruction_pattern = tool_type.get_destruction_pattern();
+            // Obtener herramienta para el patrón de destrucción
+            let tool_type = player_query
+                .single()
+                .map(|tool| tool.tool_type)
+                .unwrap_or(ToolType::None);
+            
+            let destruction_pattern = tool_type.get_destruction_pattern();
+            let mut total_drops = 0;
 
-                    // Destruir multiples voxels segun el patron
-                    let mut total_drops = 0;
-                    for offset in destruction_pattern {
-                        let target_x = (breaking.local_pos.x + offset.x) as usize;
-                        let target_y = (breaking.local_pos.y + offset.y) as usize;
-                        let target_z = (breaking.local_pos.z + offset.z) as usize;
+            // Destruir múltiples voxels según el patrón
+            for offset in destruction_pattern {
+                let target_pos = breaking.local_pos + offset;
+                
+                // Verificar si el voxel objetivo está en el mismo chunk
+                if target_pos.x >= 0 && target_pos.x < BASE_CHUNK_SIZE as i32 &&
+                   target_pos.y >= 0 && target_pos.y < BASE_CHUNK_SIZE as i32 &&
+                   target_pos.z >= 0 && target_pos.z < BASE_CHUNK_SIZE as i32 {
+                    
+                    // Obtener el chunk (mutable)
+                    if let Some(chunk) = chunk_system.base_chunks.get_mut(&breaking.chunk_pos) {
+                        let voxel_type = chunk.get_voxel_type(
+                            target_pos.x as usize,
+                            target_pos.y as usize,
+                            target_pos.z as usize
+                        );
 
-                        // Verificar limites del chunk
-                        if target_x < CHUNK_SIZE && target_y < CHUNK_SIZE && target_z < CHUNK_SIZE {
-                            let voxel_type = chunk.voxel_types[target_x][target_y][target_z];
+                        if voxel_type.is_solid() {
+                            // Convertir a aire
+                            chunk.set_voxel_type(
+                                target_pos.x as usize,
+                                target_pos.y as usize,
+                                target_pos.z as usize,
+                                VoxelType::Air
+                            );
 
-                            // Solo destruir si es sólido
-                            if voxel_type.is_solid() {
-                                // Convertir a aire
-                                chunk.voxel_types[target_x][target_y][target_z] = VoxelType::Air;
-                                chunk.densities[target_x][target_y][target_z] = -1.0;
+                            // Calcular drops
+                            let drops = tool_type.calculate_drops(voxel_type);
+                            total_drops += drops;
 
-                                // Calcular drops para este voxel
-                                let drops = tool_type.calculate_drops(voxel_type);
-                                total_drops += drops;
+                            // Spawnar drops con detección de suelo mejorada
+                            if drops > 0 {
+                                let world_pos = Vec3::new(
+                                    (breaking.chunk_pos.x * BASE_CHUNK_SIZE as i32 + target_pos.x) as f32 * VOXEL_SIZE,
+                                    (breaking.chunk_pos.y * BASE_CHUNK_SIZE as i32 + target_pos.y) as f32 * VOXEL_SIZE,
+                                    (breaking.chunk_pos.z * BASE_CHUNK_SIZE as i32 + target_pos.z) as f32 * VOXEL_SIZE,
+                                );
 
-                                // Spawnar drops fisicos
-                                if drops > 0 {
-                                    spawn_voxel_drop(
-                                        &mut commands,
-                                        &mut meshes,
-                                        &mut materials,
-                                        voxel_type,
-                                        drops, 
-                                        Vec3::new(
-                                            (breaking.chunk_pos.x * CHUNK_SIZE as i32 + target_x as i32) as f32 * VOXEL_SIZE,
-                                            target_y as f32 * VOXEL_SIZE, // Y is absolute within the world column
-                                            (breaking.chunk_pos.y * CHUNK_SIZE as i32 + target_z as i32) as f32 * VOXEL_SIZE,
-                                        ),
-                                        time.elapsed_secs(),
-                                    );
-                                }
+                                spawn_voxel_drop_with_ground_detection(
+                                    &mut commands,
+                                    &mut meshes,
+                                    &mut materials,
+                                    voxel_type,
+                                    drops,
+                                    world_pos,
+                                    &chunk_system,
+                                    time.elapsed_secs(),
+                                );
                             }
                         }
-                    }
-                    info!("Destruido cráter con {} drops totales", total_drops);
-                    Some(VoxelType::Air) // Retorna algo para que compile
-                } else {
-                    None
-                };
-
-                // Luego regenerar el mesh (después de liberar el borrow mutable)
-                if let Some(_) = broken_voxel_type {
-                    // Usar el query inmutable para generar el mesh
-                    let chunks_read = chunk_queries.p1();
-                    if let Ok(chunk) = chunks_read.get(chunk_entity) {
-                        // Generar nuevo mesh con neighbors
-                        let new_mesh =
-                            generate_mesh_with_neighbors(&chunk, &chunk_map, &chunks_read);
-
-                        if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity) {
-                            *mesh3d = Mesh3d(meshes.add(new_mesh));
-                        }
-                    }
-
-                    // Danar herramienta del jugador
-                    if let Ok(mut tool) = player_query.single_mut() {
-                        let broke = tool.damage(1); // 1 punto de durabilidad
-                        if broke {
-                            info!("Herramienta rota");
-                            // TODO: Cambiar a manos (ToolType::None) Tambien hacer que desaparesca la heramienta
-                        }
-                    }
-
-                    if let Some(voxel_type) = broken_voxel_type {
-                        info!("voxel roto {:?} en {:?}", voxel_type, breaking.local_pos);
                     }
                 }
             }
 
-            // Eliminar el componente de destruccion
+            info!("Destruido cráter con {} drops totales", total_drops);
+
+            // Dañar herramienta del jugador
+            if let Ok(mut tool) = player_query.single_mut() {
+                let broke = tool.damage(1);
+                if broke {
+                    info!("Herramienta rota");
+                }
+            }
+
+            // Eliminar el componente de destrucción
             commands.entity(entity).despawn();
         }
     }
 }
 
-/// Spawna un drop fisico en el mundo
-fn spawn_voxel_drop (
+/// Spawna un drop físico con detección de suelo mejorada
+/// 
+/// Inspirado en "Lay of the Land" - usa raycast hacia abajo para encontrar
+/// la superficie real y evitar que los drops traspasen el piso.
+fn spawn_voxel_drop_with_ground_detection(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     voxel_type: VoxelType,
     quantity: u32,
     world_position: Vec3,
+    chunk_system: &DynamicChunkSystem,
     current_time: f32,
 ) {
-    // Crear mesh de cubo pequeno
+    // Encontrar la altura real del suelo usando raycast hacia abajo
+    let ground_height = find_ground_height(
+        world_position + Vec3::new(0.0, 2.0, 0.0), // Empezar un poco arriba
+        chunk_system,
+        10.0, // Buscar hasta 10m hacia abajo
+    ).unwrap_or(world_position.y); // Fallback a posición original
+
+    // Ajustar posición para que esté sobre el suelo
+    let adjusted_position = Vec3::new(
+        world_position.x,
+        ground_height + VOXEL_SIZE, // Un poco arriba del suelo
+        world_position.z,
+    );
+
+    // Crear mesh de cubo pequeño
     let cube_mesh = meshes.add(Cuboid::new(0.2, 0.2, 0.2));
 
     // Color basado en el tipo de voxel
@@ -472,13 +479,43 @@ fn spawn_voxel_drop (
         ..default()
     });
 
+    // Agregar componente de detección de suelo
+    let ground_detection = GroundDetection {
+        ground_height,
+        is_valid: true,
+    };
+
     commands.spawn((
         VoxelDrop::new(voxel_type, quantity, current_time),
+        ground_detection,
         Mesh3d(cube_mesh),
         MeshMaterial3d(material),
-        Transform::from_translation(world_position + Vec3::new(0.0, 1.0, 0.0))
-        .with_scale(Vec3::splat(0.8)),
+        Transform::from_translation(adjusted_position)
+            .with_scale(Vec3::splat(0.8)),
         GlobalTransform::default(),
-        Visibility::default()
+        Visibility::default(),
     ));
+}
+
+/// Sistema que actualiza la posición de drops para mantenerlos sobre el suelo
+/// 
+/// Previene que los drops se hundan en el terreno o queden flotando.
+pub fn update_drop_ground_detection_system(
+    mut drop_query: Query<(&mut Transform, &GroundDetection), With<VoxelDrop>>,
+    _chunk_system: Res<DynamicChunkSystem>,
+) {
+    for (mut transform, ground_detection) in drop_query.iter_mut() {
+        if !ground_detection.is_valid {
+            continue;
+        }
+
+        // Verificar si el drop se ha hundido por debajo del suelo
+        if transform.translation.y < ground_detection.ground_height {
+            // Reposicionar sobre el suelo
+            transform.translation.y = ground_detection.ground_height + VOXEL_SIZE * 0.5;
+        }
+
+        // Opcional: Re-verificar el suelo periódicamente para terreno dinámico
+        // (esto sería útil si el terreno cambia después de que se spawne el drop)
+    }
 }

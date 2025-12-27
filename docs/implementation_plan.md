@@ -1,24 +1,42 @@
-# Plan de Implementación - Extraction Shooter Voxel Postapocalíptico
+# Plan de Implementación - Extraction Shooter Voxel Multijugador
 
-Juego de extracción multijugador en mundo abierto con voxels destructibles, inspirado en Call of Mini, Lay of the Land, Helldivers, Minecraft, Arc Raiders y The Finals.
+Juego de extracción multijugador en mundos de misión procedurales con bases subterráneas persistentes, edificios de hasta 20 pisos, voxels de 10cm de detalle, y arquitectura de streaming para mundos masivos.
+
+## Visión Completa del Juego
+
+**Extraction Shooter Voxel Multijugador** inspirado en Call of Mini, Lay of the Land, Helldivers, Minecraft, Arc Raiders y The Finals.
+
+### Características Principales
+- **Mundos de Misión**: Generados proceduralmente basados en biomas del overworld (volcán, nieve, bosque, desierto, ciudad)
+- **Bases Subterráneas**: Persistentes, expandibles con construcción voxel, comercio y cultivo
+- **Edificios Masivos**: Hasta 20 pisos + sótanos profundos (2048 voxels de altura total)
+- **Invasiones de Bases**: Sistema PvP/PvE opcional para atacar/defender bases
+- **Voxels Detallados**: 10cm de resolución para máximo detalle
+- **Greedy Meshing**: Reducción de 70% en triángulos para rendimiento óptimo
+- **Dual Contouring**: Terreno suave que se combina con estructuras voxel
+- **Streaming Dinámico**: Carga/descarga de mundos sin tiempos de espera
+- **Multijugador Fundamental**: PC primero, consolas después
 
 ## User Review Required
 
 > [!IMPORTANT]
-> **Decisiones Arquitectónicas Críticas**
+> **Decisiones Arquitectónicas Críticas Actualizadas**
 > 
-> 1. **Voxel Engine**: Usar chunks de 32³ con Surface Nets para terreno suave (ya implementado en Fase 1)
-> 2. **Networking**: `lightyear` para servidor autoritativo con predicción del cliente
-> 3. **Inventario**: 256 slots (2⁸) para balance entre capacidad y rendimiento
-> 4. **Target Inicial**: 150-500 enemigos simultáneos con spatial hashing
-> 5. **Mundo Inicial**: Mapa fijo de ~1km² para MVP, procedural en fases avanzadas
+> 1. **Voxel Engine**: Chunks de 128×2048×128 con greedy meshing y dual contouring
+> 2. **Altura de Mundo**: 2048 voxels (204.8m) para edificios de 20 pisos + minas profundas
+> 3. **Networking**: `lightyear` para servidor autoritativo con sincronización multi-mundo
+> 4. **Inventario**: 256 slots persistente entre mundos
+> 5. **Target**: 500+ enemigos con spatial hashing por mundo
+> 6. **Arquitectura de Mundos**: Streaming dinámico con presupuesto de memoria de 4GB
 
 > [!WARNING]
-> **Desafíos Técnicos Mayores**
+> **Desafíos Técnicos Mayores Actualizados**
 > 
-> - **Voxel Destruction en Multiplayer**: Sincronizar destrucción voxel-por-voxel entre 8 jugadores requiere delta compression agresiva
-> - **Rendimiento con 500+ Enemigos**: Necesitaremos GPU instancing + LOD AI desde fase temprana
-> - **Edificios Colapsables**: Física de voxels caídos puede ser costosa, considerar simplificación (desaparecer voxels en lugar de simular caída)
+> - **Chunks 2048 de Altura**: Heap allocation obligatoria para prevenir stack overflow
+> - **Greedy Meshing**: Crítico para rendimiento con voxels de 10cm - target 70% reducción de triángulos
+> - **Streaming Multi-Mundo**: Sincronizar destrucción voxel entre mundos de misión y bases
+> - **Memory Management**: 4GB budget para múltiples mundos cargados simultáneamente
+> - **Dual Contouring**: Terreno suave + estructuras voxel requiere algoritmo híbrido
 
 ---
 
@@ -26,13 +44,14 @@ Juego de extracción multijugador en mundo abierto con voxels destructibles, ins
 
 ### Core Systems Architecture
 
-#### Voxel System (`src/voxel/`)
+#### Voxel System (`src/voxel/`) - UPDATED
 
 **[MODIFY]** [mod.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/mod.rs)
 - Agregar `VoxelType` enum (Dirt, Stone, Wood, Metal, etc.) con resistencias
 - Implementar sistema de "voxel groups" para optimizar drops (10-30 voxels por golpe)
+- Integrar greedy meshing y dual contouring
 
-**[NEW]** [voxel_types.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/voxel_types.rs)
+**[MODIFY]** [voxel_types.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/voxel_types.rs)
 ```rust
 pub enum VoxelType {
     Air,
@@ -40,35 +59,173 @@ pub enum VoxelType {
     Stone { hardness: f32 },
     Wood { hardness: f32 },
     Metal { hardness: f32 },
-    // ... más tipos
+    // ... más tipos para diferentes biomas
 }
 
 pub struct VoxelDrop {
     voxel_type: VoxelType,
     count: u32, // 10-30 para árboles, 1-5 para piedra
+    world_id: WorldId, // Nuevo: tracking de mundo
 }
 ```
 
-**[NEW]** [destruction.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/destruction.rs)
+**[MODIFY]** [destruction.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/destruction.rs)
 - Sistema de destrucción con herramientas específicas
 - Cálculo de "golpe efectivo" para determinar cantidad de drops
 - Explosiones que destruyen grupos de voxels
-- Sistema de colapso de edificios (marcar voxels para eliminación en lugar de física completa)
-- **Raycast optimizado:**
-  - Fase 2 MVP: Raycast punto-por-punto (simple, funcional)
-  - Fase 2.5: Algoritmo DDA (10x más rápido, estilo Minecraft)
-  - ChunkMap con HashMap para acceso O(1) a chunks
-  - Separar raycast UI (cada frame, 2m) vs destrucción (al click, 5m)
-  - Cache de último voxel mirado para evitar re-renderizado de outline
+- Sistema de colapso de edificios (marcar voxels para eliminación)
+- **Raycast optimizado DDA** (ya implementado)
+- **Soporte para chunks 2048 de altura**
 
-**[NEW]** [drops.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/drops.rs)
+**[NEW]** [greedy_meshing.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/greedy_meshing.rs)
+```rust
+pub struct GreedyMesher {
+    chunk_data: &[VoxelType],
+    dimensions: IVec3, // 128×2048×128
+}
+
+impl GreedyMesher {
+    pub fn generate_mesh(&self) -> OptimizedChunkMesh {
+        // Target: 70% reducción de triángulos
+        // <50ms por chunk de 128×2048×128
+    }
+}
+```
+
+**[NEW]** [dual_contouring.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/dual_contouring.rs)
+```rust
+pub struct DualContouringMesher {
+    density_field: Box<[f32; 129 * 129 * 129]>,
+}
+
+impl DualContouringMesher {
+    pub fn generate_terrain_mesh(&self) -> TerrainMesh {
+        // Terreno suave que se combina con estructuras voxel
+        // <100ms por chunk de generación
+    }
+}
+```
+
+**[MODIFY]** [drops.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/voxel/drops.rs)
 - Pool de entidades para drops de voxels
 - Auto-recolección después de X segundos
 - Límite de drops simultáneos para rendimiento
+- **Soporte multi-mundo**: drops persisten en mundo original durante teleportación
+- **Ground detection para dual contouring terrain**
 
 ---
 
-#### Inventory System (`src/inventory/`)
+---
+
+#### World Management System (`src/world/`) - NEW
+
+**[NEW]** [mod.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/world/mod.rs)
+```rust
+pub mod mission_generator;
+pub mod underground_base;
+pub mod streaming;
+pub mod teleportation;
+pub mod overworld;
+
+pub use mission_generator::*;
+pub use underground_base::*;
+pub use streaming::*;
+pub use teleportation::*;
+pub use overworld::*;
+```
+
+**[NEW]** [mission_generator.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/world/mission_generator.rs)
+```rust
+pub struct MissionWorldGenerator {
+    noise_generator: FastNoise,
+    biome_configs: HashMap<BiomeType, BiomeConfig>,
+}
+
+pub struct BiomeConfig {
+    // Terrain generation
+    height_scale: f32,
+    roughness: f32,
+    
+    // Structure generation
+    building_density: f32,
+    tree_density: f32,
+    
+    // Mission parameters
+    mission_types: Vec<MissionType>,
+    enemy_spawn_rate: f32,
+}
+
+pub enum BiomeType {
+    Volcano, // lava, ash, volcanic structures
+    Snow,    // snow, ice, cold-weather structures
+    Forest,  // dense trees, wooden structures
+    Desert,  // sand, cacti, ruins
+    City,    // concrete buildings, urban structures
+}
+```
+
+**[NEW]** [underground_base.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/world/underground_base.rs)
+```rust
+pub struct UndergroundBase {
+    owner: PlayerId,
+    world_data: Box<[VoxelType; 64 * 64 * 64]>, // Smaller than mission worlds
+    modifications: HashMap<IVec3, VoxelType>, // Player changes
+    facilities: Vec<BaseFacility>,
+    invasion_status: InvasionStatus,
+}
+
+pub enum BaseFacility {
+    TradingPost { inventory: Inventory, orders: Vec<TradeOrder> },
+    Farm { crop_type: CropType, growth_stage: f32 },
+    Storage { capacity: usize, stored_items: Inventory },
+    Defense { turret_type: TurretType, ammo: u32 },
+}
+
+pub enum InvasionStatus {
+    Safe,
+    UnderAttack { attackers: Vec<Entity>, start_time: f64 },
+    Breached { breach_points: Vec<IVec3>, loot_stolen: Vec<ItemStack> },
+}
+```
+
+**[NEW]** [streaming.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/world/streaming.rs)
+```rust
+pub struct WorldStreamingSystem {
+    active_worlds: HashMap<WorldId, LoadedWorld>,
+    loading_worlds: HashMap<WorldId, LoadingTask>,
+    memory_budget: usize, // 4GB total
+    current_memory_usage: usize,
+}
+
+pub struct LoadedWorld {
+    world_data: WorldData,
+    chunks: HashMap<IVec3, VoxelChunk>,
+    entities: Vec<Entity>,
+    last_accessed: Instant,
+    memory_usage: usize,
+}
+
+// Target: <5 seconds world load, <4GB total memory
+```
+
+**[NEW]** [teleportation.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/world/teleportation.rs)
+```rust
+pub struct TeleportSystem {
+    teleport_points: HashMap<WorldId, Vec<TeleportPoint>>,
+    active_teleports: Vec<ActiveTeleport>,
+}
+
+pub enum TeleportType {
+    MissionToBase,
+    BaseToMission,
+    Emergency, // Durante invasiones
+    Overworld,
+}
+
+// Target: <1 second teleportation time
+```
+
+---
 
 **[NEW]** [mod.rs](file:///c:/Users/derec/Documents/Git/bevy_game/src/inventory/mod.rs)
 ```rust

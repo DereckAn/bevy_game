@@ -2,11 +2,10 @@
 //!
 //! Maneja los items fisicos que aparecen cuando se destruyen voxels.
 
-use crate::{player::components::Player, voxel::{Chunk, ChunkMap, world_to_voxel}};
 
-use super::VoxelType;
+use super::{VoxelType, DynamicChunkSystem, world_to_voxel_3d};
 use bevy::prelude::*;
-use crate::core::constants::{CHUNK_SIZE, WORLD_HEIGHT};
+use crate::{core::constants::{BASE_CHUNK_SIZE, MAX_WORLD_HEIGHT}, player::components::Player};
 
 /// Componente que representa un drop fisico en el mundo.
 ///
@@ -61,8 +60,7 @@ impl VoxelDrop {
 /// Encuentra la altura real del suelo usando raycast hacia abajo 
 fn find_ground_height(
     position: Vec3,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&Chunk>,
+    chunk_system: &DynamicChunkSystem,
 ) -> f32 {
     let mut test_y = position.y;
     let step = 0.1; // paso de busqueda
@@ -73,7 +71,7 @@ fn find_ground_height(
     // Raycast hacia abajo hasta encontrar el suelo solido
     while test_y > -20.0 {
         let test_pos = Vec3::new(position.x, test_y, position.z);
-        let (chunk_pos, local_pos, _) = world_to_voxel(test_pos);
+        let (chunk_pos, local_pos, _) = world_to_voxel_3d(test_pos);
 
         // Log de coordenadas
         if test_y == position.y { // Solo log en la primera iteración
@@ -81,38 +79,32 @@ fn find_ground_height(
         }
 
         // Verificar si hay chunk valido
-        if let Some(&chunk_entity) = chunk_map.chunks.get(&chunk_pos){
-            if let Ok(chunk) = chunks.get(chunk_entity) {
-                // Verificar limites del chunk
-                if local_pos.x >= 0 && local_pos.x < CHUNK_SIZE as i32 &&
-local_pos.y >= 0 && local_pos.y < WORLD_HEIGHT as i32 && 
-local_pos.z >= 0 && local_pos.z < CHUNK_SIZE as i32 {
+        if let Some(chunk) = chunk_system.base_chunks.get(&chunk_pos) {
+            // Verificar limites del chunk
+            if local_pos.x >= 0 && local_pos.x < BASE_CHUNK_SIZE as i32 &&
+local_pos.y >= 0 && local_pos.y < MAX_WORLD_HEIGHT as i32 && 
+local_pos.z >= 0 && local_pos.z < BASE_CHUNK_SIZE as i32 {
 
-                    // Verificar si es voxel solido
-                    let density = chunk.get_density(
-                        local_pos.x as usize,
-                        local_pos.y as usize,
-                        local_pos.z as usize
-                    );
-                    
-                    // Log de densidad para debug
-                    if test_y == position.y { // Solo log en la primera iteración
-                        println!("Densidad en Y={}: {}", test_y, density);
-                    }
-                    
-                    if density > 0.0 {
-                        println!("Suelo encontrado en Y={}", test_y + 0.5);
-                        return test_y + 0.5; // Superficie del voxel
-                    }
+                // Verificar si es voxel solido
+                let voxel_type = chunk.get_voxel_type(
+                    local_pos.x as usize,
+                    local_pos.y as usize,
+                    local_pos.z as usize
+                );
+                
+                // Log de densidad para debug
+                if test_y == position.y { // Solo log en la primera iteración
+                    println!("Voxel type en Y={}: {:?}", test_y, voxel_type);
                 }
-            } else {
-                if test_y == position.y {
-                    println!("Chunk entity no encontrado");
+                
+                if voxel_type.is_solid() {
+                    println!("Suelo encontrado en Y={}", test_y + 0.5);
+                    return test_y + 0.5; // Superficie del voxel
                 }
             }
         } else {
             if test_y == position.y {
-                println!("Chunk no existe en ChunkMap");
+                println!("Chunk no existe en DynamicChunkSystem");
             }
         }
         test_y -= step; // Continuar hacia abajo
@@ -127,8 +119,7 @@ local_pos.z >= 0 && local_pos.z < CHUNK_SIZE as i32 {
 pub fn update_drops_system(
     time: Res<Time>,
     mut drop_query: Query<(&mut Transform, &mut VoxelDrop)>,
-    chunk_map: Res<ChunkMap>,
-    chunks: Query<&Chunk>
+    chunk_system: Res<DynamicChunkSystem>,
 ) {
    for (mut transform, mut drop) in drop_query.iter_mut() {
     // Aplicar velocidad
@@ -142,7 +133,7 @@ pub fn update_drops_system(
     drop.velocity.z *= 0.98;
 
     // Deteccion real del suelo 
-    let ground_height = find_ground_height(transform.translation, &chunk_map, &chunks);
+    let ground_height = find_ground_height(transform.translation, &chunk_system);
 
     // Rebote en el suelo
     if transform.translation.y <= ground_height {
