@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 use noise::{NoiseFn, Perlin};
-use crate::core::constants::{CHUNK_SIZE, VOXEL_SIZE};
+use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use super::voxel_types::VoxelType;
 
 
@@ -16,12 +16,12 @@ use super::voxel_types::VoxelType;
 /// El chunk mantiene DOS arrays paralelos:
 /// 
 /// 1. **densities**: Campo de densidad para Surface Nets (terreno suave)
-///    - Tamaño: (CHUNK_SIZE + 1)³ para interpolación en bordes
+///    - Tamaño: (BASE_CHUNK_SIZE + 1)³ para interpolación en bordes
 ///    - Positivo = sólido, Negativo = aire
 ///    - Usado por el sistema de meshing
 /// 
 /// 2. **voxel_types**: Tipo de material de cada voxel
-///    - Tamaño: CHUNK_SIZE³ (no necesita +1 porque no se interpola)
+///    - Tamaño: BASE_CHUNK_SIZE³ (no necesita +1 porque no se interpola)
 ///    - Usado para gameplay (destrucción, drops, colores)
 ///    - Solo 1 byte por voxel gracias a #[repr(u8)]
 /// 
@@ -33,11 +33,13 @@ use super::voxel_types::VoxelType;
 pub struct Chunk{
     // Campo de densidad 3D. Positivo = solido, Negativo = aire
     // Tamaño +1 para permitir interpolación en bordes
-    pub densities: [[[f32; CHUNK_SIZE + 1]; CHUNK_SIZE + 1]; CHUNK_SIZE + 1],
+    // Usando heap allocation para evitar el stack overflow
+    pub densities: Box<[[[f32; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]>,
     
     // Tipo de material de cada voxel
     // Usado para gameplay: destrucción, drops, colores
-    pub voxel_types: [[[VoxelType; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+    // Tambien usando box para user heap allocation
+    pub voxel_types: Box<[[[VoxelType; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]>,
     
     // Posicion del chunk en coordenadas de chunk (no mundo)
     pub position: IVec3
@@ -61,19 +63,19 @@ impl Chunk {
     pub fn new(position: IVec3) -> Self {
         let perlin = Perlin::new(12345);
         let mut chunk = Self {
-            densities: [[[0.0; CHUNK_SIZE + 1]; CHUNK_SIZE + 1]; CHUNK_SIZE + 1],
-            voxel_types: [[[VoxelType::Air; CHUNK_SIZE]; CHUNK_SIZE]; CHUNK_SIZE],
+            densities: Box::new([[[0.0; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]),
+            voxel_types: Box::new([[[VoxelType::Air; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]),
             position
         };
 
         // Terreno simple: mitad inferior solida
-        for x in 0..=CHUNK_SIZE  {
-            for y in 0..=CHUNK_SIZE {
-                for z in 0..=CHUNK_SIZE {
+        for x in 0..=BASE_CHUNK_SIZE  {
+            for y in 0..=BASE_CHUNK_SIZE {
+                for z in 0..=BASE_CHUNK_SIZE {
                     // Convierte coordenadas locales a mundiales
-                    let world_x = (position.x * CHUNK_SIZE as i32 + x as i32) as f64 * VOXEL_SIZE as f64;
-                    let world_y = (position.y * CHUNK_SIZE as i32 + y as i32) as f64 * VOXEL_SIZE as f64;
-                    let world_z = (position.z * CHUNK_SIZE as i32 + z as i32) as f64 * VOXEL_SIZE as f64;
+                    let world_x = (position.x * BASE_CHUNK_SIZE as i32 + x as i32) as f64 * VOXEL_SIZE as f64;
+                    let world_y = (position.y * BASE_CHUNK_SIZE as i32 + y as i32) as f64 * VOXEL_SIZE as f64;
+                    let world_z = (position.z * BASE_CHUNK_SIZE as i32 + z as i32) as f64 * VOXEL_SIZE as f64;
 
                     // Terreno base + ruido
                     // Altura base + variacion con Perlin noise
@@ -88,7 +90,7 @@ impl Chunk {
                     
                     // Determinar tipo de voxel basado en densidad y altura
                     // Solo para voxels dentro del chunk (no el borde +1)
-                    if x < CHUNK_SIZE && y < CHUNK_SIZE && z < CHUNK_SIZE {
+                    if x < BASE_CHUNK_SIZE && y < BASE_CHUNK_SIZE && z < BASE_CHUNK_SIZE {
                         chunk.voxel_types[x][y][z] = VoxelType::from_density(density as f32, world_y);
                     }
                 }
@@ -102,7 +104,7 @@ impl Chunk {
     /// Obtiene el valor de densidad en una posición local del chunk.
     /// 
     /// # Parámetros
-    /// - `x`, `y`, `z`: Coordenadas locales (0 a CHUNK_SIZE inclusive)
+    /// - `x`, `y`, `z`: Coordenadas locales (0 a BASE_CHUNK_SIZE inclusive)
     pub fn get_density(&self, x: usize, y: usize, z: usize) -> f32 {
         self.densities[x][y][z]
     }
@@ -127,9 +129,9 @@ mod tests {
     #[test]
     fn test_density_field_size() {
         let chunk = Chunk::new(IVec3::ZERO);
-        assert_eq!(chunk.densities.len(), CHUNK_SIZE + 1);
-        assert_eq!(chunk.densities[0].len(), CHUNK_SIZE + 1);
-        assert_eq!(chunk.densities[0][0].len(), CHUNK_SIZE + 1);
+        assert_eq!(chunk.densities.len(), BASE_CHUNK_SIZE + 1);
+        assert_eq!(chunk.densities[0].len(), BASE_CHUNK_SIZE + 1);
+        assert_eq!(chunk.densities[0][0].len(), BASE_CHUNK_SIZE + 1);
     }
 
     #[test]
@@ -137,7 +139,7 @@ mod tests {
         let chunk = Chunk::new(IVec3::ZERO);
         // La densidad debe disminuir al subir (más aire arriba)
         let bottom = chunk.get_density(16, 0, 16);
-        let top = chunk.get_density(16, CHUNK_SIZE, 16);
+        let top = chunk.get_density(16, BASE_CHUNK_SIZE, 16);
         assert!(bottom > top, "Density should decrease with height");
     }
 
@@ -147,7 +149,7 @@ mod tests {
         let chunk2 = Chunk::new(IVec3::new(1, 0, 0));
         
         // Los chunks adyacentes deben tener densidades diferentes debido al offset
-        let d1 = chunk1.get_density(CHUNK_SIZE, 0, 0);
+        let d1 = chunk1.get_density(BASE_CHUNK_SIZE, 0, 0);
         let d2 = chunk2.get_density(0, 0, 0);
         // Deberían ser iguales en el borde compartido
         assert!((d1 - d2).abs() < 0.001, "Adjacent chunks should match at borders");
