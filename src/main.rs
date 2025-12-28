@@ -28,7 +28,7 @@ use voxel::{
     DynamicChunkSystem, update_chunk_lod_system, ChunkLOD,
 };
 
-use crate::voxel::BaseChunk; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
+use crate::voxel::{BaseChunk, BoundingBox}; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -59,7 +59,11 @@ fn main() {
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
-        .insert_resource(DynamicChunkSystem::new())
+        .insert_resource(DynamicChunkSystem::new(BoundingBox {
+    min: IVec3::new(-100, -10, -100),
+    max: IVec3::new(100, 10, 100),
+}))
+
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
         .add_systems(Update, (
             start_voxel_breaking_system,
