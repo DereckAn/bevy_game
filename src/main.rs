@@ -27,6 +27,7 @@ use voxel::{
     ChunkMap, start_voxel_breaking_system, update_voxel_breaking_system,
     update_chunk_lod_system, ChunkLOD, BaseChunk,
     greedy_mesh_basechunk_simple, greedy_mesh_basechunk,
+    ChunkLoadQueue, update_chunk_load_queue, load_chunks_system, unload_chunks_system,
 }; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
@@ -58,12 +59,17 @@ fn main() {
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
+        .insert_resource(ChunkLoadQueue::default())
 
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
         .add_systems(Update, (
             start_voxel_breaking_system,
             update_voxel_breaking_system,        
-            update_chunk_lod_system
+            update_chunk_lod_system,
+            // Sistemas de carga dinámica de chunks
+            update_chunk_load_queue,
+            load_chunks_system,
+            unload_chunks_system,
         ).chain())
         .run(); // Inicia el loop principal del juego
 }
@@ -87,26 +93,31 @@ fn setup(
     mut chunk_map: ResMut<ChunkMap>,
 ) {
     // ========================================================================
-    // GENERACIÓN DE TERRENO
+    // GENERACIÓN DE TERRENO INICIAL
     // ========================================================================
 
-    // PASO 1: Generar todos los BaseChunks primero (sin mesh)
+    // Generar solo chunks iniciales alrededor del spawn (radio de 10 chunks)
+    // El sistema de carga dinámica generará el resto
+    let initial_radius = 10;
+    
     let mut temp_chunks: HashMap<IVec3, BaseChunk> = HashMap::new();
     
-    for cx in -25..=25 {
-        for cz in -25..=25 {
-            let base_chunk = BaseChunk::new(IVec3::new(cx, 0, cz));
-            temp_chunks.insert(base_chunk.position, base_chunk);
+    for cx in -initial_radius..=initial_radius {
+        for cz in -initial_radius..=initial_radius {
+            // Solo generar en un círculo, no un cuadrado
+            if cx * cx + cz * cz <= initial_radius * initial_radius {
+                let base_chunk = BaseChunk::new(IVec3::new(cx, 0, cz));
+                temp_chunks.insert(base_chunk.position, base_chunk);
+            }
         }
     }
 
-    // PASO 2: Crear entidades con meshes (ahora todos los vecinos existen)
-    for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
-        // Generar mesh con greedy meshing CON verificación de vecinos
-        // Esto evita generar caras entre chunks adyacentes
-        let mesh = greedy_mesh_basechunk_simple(&base_chunk); // Por ahora simple, luego cambiaremos
+    info!("Generating {} initial chunks...", temp_chunks.len());
 
-        // Crear entidad del chunk con todos sus componentes
+    // Crear entidades con meshes
+    for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
+        let mesh = greedy_mesh_basechunk_simple(&base_chunk);
+
         let chunk_entity = commands.spawn((
             Mesh3d(meshes.add(mesh.clone())),
             MeshMaterial3d(materials.add(StandardMaterial {
@@ -123,6 +134,8 @@ fn setup(
 
         chunk_map.chunks.insert(chunk_pos, chunk_entity);
     }
+
+    info!("Initial chunks generated!");
 
     // ========================================================================
     // ILUMINACIÓN

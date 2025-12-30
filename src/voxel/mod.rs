@@ -16,6 +16,7 @@ pub mod tools;
 pub mod destruction;
 pub mod lod_system;
 pub mod dynamic_chunks;
+pub mod chunk_loading;
 
 pub use greedy_meshing::*;
 pub use voxel_types::*;
@@ -23,3 +24,4 @@ pub use tools::*;
 pub use destruction::*;
 pub use lod_system::*;
 pub use dynamic_chunks::BaseChunk;
+pub use chunk_loading::*;
