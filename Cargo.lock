@@ -784,6 +784,7 @@ dependencies = [
  "bevy-inspector-egui",
  "bevy_rapier3d",
  "fastnoise-lite",
+ "futures-lite",
  "noise",
  "rand 0.8.5",
  "rayon",

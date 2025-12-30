@@ -1,26 +1,32 @@
 //! Sistema de carga dinámica de chunks
 //! Genera y elimina chunks según la posición del jugador
+//! Usa generación asíncrona para evitar lag con grandes distancias de renderizado
+//! Incluye caché persistente en disco
 
-use bevy::prelude::*;
+use bevy::{prelude::*, tasks::{AsyncComputeTaskPool, Task}};
 use std::collections::HashSet;
+use futures_lite::future;
 use crate::{
     core::BASE_CHUNK_SIZE,
     player::Player,
-    voxel::{BaseChunk, ChunkMap, ChunkLOD, greedy_mesh_basechunk_simple},
+    voxel::{
+        BaseChunk, ChunkMap, ChunkLOD, greedy_mesh_basechunk_simple, ChunkOctree,
+    },
     physics::{RigidBody, create_terrain_collider},
 };
 
 /// Radio de carga de chunks (en chunks, no metros)
-pub const CHUNK_LOAD_RADIUS: i32 = 15;
+/// Distant Horizons style: Empezamos con 32 chunks = ~100m radius
+pub const CHUNK_LOAD_RADIUS: i32 = 32;
 
 /// Radio de descarga de chunks (debe ser mayor que LOAD_RADIUS)
-pub const CHUNK_UNLOAD_RADIUS: i32 = 20;
+pub const CHUNK_UNLOAD_RADIUS: i32 = 40;
 
-/// Máximo de chunks a generar por frame (para evitar lag)
-pub const MAX_CHUNKS_PER_FRAME: usize = 4;
+/// Máximo de chunks a generar por frame (muy alto para generación rápida)
+pub const MAX_CHUNKS_PER_FRAME: usize = 64;
 
 /// Máximo de chunks a eliminar por frame
-pub const MAX_CHUNKS_TO_UNLOAD_PER_FRAME: usize = 2;
+pub const MAX_CHUNKS_TO_UNLOAD_PER_FRAME: usize = 16;
 
 /// Recurso que rastrea qué chunks necesitan ser cargados
 #[derive(Resource, Default)]
@@ -28,12 +34,21 @@ pub struct ChunkLoadQueue {
     pub to_load: Vec<IVec3>,
     pub to_unload: Vec<Entity>,
     pub last_player_chunk: IVec3,
+    pub total_loaded: usize,
+    pub last_log_time: f32,
+}
+
+/// Componente para chunks que están siendo generados asíncronamente
+#[derive(Component)]
+pub struct ChunkGenerationTask {
+    pub task: Task<(IVec3, BaseChunk, Mesh)>,
 }
 
 /// Sistema que detecta cuando el jugador se mueve y actualiza la cola de carga
 pub fn update_chunk_load_queue(
     player_query: Query<&Transform, With<Player>>,
     chunk_map: Res<ChunkMap>,
+    _octree: Res<ChunkOctree>,
     mut load_queue: ResMut<ChunkLoadQueue>,
 ) {
     let Ok(player_transform) = player_query.single() else {
@@ -84,35 +99,31 @@ pub fn update_chunk_load_queue(
         dx * dx + dz * dz
     });
 
-    // Encontrar chunks que necesitan ser descargados
+    // Verificar cuáles chunks están fuera del radio de descarga
     load_queue.to_unload.clear();
-    for (chunk_pos, &entity) in chunk_map.chunks.iter() {
+    
+    for chunk_pos in chunk_map.chunks.keys() {
         let dx = chunk_pos.x - player_chunk.x;
         let dz = chunk_pos.z - player_chunk.z;
         let distance_sq = dx * dx + dz * dz;
         
         if distance_sq > CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS {
-            load_queue.to_unload.push(entity);
+            if let Some(&entity) = chunk_map.chunks.get(chunk_pos) {
+                load_queue.to_unload.push(entity);
+            }
         }
-    }
-
-    if !load_queue.to_load.is_empty() {
-        info!("Need to load {} chunks", load_queue.to_load.len());
-    }
-    if !load_queue.to_unload.is_empty() {
-        info!("Need to unload {} chunks", load_queue.to_unload.len());
     }
 }
 
-/// Sistema que carga chunks de la cola
+/// Sistema que inicia la generación asíncrona de chunks con caché
 pub fn load_chunks_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut chunk_map: ResMut<ChunkMap>,
     mut load_queue: ResMut<ChunkLoadQueue>,
 ) {
-    // Cargar hasta MAX_CHUNKS_PER_FRAME chunks por frame
+    let thread_pool = AsyncComputeTaskPool::get();
+    
+    // Iniciar generación de hasta MAX_CHUNKS_PER_FRAME chunks por frame
     let chunks_to_load = load_queue.to_load.len().min(MAX_CHUNKS_PER_FRAME);
     
     for _ in 0..chunks_to_load {
@@ -122,12 +133,39 @@ pub fn load_chunks_system(
                 continue;
             }
 
-            // Generar el chunk
-            let base_chunk = BaseChunk::new(chunk_pos);
-            let mesh = greedy_mesh_basechunk_simple(&base_chunk);
+            // Crear entidad placeholder y marcarla como "en generación"
+            let chunk_entity = commands.spawn_empty().id();
+            chunk_map.chunks.insert(chunk_pos, chunk_entity);
 
-            // Crear entidad
-            let chunk_entity = commands.spawn((
+            // Generar chunk y mesh en background thread
+            // Caché deshabilitado temporalmente para mejor rendimiento
+            let task = thread_pool.spawn(async move {
+                let base_chunk = BaseChunk::new(chunk_pos);
+                let mesh = greedy_mesh_basechunk_simple(&base_chunk);
+                (chunk_pos, base_chunk, mesh)
+            });
+
+            commands.entity(chunk_entity).insert(ChunkGenerationTask { task });
+        }
+    }
+}
+
+/// Sistema que completa la generación de chunks cuando las tareas terminan
+pub fn complete_chunk_generation_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut octree: ResMut<ChunkOctree>,
+    mut load_queue: ResMut<ChunkLoadQueue>,
+    mut task_query: Query<(Entity, &mut ChunkGenerationTask)>,
+    time: Res<Time>,
+) {
+    let mut completed_this_frame = 0;
+    
+    for (entity, mut task) in task_query.iter_mut() {
+        if let Some((chunk_pos, base_chunk, mesh)) = future::block_on(future::poll_once(&mut task.task)) {
+            // Agregar componentes al chunk
+            commands.entity(entity).insert((
                 Mesh3d(meshes.add(mesh.clone())),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: ChunkLOD::Ultra.debug_color(),
@@ -139,12 +177,21 @@ pub fn load_chunks_system(
                 ChunkLOD::Ultra,
                 RigidBody::Fixed,
                 create_terrain_collider(&mesh),
-            )).id();
+            )).remove::<ChunkGenerationTask>();
 
-            chunk_map.chunks.insert(chunk_pos, chunk_entity);
-            
-            info!("Loaded chunk at {:?}", chunk_pos);
+            octree.insert(chunk_pos);
+            load_queue.total_loaded += 1;
+            completed_this_frame += 1;
         }
+    }
+    
+    // Log progreso cada 2 segundos
+    if time.elapsed_secs() - load_queue.last_log_time > 2.0 {
+        load_queue.last_log_time = time.elapsed_secs();
+        let pending = task_query.iter().count() - completed_this_frame;
+        let in_queue = load_queue.to_load.len();
+        info!("Chunks: {} loaded, {} generating, {} in queue", 
+            load_queue.total_loaded, pending, in_queue);
     }
 }
 
@@ -152,25 +199,25 @@ pub fn load_chunks_system(
 pub fn unload_chunks_system(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
+    mut octree: ResMut<ChunkOctree>,
     mut load_queue: ResMut<ChunkLoadQueue>,
-    chunk_query: Query<&BaseChunk>,
+    chunk_query: Query<Option<&BaseChunk>>,
 ) {
     // Descargar hasta MAX_CHUNKS_TO_UNLOAD_PER_FRAME chunks por frame
     let chunks_to_unload = load_queue.to_unload.len().min(MAX_CHUNKS_TO_UNLOAD_PER_FRAME);
     
     for _ in 0..chunks_to_unload {
         if let Some(entity) = load_queue.to_unload.pop() {
-            // Obtener posición del chunk antes de eliminarlo
-            if let Ok(base_chunk) = chunk_query.get(entity) {
-                let chunk_pos = base_chunk.position;
+            if let Ok(maybe_chunk) = chunk_query.get(entity) {
+                // Si el chunk tiene BaseChunk, eliminarlo del octree
+                if let Some(base_chunk) = maybe_chunk {
+                    let chunk_pos = base_chunk.position;
+                    chunk_map.chunks.remove(&chunk_pos);
+                    octree.remove(chunk_pos);
+                }
                 
-                // Eliminar del mapa
-                chunk_map.chunks.remove(&chunk_pos);
-                
-                // Despawnear entidad
+                // Despawnear entidad (incluso si aún está generándose)
                 commands.entity(entity).despawn();
-                
-                info!("Unloaded chunk at {:?}", chunk_pos);
             }
         }
     }

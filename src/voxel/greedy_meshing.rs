@@ -358,3 +358,253 @@ fn is_face_visible_cross_chunk(
 
     true // Sin chunk vecino, renderizar cara
 }
+
+/// Genera mesh usando greedy meshing para un DownsampledChunk
+pub fn greedy_mesh_downsampled(chunk: &crate::voxel::DownsampledChunk) -> Mesh {
+    let size = chunk.effective_size();
+    let scale = chunk.downsample_factor as f32;
+    
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    
+    // Procesar cada eje (X, Y, Z) para greedy meshing
+    for axis in 0..3 {
+        for d in 0..size {
+            // Dirección positiva
+            let mask_pos = generate_downsampled_mask(chunk, axis, d, 1, size);
+            greedy_mesh_downsampled_slice(&mask_pos, chunk, axis, d, 1, size, scale, &mut positions, &mut normals, &mut indices);
+            
+            // Dirección negativa
+            let mask_neg = generate_downsampled_mask(chunk, axis, d, -1, size);
+            greedy_mesh_downsampled_slice(&mask_neg, chunk, axis, d, -1, size, scale, &mut positions, &mut normals, &mut indices);
+        }
+    }
+    
+    // Construir mesh final
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// Genera máscara para chunk downsampled
+fn generate_downsampled_mask(
+    chunk: &crate::voxel::DownsampledChunk,
+    axis: usize,
+    d: usize,
+    direction: i32,
+    size: usize,
+) -> Vec<Option<VoxelType>> {
+    let mut mask = vec![None; size * size];
+    
+    for i in 0..size {
+        for j in 0..size {
+            let (x, y, z) = match axis {
+                0 => (d, i, j),
+                1 => (i, d, j),
+                _ => (i, j, d),
+            };
+            
+            if x >= size || y >= size || z >= size {
+                continue;
+            }
+            
+            let current_voxel = chunk.voxel_types[x][y][z];
+            
+            if current_voxel == VoxelType::Air {
+                continue;
+            }
+            
+            // Verificar si la cara es visible
+            let (nx, ny, nz) = match axis {
+                0 => ((d as i32 + direction) as usize, i, j),
+                1 => (i, (d as i32 + direction) as usize, j),
+                _ => (i, j, (d as i32 + direction) as usize),
+            };
+            
+            let neighbor_is_air = if nx >= size || ny >= size || nz >= size {
+                true
+            } else {
+                chunk.voxel_types[nx][ny][nz] == VoxelType::Air
+            };
+            
+            if neighbor_is_air {
+                mask[i * size + j] = Some(current_voxel);
+            }
+        }
+    }
+    
+    mask
+}
+
+/// Aplica greedy meshing a un slice downsampled
+fn greedy_mesh_downsampled_slice(
+    mask: &[Option<VoxelType>],
+    chunk: &crate::voxel::DownsampledChunk,
+    axis: usize,
+    d: usize,
+    direction: i32,
+    size: usize,
+    scale: f32,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+) {
+    let mut visited = vec![false; size * size];
+    
+    for i in 0..size {
+        for j in 0..size {
+            let idx = i * size + j;
+            
+            if visited[idx] || mask[idx].is_none() {
+                continue;
+            }
+            
+            let voxel_type = mask[idx].unwrap();
+            
+            // Encontrar rectángulo máximo
+            let (width, height) = find_max_rect_downsampled(mask, &mut visited, i, j, voxel_type, size);
+            
+            // Agregar quad
+            add_downsampled_quad(
+                chunk, axis, d, i, j, width, height, direction, voxel_type, scale,
+                positions, normals, indices
+            );
+        }
+    }
+}
+
+/// Encuentra rectángulo máximo en chunk downsampled
+fn find_max_rect_downsampled(
+    mask: &[Option<VoxelType>],
+    visited: &mut [bool],
+    start_i: usize,
+    start_j: usize,
+    voxel_type: VoxelType,
+    size: usize,
+) -> (usize, usize) {
+    let mut width = 1;
+    while start_j + width < size {
+        let idx = start_i * size + start_j + width;
+        if visited[idx] || mask[idx] != Some(voxel_type) {
+            break;
+        }
+        width += 1;
+    }
+    
+    let mut height = 1;
+    'outer: while start_i + height < size {
+        for w in 0..width {
+            let idx = (start_i + height) * size + start_j + w;
+            if visited[idx] || mask[idx] != Some(voxel_type) {
+                break 'outer;
+            }
+        }
+        height += 1;
+    }
+    
+    // Marcar como visitados
+    for h in 0..height {
+        for w in 0..width {
+            visited[(start_i + h) * size + start_j + w] = true;
+        }
+    }
+    
+    (width, height)
+}
+
+/// Agrega quad para chunk downsampled
+fn add_downsampled_quad(
+    chunk: &crate::voxel::DownsampledChunk,
+    axis: usize,
+    d: usize,
+    i: usize,
+    j: usize,
+    width: usize,
+    height: usize,
+    direction: i32,
+    voxel_type: VoxelType,
+    scale: f32,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+) {
+    let voxel_size = VOXEL_SIZE * scale;
+    
+    let base_idx = positions.len() as u32;
+    
+    let (v0, v1, v2, v3, normal) = match (axis, direction) {
+        (0, 1) => {
+            let x = (d + 1) as f32 * voxel_size;
+            let y0 = i as f32 * voxel_size;
+            let y1 = (i + height) as f32 * voxel_size;
+            let z0 = j as f32 * voxel_size;
+            let z1 = (j + width) as f32 * voxel_size;
+            (
+                [x, y0, z0], [x, y1, z0], [x, y1, z1], [x, y0, z1],
+                [1.0, 0.0, 0.0]
+            )
+        },
+        (0, -1) => {
+            let x = d as f32 * voxel_size;
+            let y0 = i as f32 * voxel_size;
+            let y1 = (i + height) as f32 * voxel_size;
+            let z0 = j as f32 * voxel_size;
+            let z1 = (j + width) as f32 * voxel_size;
+            (
+                [x, y0, z1], [x, y1, z1], [x, y1, z0], [x, y0, z0],
+                [-1.0, 0.0, 0.0]
+            )
+        },
+        (1, 1) => {
+            let y = (d + 1) as f32 * voxel_size;
+            let x0 = i as f32 * voxel_size;
+            let x1 = (i + height) as f32 * voxel_size;
+            let z0 = j as f32 * voxel_size;
+            let z1 = (j + width) as f32 * voxel_size;
+            (
+                [x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1],
+                [0.0, 1.0, 0.0]
+            )
+        },
+        (1, -1) => {
+            let y = d as f32 * voxel_size;
+            let x0 = i as f32 * voxel_size;
+            let x1 = (i + height) as f32 * voxel_size;
+            let z0 = j as f32 * voxel_size;
+            let z1 = (j + width) as f32 * voxel_size;
+            (
+                [x0, y, z1], [x1, y, z1], [x1, y, z0], [x0, y, z0],
+                [0.0, -1.0, 0.0]
+            )
+        },
+        (2, 1) => {
+            let z = (d + 1) as f32 * voxel_size;
+            let x0 = i as f32 * voxel_size;
+            let x1 = (i + height) as f32 * voxel_size;
+            let y0 = j as f32 * voxel_size;
+            let y1 = (j + width) as f32 * voxel_size;
+            (
+                [x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z],
+                [0.0, 0.0, 1.0]
+            )
+        },
+        _ => {
+            let z = d as f32 * voxel_size;
+            let x0 = i as f32 * voxel_size;
+            let x1 = (i + height) as f32 * voxel_size;
+            let y0 = j as f32 * voxel_size;
+            let y1 = (j + width) as f32 * voxel_size;
+            (
+                [x0, y1, z], [x1, y1, z], [x1, y0, z], [x0, y0, z],
+                [0.0, 0.0, -1.0]
+            )
+        },
+    };
+    
+    positions.extend_from_slice(&[v0, v1, v2, v3]);
+    normals.extend_from_slice(&[normal, normal, normal, normal]);
+    indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+}

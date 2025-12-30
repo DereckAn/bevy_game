@@ -11,6 +11,7 @@ fastnoise-lite = "1.1.1"
 noise = "0.9.0"
 rand = "0.8"
 rayon = "1.11.0"
+futures-lite = "2.5.0"
 
 # Compilación rápida en desarrollo
 [profile.dev]

@@ -17,6 +17,9 @@ pub mod destruction;
 pub mod lod_system;
 pub mod dynamic_chunks;
 pub mod chunk_loading;
+pub mod octree;
+pub mod chunk_cache;
+pub mod downsampling;
 
 pub use greedy_meshing::*;
 pub use voxel_types::*;
@@ -25,3 +28,6 @@ pub use destruction::*;
 pub use lod_system::*;
 pub use dynamic_chunks::BaseChunk;
 pub use chunk_loading::*;
+pub use octree::*;
+pub use chunk_cache::*;
+pub use downsampling::*;

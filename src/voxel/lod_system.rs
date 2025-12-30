@@ -1,17 +1,21 @@
 //! Sistema de level of detail (LOD) para chunks dinamicos
-//! 
+//! Usa downsampling para reducir detalle en chunks distantes
 
 use bevy::prelude::*;
-use crate::{core::constants::{BASE_CHUNK_SIZE, LOD_DISTANCES}, player::Player, voxel::BaseChunk};
+use crate::{
+    core::constants::{BASE_CHUNK_SIZE, LOD_DISTANCES}, 
+    player::Player, 
+    voxel::{BaseChunk, DownsampledChunk, greedy_mesh_downsampled},
+};
 
 /// Niveles de detalle para chunks
 #[derive(Debug, Component, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChunkLOD{
-    Ultra,   // 32³ individual (0-50m)
-    High,    // 64³ (2x2x2 merged) (50-100m)
-    Medium,  // 128³ (4x4x4 merged) (100-200m)
-    Low,     // 256³ (8x8x8 merged) (200-400m)
-    Minimal, // 512³ (16x16x16 merged) (400m+)
+    Ultra,   // 32³ completo (0-32m)
+    High,    // 32³ completo (32-64m)
+    Medium,  // 16³ downsampled 2x (64-128m)
+    Low,     // 8³ downsampled 4x (128-192m)
+    Minimal, // 4³ downsampled 8x (192m+)
 }
 
 impl ChunkLOD {
@@ -26,20 +30,20 @@ impl ChunkLOD {
         }
     }
 
-    // Factor de combinacion (cuantos chunks base se combinan)
-    pub fn merge_factor(&self) -> usize {
+    // Factor de downsampling (cuánto se reduce la resolución)
+    pub fn downsample_factor(&self) -> usize {
         match self {
-            ChunkLOD::Ultra => 1,    // No merging
-            ChunkLOD::High => 2,     // 2x2x2 = 8 chunks
-            ChunkLOD::Medium => 4,   // 4x4x4 = 64 chunks
-            ChunkLOD::Low => 8,      // 8x8x8 = 512 chunks
-            ChunkLOD::Minimal => 16, // 16x16x16 = 4096 chunks
+            ChunkLOD::Ultra => 1,    // 32³ completo
+            ChunkLOD::High => 1,     // 32³ completo
+            ChunkLOD::Medium => 2,   // 16³ (2x downsampling)
+            ChunkLOD::Low => 4,      // 8³ (4x downsampling)
+            ChunkLOD::Minimal => 8,  // 4³ (8x downsampling)
         }
     }
-
-    // Tamano efectivo del chunk combinado
-    pub fn effective_size(&self) -> usize {
-        BASE_CHUNK_SIZE * self.merge_factor()
+    
+    // Indica si este LOD requiere downsampling
+    pub fn needs_downsampling(&self) -> bool {
+        matches!(self, ChunkLOD::Medium | ChunkLOD::Low | ChunkLOD::Minimal)
     }
 
     /// Color de debug para visualizar LOD
@@ -55,7 +59,8 @@ impl ChunkLOD {
     }
 }
 
-/// Sistema que actualiza LOD y color basado en posicion del jugador 
+/// Sistema que actualiza LOD, color basado en posicion del jugador 
+/// (Downsampling deshabilitado temporalmente para mejor rendimiento inicial)
 pub fn update_chunk_lod_system(
     player_query: Query<&Transform, With<Player>>,
     mut chunk_query: Query<(&BaseChunk, &mut ChunkLOD, &MeshMaterial3d<StandardMaterial>)>,
@@ -67,9 +72,8 @@ pub fn update_chunk_lod_system(
 
     for (base_chunk, mut chunk_lod, material_handle) in chunk_query.iter_mut() {
         // Calcular posición del chunk en el mundo desde su posición en la grilla
-        // Cada chunk es BASE_CHUNK_SIZE * VOXEL_SIZE = 32 * 0.1 = 3.2 metros
         let chunk_world_pos = Vec3::new(
-            base_chunk.position.x as f32 * BASE_CHUNK_SIZE as f32 * 0.1,  // VOXEL_SIZE = 0.1
+            base_chunk.position.x as f32 * BASE_CHUNK_SIZE as f32 * 0.1,
             base_chunk.position.y as f32 * BASE_CHUNK_SIZE as f32 * 0.1,
             base_chunk.position.z as f32 * BASE_CHUNK_SIZE as f32 * 0.1,
         );
@@ -80,12 +84,10 @@ pub fn update_chunk_lod_system(
         if *chunk_lod != new_lod {
             *chunk_lod = new_lod;
             
-            // Actualizar color del material para visualizar LOD
+            // Actualizar color del material
             if let Some(material) = materials.get_mut(&material_handle.0) {
                 material.base_color = new_lod.debug_color();
             }
-            
-            info!("Chunk at {:?} LOD changed to {:?} at distance {:.1}m", base_chunk.position, new_lod, distance);
         }
     }
 }

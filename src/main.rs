@@ -26,8 +26,10 @@ use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
     ChunkMap, start_voxel_breaking_system, update_voxel_breaking_system,
     update_chunk_lod_system, ChunkLOD, BaseChunk,
-    greedy_mesh_basechunk_simple, greedy_mesh_basechunk,
-    ChunkLoadQueue, update_chunk_load_queue, load_chunks_system, unload_chunks_system,
+    greedy_mesh_basechunk_simple,
+    ChunkLoadQueue, update_chunk_load_queue, load_chunks_system, 
+    complete_chunk_generation_system, unload_chunks_system,
+    ChunkOctree, BoundingBox,
 }; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
@@ -60,15 +62,20 @@ fn main() {
             chunks: HashMap::new(),
         })
         .insert_resource(ChunkLoadQueue::default())
+        .insert_resource(ChunkOctree::new(BoundingBox::new(
+            IVec3::new(-200, -10, -200),
+            IVec3::new(200, 10, 200),
+        )))
 
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
         .add_systems(Update, (
             start_voxel_breaking_system,
             update_voxel_breaking_system,        
             update_chunk_lod_system,
-            // Sistemas de carga dinámica de chunks
+            // Sistemas de carga dinámica de chunks (async)
             update_chunk_load_queue,
             load_chunks_system,
+            complete_chunk_generation_system,
             unload_chunks_system,
         ).chain())
         .run(); // Inicia el loop principal del juego
@@ -91,14 +98,32 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>, // Recurso mutable para gestionar mallas 3D
     mut materials: ResMut<Assets<StandardMaterial>>, // Recurso mutable para gestionar materiales
     mut chunk_map: ResMut<ChunkMap>,
+    mut octree: ResMut<ChunkOctree>,
 ) {
+    // ========================================================================
+    // INICIALIZAR CACHÉ DE CHUNKS (DESHABILITADO TEMPORALMENTE)
+    // ========================================================================
+    
+    // Caché deshabilitado para mejor rendimiento inicial
+    // if let Err(e) = init_cache_dir() {
+    //     warn!("Failed to initialize cache directory: {}", e);
+    // } else {
+    //     match get_cache_stats() {
+    //         Ok(stats) => {
+    //             info!("Cache initialized: {} chunks cached ({:.2} MB)", 
+    //                 stats.chunk_count, stats.total_size_mb());
+    //         }
+    //         Err(e) => warn!("Failed to get cache stats: {}", e),
+    //     }
+    // }
+
     // ========================================================================
     // GENERACIÓN DE TERRENO INICIAL
     // ========================================================================
 
-    // Generar solo chunks iniciales alrededor del spawn (radio de 10 chunks)
+    // Generar solo chunks iniciales alrededor del spawn (radio de 5 chunks)
     // El sistema de carga dinámica generará el resto
-    let initial_radius = 10;
+    let initial_radius = 5;
     
     let mut temp_chunks: HashMap<IVec3, BaseChunk> = HashMap::new();
     
@@ -133,9 +158,11 @@ fn setup(
         )).id();
 
         chunk_map.chunks.insert(chunk_pos, chunk_entity);
+        octree.insert(chunk_pos); // Agregar al Octree
     }
 
-    info!("Initial chunks generated!");
+    let stats = octree.stats();
+    info!("Initial chunks generated! Octree stats: {:?}", stats);
 
     // ========================================================================
     // ILUMINACIÓN
