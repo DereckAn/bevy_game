@@ -17,12 +17,13 @@ pub const MAX_WORLD_HEIGHT: usize = 2048;
 pub const VERTICAL_CHUNKS: usize = MAX_WORLD_HEIGHT / BASE_CHUNK_SIZE;
 
 // Distancias para cada nivel de LOD (Level of Detail)
+// Ajustadas para chunks de 3.2m (32 voxels * 0.1m)
 pub const LOD_DISTANCES: [f32; 5] = [
-    50.0,  // Ultra: 0-50 metros
-    100.0, // High: 50-100 metros  
-    200.0, // Medium: 100-200 metros
-    400.0, // Low: 200-400 metros
-    800.0, // Minimal: 400+ metros
+    16.0,  // Ultra: 0-16 metros (~5 chunks)
+    32.0,  // High: 16-32 metros (~10 chunks)
+    64.0,  // Medium: 32-64 metros (~20 chunks)
+    128.0, // Low: 64-128 metros (~40 chunks)
+    256.0, // Minimal: 128+ metros (~80+ chunks)
 ];
 
 // Tamaño máximo cuando se combinan chunks (16x16x16 = 512³)

@@ -3,13 +3,13 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
-    Chunk, VoxelType,
+    BaseChunk, VoxelType,
     tools::{Tool, ToolType},
+    greedy_meshing::greedy_mesh_basechunk,
 };
 use crate::{physics::spawn_rapier_voxel_drop, player::components::Player};
 use crate::{
-    core::constants::{CHUNK_SIZE, VOXEL_SIZE},
-    voxel::generate_mesh_with_neighbors,
+    core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE},
 };
 use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
@@ -76,7 +76,7 @@ pub fn calculate_break_time(voxel_type: VoxelType, tool_type: ToolType) -> f32 {
 /// Convierte una posicion mundial a la posicion de chunk y posicion local.
 ///
 /// # Retorna
-/// (chunk_pos, local_pos, vloxel_pos_in_chunk)
+/// (chunk_pos, local_pos, voxel_pos_in_chunk)
 pub fn world_to_voxel(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
     // Convertir a coordenadas de voxel
     let voxel_x = (world_pos.x / VOXEL_SIZE).floor() as i32;
@@ -84,14 +84,14 @@ pub fn world_to_voxel(world_pos: Vec3) -> (IVec3, IVec3, IVec3) {
     let voxel_z = (world_pos.z / VOXEL_SIZE).floor() as i32;
 
     // Calcular la posicion del chunk
-    let chunk_x = voxel_x.div_euclid(CHUNK_SIZE as i32);
-    let chunk_y = voxel_y.div_euclid(CHUNK_SIZE as i32);
-    let chunk_z = voxel_z.div_euclid(CHUNK_SIZE as i32);
+    let chunk_x = voxel_x.div_euclid(BASE_CHUNK_SIZE as i32);
+    let chunk_y = voxel_y.div_euclid(BASE_CHUNK_SIZE as i32);
+    let chunk_z = voxel_z.div_euclid(BASE_CHUNK_SIZE as i32);
 
     // Calcular la posicion local del voxel dentro del chunk
-    let local_x = voxel_x.rem_euclid(CHUNK_SIZE as i32);
-    let local_y = voxel_y.rem_euclid(CHUNK_SIZE as i32);
-    let local_z = voxel_z.rem_euclid(CHUNK_SIZE as i32);
+    let local_x = voxel_x.rem_euclid(BASE_CHUNK_SIZE as i32);
+    let local_y = voxel_y.rem_euclid(BASE_CHUNK_SIZE as i32);
+    let local_z = voxel_z.rem_euclid(BASE_CHUNK_SIZE as i32);
 
     (
         IVec3::new(chunk_x, chunk_y, chunk_z),
@@ -120,7 +120,7 @@ pub fn raycast_voxel(
     direction: Vec3,
     max_distance: f32,
     chunk_map: &ChunkMap,
-    chunks: &Query<&Chunk>,
+    chunks: &Query<&BaseChunk>,
 ) -> Option<(Entity, IVec3, IVec3, VoxelType)> {
     let dir = direction.normalize();
 
@@ -207,11 +207,11 @@ pub fn raycast_voxel(
             if let Ok(chunk) = chunks.get(chunk_entity) {
                 // Verificar limites del chunk
                 if local_pos.x >= 0
-                    && local_pos.x < CHUNK_SIZE as i32
+                    && local_pos.x < BASE_CHUNK_SIZE as i32
                     && local_pos.y >= 0
-                    && local_pos.y < CHUNK_SIZE as i32
+                    && local_pos.y < BASE_CHUNK_SIZE as i32
                     && local_pos.z >= 0
-                    && local_pos.z < CHUNK_SIZE as i32
+                    && local_pos.z < BASE_CHUNK_SIZE as i32
                 {
                     let voxel_type = chunk.voxel_types[local_pos.x as usize][local_pos.y as usize]
                         [local_pos.z as usize];
@@ -265,7 +265,7 @@ pub fn start_voxel_breaking_system(
     mouse_input: Res<ButtonInput<MouseButton>>,
     camera_query: Query<&Transform, With<Camera>>,
     chunk_map: Res<ChunkMap>,
-    chunks: Query<&Chunk>,
+    chunks: Query<&BaseChunk>,
     player_query: Query<&Tool, With<Player>>,
     mut commands: Commands,
     mut breaking_query: Query<(Entity, &mut VoxelBreaking)>,
@@ -341,7 +341,7 @@ pub fn start_voxel_breaking_system(
 pub fn update_voxel_breaking_system(
     time: Res<Time>,
     mut breaking_query: Query<(Entity, &mut VoxelBreaking)>,
-    mut chunk_queries: ParamSet<(Query<&mut Chunk>, Query<&Chunk>)>,
+    mut chunk_queries: ParamSet<(Query<&mut BaseChunk>, Query<&BaseChunk>)>,
     chunk_map: Res<ChunkMap>,
     mut commands: Commands,
     mut player_query: Query<&mut Tool, With<Player>>,
@@ -376,7 +376,7 @@ pub fn update_voxel_breaking_system(
                         let target_z = (breaking.local_pos.z + offset.z) as usize;
 
                         // Verificar limites del chunk
-                        if target_x < CHUNK_SIZE && target_y < CHUNK_SIZE && target_z < CHUNK_SIZE {
+                        if target_x < BASE_CHUNK_SIZE && target_y < BASE_CHUNK_SIZE && target_z < BASE_CHUNK_SIZE {
                             let voxel_type = chunk.voxel_types[target_x][target_y][target_z];
 
                             // Solo destruir si es sólido
@@ -398,9 +398,9 @@ pub fn update_voxel_breaking_system(
                                         voxel_type,
                                         drops, 
                                         Vec3::new(
-                                            (breaking.chunk_pos.x * CHUNK_SIZE as i32 + target_x as i32) as f32 * VOXEL_SIZE,
-                                            (breaking.chunk_pos.y * CHUNK_SIZE as i32 + target_y as i32) as f32 * VOXEL_SIZE,
-                                            (breaking.chunk_pos.z * CHUNK_SIZE as i32 + target_z as i32) as f32 * VOXEL_SIZE,
+                                            (breaking.chunk_pos.x * BASE_CHUNK_SIZE as i32 + target_x as i32) as f32 * VOXEL_SIZE,
+                                            (breaking.chunk_pos.y * BASE_CHUNK_SIZE as i32 + target_y as i32) as f32 * VOXEL_SIZE,
+                                            (breaking.chunk_pos.z * BASE_CHUNK_SIZE as i32 + target_z as i32) as f32 * VOXEL_SIZE,
                                         ),
                                         time.elapsed_secs(),
                                     );
@@ -416,12 +416,11 @@ pub fn update_voxel_breaking_system(
 
                 // Luego regenerar el mesh (después de liberar el borrow mutable)
                 if let Some(_) = broken_voxel_type {
-                    // Usar el query inmutable para generar el mesh
+                    // Usar el query inmutable para generar el mesh con greedy meshing
                     let chunks_read = chunk_queries.p1();
                     if let Ok(chunk) = chunks_read.get(chunk_entity) {
-                        // Generar nuevo mesh con neighbors
-                        let new_mesh =
-                            generate_mesh_with_neighbors(&chunk, &chunk_map, &chunks_read);
+                        // Generar nuevo mesh con greedy meshing y neighbors
+                        let new_mesh = greedy_mesh_basechunk(chunk, &chunk_map, &chunks_read);
 
                         if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity) {
                             *mesh3d = Mesh3d(meshes.add(new_mesh));

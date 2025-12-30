@@ -1,26 +1,25 @@
 //! # Modulo de Voxels
 //! 
-//! Sistema de terreno basado en voxels usando el algoritmo Surface Nets
-//! para generar meshessuaves a partir de campo de densidad. 
+//! Sistema de terreno basado en voxels con greedy meshing optimizado
 //! 
 //! ## Estructura
-//! - 'chunk': Define la estructura de datos del chunk y generacion de terreno
-//! - 'meshing': Contiene las funciones para generar mallas suaves a partir de los datos de densidad
+//! - 'greedy_meshing': Algoritmo de meshing optimizado que reduce triangulos 70-95%
 //! - 'voxel_types': Define los tipos de materiales y sus propiedades
+//! - 'tools': Herramientas para interactuar con voxels
+//! - 'destruction': Sistema de destruccion de voxels
+//! - 'lod_system': Sistema de nivel de detalle (LOD) para chunks
+//! - 'dynamic_chunks': Chunks base de 32³ con generacion de terreno
 
-
-pub mod chunk;
-pub mod meshing;
+pub mod greedy_meshing;
 pub mod voxel_types;
 pub mod tools;
 pub mod destruction;
 pub mod lod_system;
 pub mod dynamic_chunks;
 
-pub use chunk::*;
-pub use meshing::*;
+pub use greedy_meshing::*;
 pub use voxel_types::*;
 pub use tools::*;
 pub use destruction::*;
 pub use lod_system::*;
-pub use dynamic_chunks::*;
+pub use dynamic_chunks::BaseChunk;

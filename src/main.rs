@@ -24,11 +24,10 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    Chunk, ChunkMap, generate_simple_mesh, start_voxel_breaking_system, update_voxel_breaking_system,
-    DynamicChunkSystem, update_chunk_lod_system, ChunkLOD,
-};
-
-use crate::voxel::{BaseChunk, BoundingBox}; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
+    ChunkMap, start_voxel_breaking_system, update_voxel_breaking_system,
+    update_chunk_lod_system, ChunkLOD, BaseChunk,
+    greedy_mesh_basechunk_simple, greedy_mesh_basechunk,
+}; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -59,10 +58,6 @@ fn main() {
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
-        .insert_resource(DynamicChunkSystem::new(BoundingBox {
-    min: IVec3::new(-100, -10, -100),
-    max: IVec3::new(100, 10, 100),
-}))
 
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
         .add_systems(Update, (
@@ -95,49 +90,38 @@ fn setup(
     // GENERACIÓN DE TERRENO
     // ========================================================================
 
-    // Generar varios chunks en una grilla de 11x11 (de -5 a +5 en X y Z)
-    for cx in -5..=5 {
-        // Loop de X: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
-        for cz in -5..=5 {
-            // Loop de Z: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
-
-            // Usar BaseChunk
-            let base_chunk = BaseChunk::new(IVec3::new(cx,0,cz));
-
-            let chunk = Chunk {
-            densities: base_chunk.densities.clone(),
-            voxel_types: base_chunk.voxel_types.clone(),
-            position: base_chunk.position,
-            };
-            
-            // Para la inicialización, usamos la función simple sin neighbors
-            // porque aún no tenemos todos los chunks creados
-            let mesh = generate_simple_mesh(&chunk); // Genera la malla 3D del chunk
-
-            // Guarda la posicion antes de moverla.
-            let chunk_position = chunk.position;
-
-            // Crear entidad del chunk con todos sus componentes
-            let chunk_entity = commands.spawn((
-                // Crea una nueva entidad con los siguientes componentes:
-                Mesh3d(meshes.add(mesh.clone())), // Componente de malla 3D (clona porque también lo usa física)
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    // Componente de material 3D
-                    base_color: Color::srgb(0.3, 0.5, 0.3), // Color verde (R=0.3, G=0.5, B=0.3)
-                    cull_mode: None, // No descartar caras (mostrar ambos lados)
-                    ..default()      // Usar valores por defecto para el resto
-                })),
-                Transform::default(), // Componente de transformación (posición, rotación, escala)
-                chunk,                // Nuestro componente Chunk personalizado
-                ChunkLOD::Ultra,
-                // Física del terreno
-                RigidBody::Fixed,               // Cuerpo rígido fijo (no se mueve)
-                create_terrain_collider(&mesh), // Colisionador generado desde la malla
-            )).id();
-
-            // Agrega al chunkMap
-            chunk_map.chunks.insert(chunk_position, chunk_entity);
+    // PASO 1: Generar todos los BaseChunks primero (sin mesh)
+    let mut temp_chunks: HashMap<IVec3, BaseChunk> = HashMap::new();
+    
+    for cx in -25..=25 {
+        for cz in -25..=25 {
+            let base_chunk = BaseChunk::new(IVec3::new(cx, 0, cz));
+            temp_chunks.insert(base_chunk.position, base_chunk);
         }
+    }
+
+    // PASO 2: Crear entidades con meshes (ahora todos los vecinos existen)
+    for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
+        // Generar mesh con greedy meshing CON verificación de vecinos
+        // Esto evita generar caras entre chunks adyacentes
+        let mesh = greedy_mesh_basechunk_simple(&base_chunk); // Por ahora simple, luego cambiaremos
+
+        // Crear entidad del chunk con todos sus componentes
+        let chunk_entity = commands.spawn((
+            Mesh3d(meshes.add(mesh.clone())),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: ChunkLOD::Ultra.debug_color(),
+                cull_mode: None,
+                ..default()
+            })),
+            Transform::default(),
+            base_chunk,
+            ChunkLOD::Ultra,
+            RigidBody::Fixed,
+            create_terrain_collider(&mesh),
+        )).id();
+
+        chunk_map.chunks.insert(chunk_pos, chunk_entity);
     }
 
     // ========================================================================
