@@ -30,6 +30,7 @@ use voxel::{
     ChunkLoadQueue, update_chunk_load_queue, load_chunks_system, 
     complete_chunk_generation_system, unload_chunks_system,
     ChunkOctree, BoundingBox,
+    update_frustum_culling,
 }; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
 
 // ============================================================================
@@ -77,6 +78,8 @@ fn main() {
             load_chunks_system,
             complete_chunk_generation_system,
             unload_chunks_system,
+            // Frustum culling DISABLED - tiene bugs, necesita corrección
+            // update_frustum_culling,
         ).chain())
         .run(); // Inicia el loop principal del juego
 }
@@ -124,6 +127,8 @@ fn setup(
     // Generar solo chunks iniciales alrededor del spawn (radio de 5 chunks)
     // El sistema de carga dinámica generará el resto
     let initial_radius = 5;
+    let y_min = -1;  // Chunks bajo tierra
+    let y_max = 3;   // Chunks en el aire (para montañas)
     
     let mut temp_chunks: HashMap<IVec3, BaseChunk> = HashMap::new();
     
@@ -131,8 +136,11 @@ fn setup(
         for cz in -initial_radius..=initial_radius {
             // Solo generar en un círculo, no un cuadrado
             if cx * cx + cz * cz <= initial_radius * initial_radius {
-                let base_chunk = BaseChunk::new(IVec3::new(cx, 0, cz));
-                temp_chunks.insert(base_chunk.position, base_chunk);
+                // Generar chunks en múltiples niveles verticales
+                for cy in y_min..=y_max {
+                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz));
+                    temp_chunks.insert(base_chunk.position, base_chunk);
+                }
             }
         }
     }
@@ -142,23 +150,42 @@ fn setup(
     // Crear entidades con meshes
     for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
         let mesh = greedy_mesh_basechunk_simple(&base_chunk);
+        
+        // Solo crear entidad si el mesh tiene vértices
+        if mesh.count_vertices() > 0 {
+            let chunk_entity = commands.spawn((
+                Mesh3d(meshes.add(mesh.clone())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: ChunkLOD::Ultra.debug_color(),
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                base_chunk,
+                ChunkLOD::Ultra,
+                RigidBody::Fixed,
+                create_terrain_collider(&mesh),
+            )).id();
 
-        let chunk_entity = commands.spawn((
-            Mesh3d(meshes.add(mesh.clone())),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: ChunkLOD::Ultra.debug_color(),
-                cull_mode: None,
-                ..default()
-            })),
-            Transform::default(),
-            base_chunk,
-            ChunkLOD::Ultra,
-            RigidBody::Fixed,
-            create_terrain_collider(&mesh),
-        )).id();
+            chunk_map.chunks.insert(chunk_pos, chunk_entity);
+            octree.insert(chunk_pos);
+        } else {
+            // Chunk vacío, crear sin collider
+            let chunk_entity = commands.spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: ChunkLOD::Ultra.debug_color(),
+                    cull_mode: None,
+                    ..default()
+                })),
+                Transform::default(),
+                base_chunk,
+                ChunkLOD::Ultra,
+            )).id();
 
-        chunk_map.chunks.insert(chunk_pos, chunk_entity);
-        octree.insert(chunk_pos); // Agregar al Octree
+            chunk_map.chunks.insert(chunk_pos, chunk_entity);
+            octree.insert(chunk_pos);
+        }
     }
 
     let stats = octree.stats();

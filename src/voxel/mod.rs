@@ -20,6 +20,8 @@ pub mod chunk_loading;
 pub mod octree;
 pub mod chunk_cache;
 pub mod downsampling;
+pub mod biomes;
+pub mod frustum_culling;
 
 pub use greedy_meshing::*;
 pub use voxel_types::*;
@@ -31,3 +33,5 @@ pub use chunk_loading::*;
 pub use octree::*;
 pub use chunk_cache::*;
 pub use downsampling::*;
+pub use biomes::*;
+pub use frustum_culling::*;

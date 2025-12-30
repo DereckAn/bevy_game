@@ -16,14 +16,14 @@ use crate::{
 };
 
 /// Radio de carga de chunks (en chunks, no metros)
-/// Distant Horizons style: Empezamos con 32 chunks = ~100m radius
-pub const CHUNK_LOAD_RADIUS: i32 = 32;
+/// Reducido para mejor rendimiento con chunks verticales
+pub const CHUNK_LOAD_RADIUS: i32 = 16;
 
 /// Radio de descarga de chunks (debe ser mayor que LOAD_RADIUS)
-pub const CHUNK_UNLOAD_RADIUS: i32 = 40;
+pub const CHUNK_UNLOAD_RADIUS: i32 = 20;
 
-/// Máximo de chunks a generar por frame (muy alto para generación rápida)
-pub const MAX_CHUNKS_PER_FRAME: usize = 64;
+/// Máximo de chunks a generar por frame (reducido para mejor FPS)
+pub const MAX_CHUNKS_PER_FRAME: usize = 32;
 
 /// Máximo de chunks a eliminar por frame
 pub const MAX_CHUNKS_TO_UNLOAD_PER_FRAME: usize = 16;
@@ -65,21 +65,27 @@ pub fn update_chunk_load_queue(
 
     load_queue.last_player_chunk = player_chunk;
 
-    // Determinar qué chunks deberían estar cargados
+    // Determinar qué chunks deberían estar cargados (incluyendo verticales)
     let mut chunks_needed: HashSet<IVec3> = HashSet::new();
+    
+    // Rango vertical reducido: desde -1 hasta +3 chunks (mejor rendimiento)
+    let y_min = -1;
+    let y_max = 3;
     
     for cx in -CHUNK_LOAD_RADIUS..=CHUNK_LOAD_RADIUS {
         for cz in -CHUNK_LOAD_RADIUS..=CHUNK_LOAD_RADIUS {
-            let chunk_pos = IVec3::new(
-                player_chunk.x + cx,
-                0, // Por ahora solo Y=0
-                player_chunk.z + cz,
-            );
-            
             // Verificar si está dentro del radio (circular, no cuadrado)
             let distance_sq = cx * cx + cz * cz;
             if distance_sq <= CHUNK_LOAD_RADIUS * CHUNK_LOAD_RADIUS {
-                chunks_needed.insert(chunk_pos);
+                // Generar chunks en múltiples niveles verticales
+                for cy in y_min..=y_max {
+                    let chunk_pos = IVec3::new(
+                        player_chunk.x + cx,
+                        cy,
+                        player_chunk.z + cz,
+                    );
+                    chunks_needed.insert(chunk_pos);
+                }
             }
         }
     }
@@ -93,10 +99,12 @@ pub fn update_chunk_load_queue(
     }
 
     // Ordenar por distancia al jugador (cargar los más cercanos primero)
+    let player_pos = player_chunk;
     load_queue.to_load.sort_by_key(|pos| {
-        let dx = pos.x - player_chunk.x;
-        let dz = pos.z - player_chunk.z;
-        dx * dx + dz * dz
+        let dx = pos.x - player_pos.x;
+        let dy = pos.y - player_pos.y;
+        let dz = pos.z - player_pos.z;
+        dx * dx + dy * dy + dz * dz
     });
 
     // Verificar cuáles chunks están fuera del radio de descarga
@@ -104,10 +112,14 @@ pub fn update_chunk_load_queue(
     
     for chunk_pos in chunk_map.chunks.keys() {
         let dx = chunk_pos.x - player_chunk.x;
+        let _dy = chunk_pos.y - player_chunk.y;
         let dz = chunk_pos.z - player_chunk.z;
         let distance_sq = dx * dx + dz * dz;
         
-        if distance_sq > CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS {
+        // Descargar si está fuera del radio horizontal O fuera del rango vertical
+        if distance_sq > CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS 
+            || chunk_pos.y < y_min 
+            || chunk_pos.y > y_max {
             if let Some(&entity) = chunk_map.chunks.get(chunk_pos) {
                 load_queue.to_unload.push(entity);
             }
@@ -164,20 +176,38 @@ pub fn complete_chunk_generation_system(
     
     for (entity, mut task) in task_query.iter_mut() {
         if let Some((chunk_pos, base_chunk, mesh)) = future::block_on(future::poll_once(&mut task.task)) {
-            // Agregar componentes al chunk
-            commands.entity(entity).insert((
-                Mesh3d(meshes.add(mesh.clone())),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: ChunkLOD::Ultra.debug_color(),
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                base_chunk,
-                ChunkLOD::Ultra,
-                RigidBody::Fixed,
-                create_terrain_collider(&mesh),
-            )).remove::<ChunkGenerationTask>();
+            // Verificar si el mesh tiene vértices (no está vacío)
+            let has_vertices = mesh.count_vertices() > 0;
+            
+            // Solo agregar collider si el mesh tiene geometría
+            if has_vertices {
+                commands.entity(entity).insert((
+                    Mesh3d(meshes.add(mesh.clone())),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: ChunkLOD::Ultra.debug_color(),
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    base_chunk,
+                    ChunkLOD::Ultra,
+                    RigidBody::Fixed,
+                    create_terrain_collider(&mesh),
+                )).remove::<ChunkGenerationTask>();
+            } else {
+                // Chunk vacío (solo aire), no agregar collider
+                commands.entity(entity).insert((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: ChunkLOD::Ultra.debug_color(),
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    base_chunk,
+                    ChunkLOD::Ultra,
+                )).remove::<ChunkGenerationTask>();
+            }
 
             octree.insert(chunk_pos);
             load_queue.total_loaded += 1;
@@ -229,7 +259,7 @@ fn world_pos_to_chunk_pos(world_pos: Vec3) -> IVec3 {
     
     IVec3::new(
         (world_pos.x / chunk_size_meters).floor() as i32,
-        0, // Por ahora solo Y=0
+        (world_pos.y / chunk_size_meters).floor() as i32, // Ahora también calcula Y
         (world_pos.z / chunk_size_meters).floor() as i32,
     )
 }

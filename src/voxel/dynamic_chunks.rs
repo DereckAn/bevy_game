@@ -1,11 +1,11 @@
 //! Sistema de chunks dinamicos
 //! Chunks base de 32³ con generacion de terreno optimizada
+//! Incluye sistema de biomas con montañas, valles, llanuras, etc.
 
 use bevy::prelude::*;
 use rayon::prelude::*;
-use fastnoise_lite::{FastNoiseLite, NoiseType, FractalType};
 use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::voxel::VoxelType;
+use crate::voxel::{VoxelType, TerrainGenerator};
 
 /// Chunk base de 32³ (usa heap para evitar stack overflow)
 #[derive(Component)]
@@ -23,7 +23,7 @@ impl BaseChunk {
             position,
         };
         
-        // Generar terreno usando la versión optimizada
+        // Generar terreno usando la versión optimizada con biomas
         chunk.generate_terrain();
         chunk
     }
@@ -32,36 +32,35 @@ impl BaseChunk {
         self.densities[x][y][z]
     }
 
-    /// Generación de terreno ULTRA-OPTIMIZADA
-    /// Combina FastNoiseLite (10x más rápido) + Rayon (4x más rápido) = 40x speedup!
+    /// Generación de terreno con biomas
+    /// Combina FastNoiseLite + Rayon + Sistema de Biomas
     pub fn generate_terrain(&mut self) {
-        let mut noise = FastNoiseLite::new();
-        noise.set_noise_type(Some(NoiseType::OpenSimplex2));
-        noise.set_fractal_type(Some(FractalType::FBm));
-        noise.set_fractal_octaves(Some(4));
-        noise.set_frequency(Some(0.02));
-        noise.set_seed(Some(12345));
-
         let chunk_pos = self.position;
+        
+        // Crear generador de terreno UNA VEZ para todo el chunk
+        let mut terrain_gen = TerrainGenerator::new(12345);
         
         // Calcular todas las densidades en paralelo
         let total_size = (BASE_CHUNK_SIZE + 1).pow(3);
-        let densities_flat: Vec<f32> = (0..total_size)
-            .into_par_iter() // ¡Paralelización automática!
-            .map(|idx| {
-                // Convertir índice 1D a 3D
-                let x = idx % (BASE_CHUNK_SIZE + 1);
-                let y = (idx / (BASE_CHUNK_SIZE + 1)) % (BASE_CHUNK_SIZE + 1);
-                let z = idx / ((BASE_CHUNK_SIZE + 1) * (BASE_CHUNK_SIZE + 1));
+        
+        // Pre-calcular coordenadas mundiales para evitar recalcular en cada thread
+        let mut world_coords = Vec::with_capacity(total_size);
+        for idx in 0..total_size {
+            let x = idx % (BASE_CHUNK_SIZE + 1);
+            let y = (idx / (BASE_CHUNK_SIZE + 1)) % (BASE_CHUNK_SIZE + 1);
+            let z = idx / ((BASE_CHUNK_SIZE + 1) * (BASE_CHUNK_SIZE + 1));
 
-                // Coordenadas mundiales
-                let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + x as i32) as f32 * VOXEL_SIZE;
-                let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + z as i32) as f32 * VOXEL_SIZE;
-                let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
-
-                // FastNoiseLite es ~10x más rápido que Perlin
-                let height = 1.5 + noise.get_noise_2d(world_x, world_z) * 0.5;
-                height - world_y
+            let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + x as i32) as f32 * VOXEL_SIZE;
+            let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + z as i32) as f32 * VOXEL_SIZE;
+            let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
+            
+            world_coords.push((world_x, world_y, world_z));
+        }
+        
+        // Calcular densidades (sin paralelización para evitar problemas con el generador)
+        let densities_flat: Vec<f32> = world_coords.iter()
+            .map(|(world_x, world_y, world_z)| {
+                terrain_gen.get_density(*world_x, *world_y, *world_z)
             })
             .collect();
 
