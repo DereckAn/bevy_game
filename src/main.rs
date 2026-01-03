@@ -18,20 +18,36 @@ mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el 
 // ============================================================================
 use std::collections::HashMap;
 
-use bevy::{prelude::*, window::{CursorGrabMode, CursorOptions}}; // Importa todo lo común de Bevy (App, Commands, etc.)
+use bevy::{
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions},
+};
 use core::GameSettings; // Importa GameSettings desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    ChunkMap, start_voxel_breaking_system, update_voxel_breaking_system,
-    update_chunk_lod_system, ChunkLOD, BaseChunk,
+    BaseChunk,
+    BoundingBox,
+    ChunkLOD,
+    ChunkLoadQueue,
+    ChunkMap,
+    ChunkOctree,
+    LodChunkLoadQueue,
+    // Sistemas LOD
+    LodChunkMap,
+    complete_chunk_generation_system,
     greedy_mesh_basechunk_simple,
-    ChunkLoadQueue, update_chunk_load_queue, load_chunks_system, 
-    complete_chunk_generation_system, unload_chunks_system,
-    ChunkOctree, BoundingBox,
-    update_frustum_culling,
-}; // Importa Chunk y generate_simple_mesh desde nuestro módulo voxel // Importa DebugPlugin para métricas de rendimiento
+    load_chunks_system,
+    load_lod_chunks_system,
+    start_voxel_breaking_system,
+    unload_chunks_system,
+    unload_lod_chunks_system,
+    update_chunk_load_queue,
+    update_chunk_lod_system,
+    update_lod_chunk_queue_system,
+    update_voxel_breaking_system,
+};
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -62,25 +78,32 @@ fn main() {
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
+        .insert_resource(LodChunkMap::default())
+        .insert_resource(LodChunkLoadQueue::default())
         .insert_resource(ChunkLoadQueue::default())
         .insert_resource(ChunkOctree::new(BoundingBox::new(
             IVec3::new(-200, -10, -200),
             IVec3::new(200, 10, 200),
         )))
-
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
-        .add_systems(Update, (
-            start_voxel_breaking_system,
-            update_voxel_breaking_system,        
-            update_chunk_lod_system,
-            // Sistemas de carga dinámica de chunks (async)
-            update_chunk_load_queue,
-            load_chunks_system,
-            complete_chunk_generation_system,
-            unload_chunks_system,
-            // Frustum culling DISABLED - tiene bugs, necesita corrección
-            // update_frustum_culling,
-        ).chain())
+        .add_systems(
+            Update,
+            (
+                start_voxel_breaking_system,
+                update_voxel_breaking_system,
+                update_chunk_lod_system,
+                // Sistemas de carga dinámica de chunks (async)
+                update_chunk_load_queue,
+                load_chunks_system,
+                complete_chunk_generation_system,
+                unload_chunks_system,
+                // Sistema de chunks LOD distantes (distant Horizont)
+                update_lod_chunk_queue_system,
+                load_lod_chunks_system,
+                unload_lod_chunks_system,
+            )
+                .chain(),
+        )
         .run(); // Inicia el loop principal del juego
 }
 
@@ -106,14 +129,14 @@ fn setup(
     // ========================================================================
     // INICIALIZAR CACHÉ DE CHUNKS (DESHABILITADO TEMPORALMENTE)
     // ========================================================================
-    
+
     // Caché deshabilitado para mejor rendimiento inicial
     // if let Err(e) = init_cache_dir() {
     //     warn!("Failed to initialize cache directory: {}", e);
     // } else {
     //     match get_cache_stats() {
     //         Ok(stats) => {
-    //             info!("Cache initialized: {} chunks cached ({:.2} MB)", 
+    //             info!("Cache initialized: {} chunks cached ({:.2} MB)",
     //                 stats.chunk_count, stats.total_size_mb());
     //         }
     //         Err(e) => warn!("Failed to get cache stats: {}", e),
@@ -127,11 +150,11 @@ fn setup(
     // Generar solo chunks iniciales alrededor del spawn (radio de 5 chunks)
     // El sistema de carga dinámica generará el resto
     let initial_radius = 5;
-    let y_min = -1;  // Chunks bajo tierra
-    let y_max = 3;   // Chunks en el aire (para montañas)
-    
+    let y_min = -1; // Chunks bajo tierra
+    let y_max = 3; // Chunks en el aire (para montañas)
+
     let mut temp_chunks: HashMap<IVec3, BaseChunk> = HashMap::new();
-    
+
     for cx in -initial_radius..=initial_radius {
         for cz in -initial_radius..=initial_radius {
             // Solo generar en un círculo, no un cuadrado
@@ -150,38 +173,42 @@ fn setup(
     // Crear entidades con meshes
     for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
         let mesh = greedy_mesh_basechunk_simple(&base_chunk);
-        
+
         // Solo crear entidad si el mesh tiene vértices
         if mesh.count_vertices() > 0 {
-            let chunk_entity = commands.spawn((
-                Mesh3d(meshes.add(mesh.clone())),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: ChunkLOD::Ultra.debug_color(),
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                base_chunk,
-                ChunkLOD::Ultra,
-                RigidBody::Fixed,
-                create_terrain_collider(&mesh),
-            )).id();
+            let chunk_entity = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh.clone())),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: ChunkLOD::Ultra.debug_color(),
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    base_chunk,
+                    ChunkLOD::Ultra,
+                    RigidBody::Fixed,
+                    create_terrain_collider(&mesh),
+                ))
+                .id();
 
             chunk_map.chunks.insert(chunk_pos, chunk_entity);
             octree.insert(chunk_pos);
         } else {
             // Chunk vacío, crear sin collider
-            let chunk_entity = commands.spawn((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: ChunkLOD::Ultra.debug_color(),
-                    cull_mode: None,
-                    ..default()
-                })),
-                Transform::default(),
-                base_chunk,
-                ChunkLOD::Ultra,
-            )).id();
+            let chunk_entity = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: ChunkLOD::Ultra.debug_color(),
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    base_chunk,
+                    ChunkLOD::Ultra,
+                ))
+                .id();
 
             chunk_map.chunks.insert(chunk_pos, chunk_entity);
             octree.insert(chunk_pos);

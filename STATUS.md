@@ -155,6 +155,7 @@ El juego muestra en la esquina superior izquierda:
 
 ---
 
-**Última actualización**: Frustum culling deshabilitado por bugs, documentación de multiplayer creada
-**Siguiente acción**: Medir FPS actual y decidir próxima optimización
-**Documentos nuevos**: docs/multiplayer_architecture.md - Explica cómo funcionará en multiplayer
+**Última actualización**: Distant Horizons causó lag extremo (<1 FPS), DESHABILITADO inmediatamente
+**Estado actual**: Juego funciona normalmente (30-45 FPS) sin Distant Horizons
+**Versión optimizada**: Disponible pero deshabilitada (ver docs/URGENT_FIX_DISTANT_HORIZONS.md)
+**Próximo paso**: Implementar generación asíncrona antes de habilitar chunks distantes

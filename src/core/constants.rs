@@ -26,6 +26,15 @@ pub const LOD_DISTANCES: [f32; 5] = [
     256.0, // Minimal: 192+ metros (~80+ chunks)
 ];
 
+// Radio de chunks LOD distantes (solo visiales, sin colision)
+pub const LOD_CHUNK_RADIUS: i32 = 200;
+
+// Maximo de chunks LOD en memoria
+pub const MAX_LOD_CHUNKS_IN_MEMORY: usize = 2500;
+
+// Chunks LOD a generar por frame
+pub const MAX_LOD_CHUNKS_PER_FRAME: usize = 128;
+
 // Tamaño máximo cuando se combinan chunks (16x16x16 = 512³)
 pub const MAX_MERGED_SIZE: usize = 512;
 
