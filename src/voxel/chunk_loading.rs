@@ -8,8 +8,8 @@ use crate::{
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        BaseChunk, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel, TerrainGenerator,
-        greedy_mesh_basechunk_simple, mesh_lod_chunk,
+        BaseChunk, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel, SpatialHashGrid,
+        TerrainGenerator, greedy_mesh_basechunk_simple, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -94,7 +94,8 @@ pub struct ChunkGenerationTask {
 pub fn update_chunk_load_queue(
     player_query: Query<&Transform, With<Player>>,
     chunk_map: Res<ChunkMap>,
-    _octree: Res<ChunkOctree>,
+    octree: Res<ChunkOctree>,
+    spatial_hash: Res<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
 ) {
     let Ok(player_transform) = player_query.single() else {
@@ -112,22 +113,34 @@ pub fn update_chunk_load_queue(
     load_queue.last_player_chunk = player_chunk;
 
     // Determinar qué chunks deberían estar cargados (incluyendo verticales)
+    // OPTIMIZACIÓN: Usar algoritmo eficiente para generar círculo
     let mut chunks_needed: HashSet<IVec3> = HashSet::new();
 
     // Rango vertical reducido: desde -1 hasta +3 chunks (mejor rendimiento)
     let y_min = -1;
     let y_max = 3;
 
-    for cx in -CHUNK_LOAD_RADIUS..=CHUNK_LOAD_RADIUS {
-        for cz in -CHUNK_LOAD_RADIUS..=CHUNK_LOAD_RADIUS {
-            // Verificar si está dentro del radio (circular, no cuadrado)
-            let distance_sq = cx * cx + cz * cz;
-            if distance_sq <= CHUNK_LOAD_RADIUS * CHUNK_LOAD_RADIUS {
-                // Generar chunks en múltiples niveles verticales
-                for cy in y_min..=y_max {
-                    let chunk_pos = IVec3::new(player_chunk.x + cx, cy, player_chunk.z + cz);
-                    chunks_needed.insert(chunk_pos);
-                }
+    // OPTIMIZACIÓN: Generar círculo de chunks de manera eficiente
+    // En lugar de iterar cuadrado completo, solo generar puntos dentro del círculo
+    let radius_sq = CHUNK_LOAD_RADIUS * CHUNK_LOAD_RADIUS;
+
+    for cy in y_min..=y_max {
+        // Usar simetría del círculo para reducir cálculos
+        for cx in -CHUNK_LOAD_RADIUS..=CHUNK_LOAD_RADIUS {
+            // Calcular el rango Z válido para este X (usando la ecuación del círculo)
+            let x_sq = cx * cx;
+            if x_sq > radius_sq {
+                continue; // Este X está fuera del círculo
+            }
+
+            // Calcular el máximo Z para este X: z² <= r² - x²
+            let max_z_sq = radius_sq - x_sq;
+            let max_z = (max_z_sq as f32).sqrt() as i32;
+
+            // Solo iterar en el rango válido de Z
+            for cz in -max_z..=max_z {
+                let chunk_pos = IVec3::new(player_chunk.x + cx, cy, player_chunk.z + cz);
+                chunks_needed.insert(chunk_pos);
             }
         }
     }
@@ -158,22 +171,22 @@ pub fn update_chunk_load_queue(
     });
 
     // Verificar cuáles chunks están fuera del radio de descarga
+    // OPTIMIZACIÓN: Usar Spatial Hash Grid con distancia HORIZONTAL (2D)
     load_queue.to_unload.clear();
 
-    for chunk_pos in chunk_map.chunks.keys() {
-        let dx = chunk_pos.x - player_chunk.x;
-        let _dy = chunk_pos.y - player_chunk.y;
-        let dz = chunk_pos.z - player_chunk.z;
-        let distance_sq = dx * dx + dz * dz;
+    // Usar spatial hash para encontrar chunks DENTRO del radio horizontal
+    let chunks_to_keep = spatial_hash.query_radius_horizontal(player_chunk, CHUNK_UNLOAD_RADIUS);
 
-        // Descargar si está fuera del radio horizontal O fuera del rango vertical
-        if distance_sq > CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS
-            || chunk_pos.y < y_min
-            || chunk_pos.y > y_max
-        {
-            if let Some(&entity) = chunk_map.chunks.get(chunk_pos) {
-                load_queue.to_unload.push(entity);
-            }
+    // Filtrar por rango vertical y convertir a HashSet para búsqueda O(1)
+    let keep_set: HashSet<IVec3> = chunks_to_keep
+        .into_iter()
+        .filter(|pos| pos.y >= y_min && pos.y <= y_max)
+        .collect();
+
+    // Descargar chunks que NO están en el set de chunks a mantener
+    for (chunk_pos, &entity) in &chunk_map.chunks {
+        if !keep_set.contains(chunk_pos) {
+            load_queue.to_unload.push(entity);
         }
     }
 }
@@ -182,6 +195,7 @@ pub fn update_chunk_load_queue(
 pub fn load_chunks_system(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
+    mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -203,6 +217,9 @@ pub fn load_chunks_system(
             // Crear entidad placeholder y marcarla como "en generación"
             let chunk_entity = commands.spawn_empty().id();
             chunk_map.chunks.insert(chunk_pos, chunk_entity);
+
+            // Agregar al spatial hash para búsquedas rápidas
+            spatial_hash.insert(chunk_pos);
 
             // Genera chunk segun tipo
             match chunk_type {
@@ -353,6 +370,7 @@ pub fn unload_chunks_system(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
     mut octree: ResMut<ChunkOctree>,
+    mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     chunk_query: Query<Option<&BaseChunk>>,
 ) {
@@ -365,11 +383,12 @@ pub fn unload_chunks_system(
     for _ in 0..chunks_to_unload {
         if let Some(entity) = load_queue.to_unload.pop() {
             if let Ok(maybe_chunk) = chunk_query.get(entity) {
-                // Si el chunk tiene BaseChunk, eliminarlo del octree
+                // Si el chunk tiene BaseChunk, eliminarlo del octree y spatial hash
                 if let Some(base_chunk) = maybe_chunk {
                     let chunk_pos = base_chunk.position;
                     chunk_map.chunks.remove(&chunk_pos);
                     octree.remove(chunk_pos);
+                    spatial_hash.remove(chunk_pos);
                 }
 
                 // Despawnear entidad (incluso si aún está generándose)
@@ -385,7 +404,7 @@ fn world_pos_to_chunk_pos(world_pos: Vec3) -> IVec3 {
 
     IVec3::new(
         (world_pos.x / chunk_size_meters).floor() as i32,
-        (world_pos.y / chunk_size_meters).floor() as i32, // Ahora también calcula Y
+        (world_pos.y / chunk_size_meters).floor() as i32, // calcula Y
         (world_pos.z / chunk_size_meters).floor() as i32,
     )
 }

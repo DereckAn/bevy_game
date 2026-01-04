@@ -18,16 +18,22 @@ impl BoundingBox {
 
     /// Verifica si un punto está dentro del bounding box
     pub fn contains(&self, point: IVec3) -> bool {
-        point.x >= self.min.x && point.x < self.max.x &&
-        point.y >= self.min.y && point.y < self.max.y &&
-        point.z >= self.min.z && point.z < self.max.z
+        point.x >= self.min.x
+            && point.x < self.max.x
+            && point.y >= self.min.y
+            && point.y < self.max.y
+            && point.z >= self.min.z
+            && point.z < self.max.z
     }
 
     /// Verifica si dos bounding boxes se intersectan
     pub fn intersects(&self, other: &BoundingBox) -> bool {
-        self.min.x < other.max.x && self.max.x > other.min.x &&
-        self.min.y < other.max.y && self.max.y > other.min.y &&
-        self.min.z < other.max.z && self.max.z > other.min.z
+        self.min.x < other.max.x
+            && self.max.x > other.min.x
+            && self.min.y < other.max.y
+            && self.max.y > other.min.y
+            && self.min.z < other.max.z
+            && self.max.z > other.min.z
     }
 
     /// Calcula el centro del bounding box
@@ -131,6 +137,39 @@ impl OctreeNode {
         }
     }
 
+    /// Busca chunks en un radio HORIZONTAL (solo X y Z) desde una posición - O(log n)
+    /// Ignora la distancia en Y, útil para chunk loading basado en distancia 2D
+    pub fn query_radius_horizontal(&self, center: IVec3, radius: i32, results: &mut Vec<IVec3>) {
+        // Early exit si el radio horizontal no intersecta este nodo
+        // Calcular distancia horizontal al bounding box
+        let closest_x = center.x.clamp(self.bounds.min.x, self.bounds.max.x);
+        let closest_z = center.z.clamp(self.bounds.min.z, self.bounds.max.z);
+        let dx = closest_x - center.x;
+        let dz = closest_z - center.z;
+        let distance_sq_horizontal = dx * dx + dz * dz;
+
+        if distance_sq_horizontal > radius * radius {
+            return; // Este nodo está fuera del radio horizontal
+        }
+
+        // Agregar chunks de este nodo que estén en el radio HORIZONTAL
+        for &chunk_pos in &self.chunks {
+            let dx = chunk_pos.x - center.x;
+            let dz = chunk_pos.z - center.z;
+            let distance_sq = dx * dx + dz * dz; // Solo X y Z, ignorar Y
+            if distance_sq <= radius * radius {
+                results.push(chunk_pos);
+            }
+        }
+
+        // Buscar recursivamente en hijos
+        if let Some(children) = &self.children {
+            for child in children.iter() {
+                child.query_radius_horizontal(center, radius, results);
+            }
+        }
+    }
+
     /// Busca chunks en una región rectangular - O(log n)
     pub fn query_region(&self, region: BoundingBox, results: &mut Vec<IVec3>) {
         // Early exit si no hay intersección
@@ -167,7 +206,7 @@ impl OctreeNode {
         // Verificar chunks en este nodo
         for &chunk_pos in &self.chunks {
             let dist_sq = (chunk_pos - position).length_squared();
-            
+
             match nearest {
                 None => *nearest = Some((chunk_pos, dist_sq)),
                 Some((_, current_dist)) if dist_sq < *current_dist => {
@@ -207,15 +246,39 @@ impl OctreeNode {
 
         for i in 0..8 {
             let min = IVec3::new(
-                if i & 1 == 0 { self.bounds.min.x } else { center.x },
-                if i & 2 == 0 { self.bounds.min.y } else { center.y },
-                if i & 4 == 0 { self.bounds.min.z } else { center.z },
+                if i & 1 == 0 {
+                    self.bounds.min.x
+                } else {
+                    center.x
+                },
+                if i & 2 == 0 {
+                    self.bounds.min.y
+                } else {
+                    center.y
+                },
+                if i & 4 == 0 {
+                    self.bounds.min.z
+                } else {
+                    center.z
+                },
             );
 
             let max = IVec3::new(
-                if i & 1 == 0 { center.x } else { self.bounds.max.x },
-                if i & 2 == 0 { center.y } else { self.bounds.max.y },
-                if i & 4 == 0 { center.z } else { self.bounds.max.z },
+                if i & 1 == 0 {
+                    center.x
+                } else {
+                    self.bounds.max.x
+                },
+                if i & 2 == 0 {
+                    center.y
+                } else {
+                    self.bounds.max.y
+                },
+                if i & 4 == 0 {
+                    center.z
+                } else {
+                    self.bounds.max.z
+                },
             );
 
             children.push(OctreeNode::new(BoundingBox::new(min, max)));
@@ -233,22 +296,28 @@ impl OctreeNode {
     fn get_octant_static(bounds: &BoundingBox, pos: IVec3) -> usize {
         let center = bounds.center();
         let mut octant = 0;
-        if pos.x >= center.x { octant |= 1; }
-        if pos.y >= center.y { octant |= 2; }
-        if pos.z >= center.z { octant |= 4; }
+        if pos.x >= center.x {
+            octant |= 1;
+        }
+        if pos.y >= center.y {
+            octant |= 2;
+        }
+        if pos.z >= center.z {
+            octant |= 4;
+        }
         octant
     }
 
     /// Cuenta el número total de chunks en el octree
     pub fn count_chunks(&self) -> usize {
         let mut count = self.chunks.len();
-        
+
         if let Some(children) = &self.children {
             for child in children.iter() {
                 count += child.count_chunks();
             }
         }
-        
+
         count
     }
 

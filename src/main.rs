@@ -27,11 +27,11 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkOctree,
+    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkOctree, SpatialHashGrid,
     complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
     greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system,
     unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
-    update_chunk_transitions_system, update_voxel_breaking_system,
+    update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
 };
 
 // ============================================================================
@@ -68,6 +68,7 @@ fn main() {
             IVec3::new(-200, -10, -200),
             IVec3::new(200, 10, 200),
         )))
+        .insert_resource(SpatialHashGrid::default())
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
         .add_systems(
             Update,
@@ -84,6 +85,8 @@ fn main() {
                 update_chunk_transitions_system,
                 convert_lod_to_real_system,
                 convert_real_to_lod_system,
+                // Optimización: Frustum culling
+                update_frustum_culling,
             )
                 .chain(),
         )
