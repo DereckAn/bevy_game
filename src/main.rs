@@ -27,26 +27,11 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    BaseChunk,
-    BoundingBox,
-    ChunkLOD,
-    ChunkLoadQueue,
-    ChunkMap,
-    ChunkOctree,
-    LodChunkLoadQueue,
-    // Sistemas LOD
-    LodChunkMap,
-    complete_chunk_generation_system,
-    greedy_mesh_basechunk_simple,
-    load_chunks_system,
-    load_lod_chunks_system,
-    start_voxel_breaking_system,
-    unload_chunks_system,
-    unload_lod_chunks_system,
-    update_chunk_load_queue,
-    update_chunk_lod_system,
-    update_lod_chunk_queue_system,
-    update_voxel_breaking_system,
+    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkOctree,
+    complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
+    greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system,
+    unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
+    update_chunk_transitions_system, update_voxel_breaking_system,
 };
 
 // ============================================================================
@@ -78,8 +63,6 @@ fn main() {
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
-        .insert_resource(LodChunkMap::default())
-        .insert_resource(LodChunkLoadQueue::default())
         .insert_resource(ChunkLoadQueue::default())
         .insert_resource(ChunkOctree::new(BoundingBox::new(
             IVec3::new(-200, -10, -200),
@@ -97,10 +80,10 @@ fn main() {
                 load_chunks_system,
                 complete_chunk_generation_system,
                 unload_chunks_system,
-                // Sistema de chunks LOD distantes (distant Horizont)
-                update_lod_chunk_queue_system,
-                load_lod_chunks_system,
-                unload_lod_chunks_system,
+                // Sistemas de transiciones Real ↔ LOD
+                update_chunk_transitions_system,
+                convert_lod_to_real_system,
+                convert_real_to_lod_system,
             )
                 .chain(),
         )

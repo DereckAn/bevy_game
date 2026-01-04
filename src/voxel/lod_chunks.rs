@@ -4,10 +4,9 @@
 
 use crate::{
     core::VOXEL_SIZE,
-    voxel::{TerrainGenerator, VoxelType, lod_chunks},
+    voxel::{TerrainGenerator, VoxelType},
 };
 use bevy::{
-    gizmos::grid,
     mesh::{Indices, PrimitiveTopology},
     prelude::*,
 };
@@ -72,55 +71,109 @@ impl LodChunk {
         }
     }
 
+    /// Crea un LodChunk desde un BaseChunk existente
+    /// Usado para conversiones Real → LOD cuando el jugador se aleja
+    pub fn from_base_chunk(base_chunk: &crate::voxel::BaseChunk, lod_level: LodLevel) -> Self {
+        let mut lod_chunk = Self::new(base_chunk.position, lod_level);
+        let grid_size = lod_level.grid_size();
+        let step_size = 32 / grid_size;
+
+        // Extraer superficie del BaseChunk
+        for z in 0..grid_size {
+            for x in 0..grid_size {
+                // Muestrear en el centro del "super-voxel"
+                let local_x = (x * step_size + step_size / 2).min(31);
+                let local_z = (z * step_size + step_size / 2).min(31);
+
+                // Buscar desde arriba hacia abajo para encontrar la superficie
+                let mut surface_y = 0.0;
+                let mut surface_type = VoxelType::Air;
+
+                for y in (0..32).rev() {
+                    if base_chunk.voxel_types[local_x][y][local_z] != VoxelType::Air {
+                        surface_y = (base_chunk.position.y * 32 + y as i32) as f32 * 0.1;
+                        surface_type = base_chunk.voxel_types[local_x][y][local_z];
+                        break;
+                    }
+                }
+
+                let index = x + z * grid_size;
+                lod_chunk.surface_heights[index] = surface_y;
+                lod_chunk.surface_types[index] = surface_type;
+            }
+        }
+
+        lod_chunk
+    }
+
     /// Genera la superficie del terreno para este chunk LOD
     pub fn generate_surface(&mut self, terrain_gen: &mut TerrainGenerator) {
         let grid_size = self.lod_level.grid_size();
 
-        // Calcular cuantos voxels del chunk real representa cada punto LOD
-        // Ejemplo: Si grid_size = 6 y BASE_CHUNKS = 32, cada punto LOD = 2 voxels
+        // Calcular cuántos voxels del chunk real representa cada punto LOD
         let step_size = 32 / grid_size;
 
         // Recorrer cada punto del grid en X y Z
         for z in 0..grid_size {
             for x in 0..grid_size {
-                // Calcular posicion mundial de este punto
-                let world_x = (self.position.x * 32 + (x * step_size) as i32) as f32 * 0.1;
-                let world_z = (self.position.z * 32 + (z * step_size) as i32) as f32 * 0.1;
+                // Calcular posición mundial del CENTRO de este "super-voxel"
+                // Esto asegura mejor muestreo
+                let local_x = (x * step_size + step_size / 2) as i32;
+                let local_z = (z * step_size + step_size / 2) as i32;
 
-                // Usar el generador de terreno par obtener la altura
-                // Probamos diferentes alturas Y hasta encontrar la superficie
-                let mut surface_y = 0.0;
+                let world_x = (self.position.x * 32 + local_x) as f32 * 0.1;
+                let world_z = (self.position.z * 32 + local_z) as f32 * 0.1;
 
-                // Buscar la superficie (donde la desnidad cambia de positivo a negatico)
-                for test_y in -10..50 {
-                    let world_y = (self.position.y * 32 + test_y) as f32 * 0.1;
-                    let density = terrain_gen.get_density(world_x, world_y, world_z);
-
-                    if density <= 0.0 {
-                        // Encontramos aire, la superficie esta justo debajo
-                        surface_y = world_y - 0.1;
-                        break;
-                    }
-                }
+                // Buscar la superficie usando binary search (mucho más rápido)
+                let surface_y = find_surface_height(
+                    terrain_gen,
+                    world_x,
+                    world_z,
+                    -50.0, // Mín: -5 metros (suficiente para valles profundos)
+                    50.0,  // Máx: +5 metros (suficiente para montañas altas)
+                );
 
                 // Guardar la altura de la superficie
                 let index = x + z * grid_size;
                 self.surface_heights[index] = surface_y;
 
                 // Determinar el tipo de voxel en la superficie
-                // Usamos la misma logicca que basechunk
-                self.surface_types[index] = if surface_y < 0.5 {
-                    VoxelType::Stone
-                } else if surface_y < 1.5 {
-                    VoxelType::Dirt
-                } else if surface_y < 1.6 {
-                    VoxelType::Grass
-                } else {
-                    VoxelType::Dirt
-                };
+                // Usar la misma lógica que BaseChunk para consistencia
+                self.surface_types[index] = VoxelType::from_density(1.0, surface_y as f64);
             }
         }
     }
+}
+
+/// Encuentra la altura de la superficie usando binary search
+/// Mucho más eficiente que iterar linealmente
+fn find_surface_height(
+    terrain_gen: &mut TerrainGenerator,
+    world_x: f32,
+    world_z: f32,
+    min_y: f32,
+    max_y: f32,
+) -> f32 {
+    let mut low = min_y;
+    let mut high = max_y;
+    let precision = 0.1; // Precisión de 0.1 metros (1 voxel)
+
+    // Binary search para encontrar la transición aire/sólido
+    while (high - low) > precision {
+        let mid = (low + high) / 2.0;
+        let density = terrain_gen.get_density(world_x, mid, world_z);
+
+        if density > 0.0 {
+            // Estamos bajo tierra, buscar arriba
+            low = mid;
+        } else {
+            // Estamos en aire, buscar abajo
+            high = mid;
+        }
+    }
+
+    // Retornar la superficie encontrada (el punto más alto sólido)
+    low
 }
 
 // Genera un mesh para renderizar el chunk LOD
