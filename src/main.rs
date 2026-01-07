@@ -18,14 +18,21 @@ mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el 
 // ============================================================================
 use std::collections::HashMap;
 
-use bevy::{prelude::*, window::{CursorGrabMode, CursorOptions}}; // Importa todo lo común de Bevy (App, Commands, etc.)
+use bevy::{
+    prelude::*,
+    window::{CursorGrabMode, CursorOptions},
+};
 use core::GameSettings; // Importa GameSettings desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    BaseChunk, ChunkMap3D, DynamicChunkSystem, generate_mesh, start_voxel_breaking_system, update_voxel_breaking_system, update_drops_system, collect_drop_system, clean_old_drops_system, update_drop_ground_detection_system
-}; // Importa tipos del nuevo sistema de chunks dinámicos
+    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkOctree, SpatialHashGrid,
+    complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
+    greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system,
+    unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
+    update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
+};
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -53,15 +60,36 @@ fn main() {
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
-        .insert_resource(DynamicChunkSystem::new()) // Sistema de chunks dinámicos
+        .insert_resource(ChunkMap {
+            chunks: HashMap::new(),
+        })
+        .insert_resource(ChunkLoadQueue::default())
+        .insert_resource(ChunkOctree::new(BoundingBox::new(
+            IVec3::new(-200, -10, -200),
+            IVec3::new(200, 10, 200),
+        )))
+        .insert_resource(SpatialHashGrid::default())
         .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
-        .add_systems(Update, (
-            start_voxel_breaking_system,
-            update_voxel_breaking_system,
-            update_drops_system,
-            collect_drop_system,
-            clean_old_drops_system,
-        ).chain())
+        .add_systems(
+            Update,
+            (
+                start_voxel_breaking_system,
+                update_voxel_breaking_system,
+                update_chunk_lod_system,
+                // Sistemas de carga dinámica de chunks (async)
+                update_chunk_load_queue,
+                load_chunks_system,
+                complete_chunk_generation_system,
+                unload_chunks_system,
+                // Sistemas de transiciones Real ↔ LOD
+                update_chunk_transitions_system,
+                convert_lod_to_real_system,
+                convert_real_to_lod_system,
+                // Optimización: Frustum culling
+                update_frustum_culling,
+            )
+                .chain(),
+        )
         .run(); // Inicia el loop principal del juego
 }
 
@@ -81,62 +109,100 @@ fn setup(
     mut commands: Commands, // Sistema de comandos para crear/modificar entidades
     mut meshes: ResMut<Assets<Mesh>>, // Recurso mutable para gestionar mallas 3D
     mut materials: ResMut<Assets<StandardMaterial>>, // Recurso mutable para gestionar materiales
-    mut chunk_system: ResMut<DynamicChunkSystem>,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut octree: ResMut<ChunkOctree>,
 ) {
     // ========================================================================
-    // GENERACIÓN DE TERRENO 3D
+    // INICIALIZAR CACHÉ DE CHUNKS (DESHABILITADO TEMPORALMENTE)
     // ========================================================================
 
-    println!("Generando chunks 3D dinámicos...");
+    // Caché deshabilitado para mejor rendimiento inicial
+    // if let Err(e) = init_cache_dir() {
+    //     warn!("Failed to initialize cache directory: {}", e);
+    // } else {
+    //     match get_cache_stats() {
+    //         Ok(stats) => {
+    //             info!("Cache initialized: {} chunks cached ({:.2} MB)",
+    //                 stats.chunk_count, stats.total_size_mb());
+    //         }
+    //         Err(e) => warn!("Failed to get cache stats: {}", e),
+    //     }
+    // }
 
     // ========================================================================
-    // GENERACIÓN DE TERRENO 3D CON RUIDO
+    // GENERACIÓN DE TERRENO INICIAL
     // ========================================================================
 
-    println!("Generando terreno procedural con ruido Perlin...");
+    // Generar solo chunks iniciales alrededor del spawn (radio de 5 chunks)
+    // El sistema de carga dinámica generará el resto
+    let initial_radius = 5;
+    let y_min = -1; // Chunks bajo tierra
+    let y_max = 3; // Chunks en el aire (para montañas)
 
-    // Generar chunks en una grilla similar al sistema anterior
-    // Pero ahora con chunks 3D de 32³ en lugar de columnares
-    for cx in -3..=3 {  // 7x7 chunks horizontales (como antes era 11x11 pero más pequeño)
-        for cy in 0..=3 {   // 4 capas verticales (32*4 = 128 voxels de altura)
-            for cz in -3..=3 {
-                let chunk_pos = IVec3::new(cx, cy, cz);
-                let chunk = chunk_system.get_or_create_chunk(chunk_pos);
-                
-                // Generar mesh para el chunk
-                let mesh = generate_mesh(chunk);
-                
-                // Solo crear entidad si el mesh tiene geometría
-                let vertex_count = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-                    .map(|attr| attr.len())
-                    .unwrap_or(0);
-                
-                if vertex_count > 0 {
-                    println!("Chunk {:?} generado con {} vértices", chunk_pos, vertex_count);
-                    
-                    // Crear entidad del chunk con mesh visible
-                    commands.spawn((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: Color::srgb(0.4, 0.7, 0.3), // Verde pasto
-                            metallic: 0.0,
-                            perceptual_roughness: 0.8,
-                            ..default()
-                        })),
-                        Transform::default(),
-                        // TODO: Agregar física cuando sea necesario
-                        // RigidBody::Fixed,
-                        // Collider::from_bevy_mesh(&mesh, &ComputedColliderShape::TriMesh).unwrap(),
-                    ));
-                } else {
-                    // Es normal que chunks altos estén vacíos (solo aire)
-                    if cy <= 1 {
-                        println!("Chunk {:?} está vacío (puede ser normal si está sobre el terreno)", chunk_pos);
-                    }
+    let mut temp_chunks: HashMap<IVec3, BaseChunk> = HashMap::new();
+
+    for cx in -initial_radius..=initial_radius {
+        for cz in -initial_radius..=initial_radius {
+            // Solo generar en un círculo, no un cuadrado
+            if cx * cx + cz * cz <= initial_radius * initial_radius {
+                // Generar chunks en múltiples niveles verticales
+                for cy in y_min..=y_max {
+                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz));
+                    temp_chunks.insert(base_chunk.position, base_chunk);
                 }
             }
         }
     }
+
+    info!("Generating {} initial chunks...", temp_chunks.len());
+
+    // Crear entidades con meshes
+    for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
+        let mesh = greedy_mesh_basechunk_simple(&base_chunk);
+
+        // Solo crear entidad si el mesh tiene vértices
+        if mesh.count_vertices() > 0 {
+            let chunk_entity = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh.clone())),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: ChunkLOD::Ultra.debug_color(),
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    base_chunk,
+                    ChunkLOD::Ultra,
+                    RigidBody::Fixed,
+                    create_terrain_collider(&mesh),
+                ))
+                .id();
+
+            chunk_map.chunks.insert(chunk_pos, chunk_entity);
+            octree.insert(chunk_pos);
+        } else {
+            // Chunk vacío, crear sin collider
+            let chunk_entity = commands
+                .spawn((
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: ChunkLOD::Ultra.debug_color(),
+                        cull_mode: None,
+                        ..default()
+                    })),
+                    Transform::default(),
+                    base_chunk,
+                    ChunkLOD::Ultra,
+                ))
+                .id();
+
+            chunk_map.chunks.insert(chunk_pos, chunk_entity);
+            octree.insert(chunk_pos);
+        }
+    }
+
+    let stats = octree.stats();
+    info!("Initial chunks generated! Octree stats: {:?}", stats);
 
     // ========================================================================
     // ILUMINACIÓN Y CÁMARA
