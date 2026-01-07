@@ -10,9 +10,9 @@ use bevy::prelude::*;
 // ============================================================================
 
 /// Tipo de voxel que representa diferentes materiales del mundo.
-/// 
+///
 /// Cada tipo tiene propiedades únicas como dureza, color, y drops.
-/// 
+///
 /// # Diseño
 /// - `Copy + Clone`: Para copiar rápidamente sin allocaciones
 /// - `PartialEq + Eq`: Para comparar tipos
@@ -24,22 +24,22 @@ pub enum VoxelType {
     /// Aire - espacio vacío
     #[default]
     Air = 0,
-    
+
     /// Tierra - material común, fácil de excavar
     Dirt = 1,
-    
+
     /// Piedra - material duro, requiere pico
     Stone = 2,
-    
+
     /// Madera - de árboles, requiere hacha
     Wood = 3,
-    
+
     /// Metal - muy duro, requiere pico avanzado
     Metal = 4,
-    
+
     /// Pasto - tierra con vegetación
     Grass = 5,
-    
+
     /// Arena - material suave del desierto
     Sand = 6,
 }
@@ -49,7 +49,7 @@ pub enum VoxelType {
 // ============================================================================
 
 /// Propiedades físicas y de gameplay de un tipo de voxel.
-/// 
+///
 /// # Campos
 /// - `hardness`: Resistencia a destrucción (0.0 = instantáneo, 10.0 = muy duro)
 /// - `color`: Color base para rendering
@@ -58,22 +58,22 @@ pub enum VoxelType {
 #[derive(Clone, Debug)]
 pub struct VoxelProperties {
     /// Dureza del material (0.0 = muy suave, 10.0 = muy duro)
-    /// 
+    ///
     /// Esto afecta:
     /// - Tiempo para destruir
     /// - Qué herramienta se necesita
     /// - Cantidad de drops
     pub hardness: f32,
-    
+
     /// Color base del voxel (usado para rendering)
     pub color: Color,
-    
+
     /// Si el voxel es sólido (tiene colisión)
     pub is_solid: bool,
-    
+
     /// Si dropea el mismo material al destruirse
     pub drops_self: bool,
-    
+
     /// Nombre legible del material
     pub name: &'static str,
 
@@ -87,7 +87,7 @@ pub struct VoxelProperties {
 
 impl VoxelType {
     /// Obtiene las propiedades de este tipo de voxel.
-    /// 
+    ///
     /// # Ejemplo
     /// ```ignore
     /// let stone = VoxelType::Stone;
@@ -104,54 +104,54 @@ impl VoxelType {
                 name: "Air",
                 density: 0.0,
             },
-            
+
             VoxelType::Dirt => VoxelProperties {
-                hardness: 1.0, // Fácil de excavar
+                hardness: 1.0,                       // Fácil de excavar
                 color: Color::srgb(0.55, 0.35, 0.2), // Marrón tierra
                 is_solid: true,
                 drops_self: true,
                 name: "Dirt",
                 density: 1.0,
             },
-            
+
             VoxelType::Stone => VoxelProperties {
-                hardness: 5.0, // Requiere pico
+                hardness: 5.0,                     // Requiere pico
                 color: Color::srgb(0.5, 0.5, 0.5), // Gris
                 is_solid: true,
                 drops_self: true,
                 name: "Stone",
-                density: 2.5, 
+                density: 2.5,
             },
-            
+
             VoxelType::Wood => VoxelProperties {
-                hardness: 2.0, // Requiere hacha (más eficiente)
+                hardness: 2.0,                      // Requiere hacha (más eficiente)
                 color: Color::srgb(0.4, 0.25, 0.1), // Marrón madera
                 is_solid: true,
                 drops_self: true,
                 name: "Wood",
                 density: 1.5,
             },
-            
+
             VoxelType::Metal => VoxelProperties {
-                hardness: 10.0, // Muy duro, requiere pico avanzado
+                hardness: 10.0,                    // Muy duro, requiere pico avanzado
                 color: Color::srgb(0.7, 0.7, 0.8), // Gris metálico
                 is_solid: true,
                 drops_self: true,
                 name: "Metal",
                 density: 4.0,
             },
-            
+
             VoxelType::Grass => VoxelProperties {
-                hardness: 1.0, // Igual que tierra
+                hardness: 1.0,                     // Igual que tierra
                 color: Color::srgb(0.3, 0.6, 0.2), // Verde pasto
                 is_solid: true,
                 drops_self: false, // Dropea tierra en su lugar
                 name: "Grass",
                 density: 0.5,
             },
-            
+
             VoxelType::Sand => VoxelProperties {
-                hardness: 0.5, // Muy fácil de excavar
+                hardness: 0.5,                      // Muy fácil de excavar
                 color: Color::srgb(0.9, 0.85, 0.6), // Amarillo arena
                 is_solid: true,
                 drops_self: true,
@@ -160,30 +160,30 @@ impl VoxelType {
             },
         }
     }
-    
+
     /// Verifica si este voxel es sólido (tiene colisión).
-    /// 
+    ///
     /// Útil para optimización: evita llamar a `properties()` completo.
     #[inline]
     pub fn is_solid(&self) -> bool {
         !matches!(self, VoxelType::Air)
     }
-    
+
     /// Verifica si este voxel es aire.
     #[inline]
     pub fn is_air(&self) -> bool {
         matches!(self, VoxelType::Air)
     }
-    
+
     /// Convierte un valor de densidad a un tipo de voxel.
-    /// 
+    ///
     /// Esta función es temporal para mantener compatibilidad con el sistema
     /// de generación actual basado en densidad.
-    /// 
+    ///
     /// # Lógica
     /// - Densidad > 0.0 = Sólido (elegimos tipo según altura)
     /// - Densidad <= 0.0 = Aire
-    /// 
+    ///
     /// # Parámetros
     /// - `density`: Valor de densidad del voxel
     /// - `world_y`: Altura en el mundo (para elegir tipo)
@@ -244,13 +244,13 @@ mod tests {
     fn test_from_density() {
         // Aire
         assert_eq!(VoxelType::from_density(-1.0, 2.0), VoxelType::Air);
-        
+
         // Piedra (profundo)
         assert_eq!(VoxelType::from_density(1.0, 0.0), VoxelType::Stone);
-        
+
         // Tierra (medio)
         assert_eq!(VoxelType::from_density(1.0, 1.0), VoxelType::Dirt);
-        
+
         // Pasto (superficie)
         assert_eq!(VoxelType::from_density(1.0, 1.55), VoxelType::Grass);
     }

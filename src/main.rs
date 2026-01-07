@@ -205,7 +205,7 @@ fn setup(
     info!("Initial chunks generated! Octree stats: {:?}", stats);
 
     // ========================================================================
-    // ILUMINACIÓN Y CÁMARA
+    // ILUMINACIÓN
     // ========================================================================
 
     // Luz direccional (simula el sol)
@@ -220,13 +220,4 @@ fn setup(
         Transform::from_xyz(4.0, 10.0, 4.0) // Posición de la luz en (4, 10, 4)
             .looking_at(Vec3::ZERO, Vec3::Y), // Apunta hacia el origen (0,0,0), con Y como "arriba"
     ));
-
-    // Cámara principal - posicionada para ver el terreno procedural
-    commands.spawn((
-        Camera3d::default(),
-        Transform::from_xyz(8.0, 6.0, 8.0) // Posición elevada para ver el terreno
-            .looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y), // Mirar hacia el centro del terreno
-    ));
-
-    println!("Escena inicializada - Cámara posicionada en (8, 6, 8) mirando hacia (0, 1, 0)");
 }
