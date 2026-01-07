@@ -44,6 +44,7 @@
 ### ✅ Fase 1: Fundamentos (COMPLETADA)
 - [x] Setup proyecto Bevy
 - [x] Sistema de chunks voxel básico (128³ con altura 512)
+- [x] Sistema de chunks voxel básico (128³ con altura 512)
 - [x] Terreno con Surface Nets
 - [x] Cámara primera persona
 - [x] Movimiento WASD + salto
@@ -147,6 +148,7 @@
 ### 🔨 Fase 2: Destrucción y Recursos (3-4 semanas) - 🚧 EN PROGRESO
 
 **Objetivo**: Jugador puede destruir voxels y recolectar recursos con sistema optimizado para edificios altos
+**Objetivo**: Jugador puede destruir voxels y recolectar recursos con sistema optimizado para edificios altos
 
 #### Features Core:
 - [x] **VoxelType System**
@@ -169,6 +171,7 @@
     - Pico: 7 voxels (cráter cónico - picotazo)
     - Hacha: 11 voxels (cráter vertical - cortar árboles)
   - ✅ Drops variables: 0-30 voxels según herramienta y material
+
 
 - [x] **Sistema de Drops**
   - ✅ Entidades físicas que caen al suelo
@@ -255,10 +258,14 @@
   - Persistencia de drops al cambiar chunks
 
 #### Targets de Rendimiento (Actualizados para Sistema Dinámico):
+#### Targets de Rendimiento (Actualizados para Sistema Dinámico):
 - [ ] 1000 drops simultáneos a 60 FPS
 - [ ] Recolección O(1) usando spatial hash
 - [ ] <1MB RAM para sistema de drops
 - [ ] <0.5ms CPU por frame para 1000 drops
+- [ ] **Chunks base: <200KB cada uno (vs 42MB anteriores)**
+- [ ] **LOD transitions: <5ms por update**
+- [ ] **Chunk merging: <10ms para grupos de 16x16x16**
 - [ ] **Chunks base: <200KB cada uno (vs 42MB anteriores)**
 - [ ] **LOD transitions: <5ms por update**
 - [ ] **Chunk merging: <10ms para grupos de 16x16x16**
@@ -507,9 +514,116 @@
 ---
 
 ## � Multoijugador - Fases 8-9
+## 🌐 Arquitectura de Mundos - Fases 5-7
+
+### 🌍 Fase 5: Mundos de Misión Procedurales (4-5 semanas)
+
+**Objetivo**: Sistema completo de mundos de misión basados en biomas del overworld
+
+#### Features Core:
+- [ ] **Generación Procedural Basada en Biomas**
+  - Volcán: lava, ceniza, estructuras volcánicas
+  - Nieve: nieve, hielo, estructuras de clima frío
+  - Bosque: árboles densos, estructuras de madera
+  - Desierto: arena, cactus, ruinas
+  - Ciudad: edificios de concreto, estructuras urbanas
+
+- [ ] **Sistema de Misiones (3-4 por mundo)**
+  - Destruir objetivos específicos
+  - Recolectar recursos raros
+  - Sobrevivir oleadas de enemigos
+  - Alcanzar puntos específicos
+  - Punto B (extracción) solo accesible tras completar misiones
+
+- [ ] **Dual Contouring para Terreno Avanzado**
+  - Terreno suave que se combina con estructuras voxel
+  - Preserva bordes afilados para elementos construidos
+  - <100ms por chunk de generación de terreno
+
+- [ ] **Streaming de Mundos Dinámico**
+  - Carga de mundos de misión en <5 segundos
+  - Precarga de chunks adyacentes
+  - Descarga de mundos inactivos para liberar memoria
+  - Presupuesto de memoria: <4GB total
+
+#### Tests:
+- [ ] Generación de mundo basada en bioma funcional
+- [ ] 3-4 misiones distribuidas correctamente
+- [ ] Extracción solo accesible tras completar misiones
+- [ ] Terreno dual contouring se ve natural
+- [ ] Streaming de mundos sin tiempos de carga largos
+
+---
+
+### 🏠 Fase 6: Bases Subterráneas Persistentes (3-4 semanas)
+
+**Objetivo**: Bases personales expandibles con comercio y cultivo
+
+#### Features Core:
+- [ ] **Sistema de Bases Subterráneas**
+  - Base personal persistente para cada jugador
+  - Construcción voxel para expansión
+  - Todas las modificaciones persisten entre sesiones
+
+- [ ] **Puestos de Comercio**
+  - Intercambio de recursos jugador-a-jugador
+  - Órdenes de compra/venta
+  - Solicitudes de recursos entre jugadores
+
+- [ ] **Sistema de Cultivo**
+  - Granjas para generar recursos
+  - Diferentes tipos de cultivos
+  - Crecimiento en tiempo real
+
+- [ ] **Sistema de Teleportación**
+  - Viaje entre mundos de misión y bases
+  - Solo permitido tras completar misiones o en zonas seguras
+  - Teleportación de emergencia durante invasiones
+  - Preserva inventario durante teleportación
+
+#### Tests:
+- [ ] Base persiste entre sesiones
+- [ ] Construcción voxel funciona en bases
+- [ ] Comercio entre jugadores operativo
+- [ ] Cultivo genera recursos correctamente
+- [ ] Teleportación funciona sin pérdida de inventario
+
+---
+
+### ⚔️ Fase 7: Sistema de Invasión de Bases (2-3 semanas)
+
+**Objetivo**: Tensión y gameplay cooperativo/competitivo
+
+#### Features Core:
+- [ ] **Invasiones de Enemigos**
+  - Ataques periódicos a bases de jugadores
+  - Enemigos adaptativos según defensas de la base
+  - Recompensas por defensa exitosa
+
+- [ ] **Invasiones PvP (Opcional)**
+  - Jugadores pueden invadir bases de otros (opt-in)
+  - Formación de equipos para defensa/ataque
+  - Respeta preferencias PvP del jugador
+
+- [ ] **Notificaciones y Defensa**
+  - Notificación al propietario durante ataques
+  - Teleportación de emergencia a base bajo ataque
+  - Sistema de puntos de defensa
+
+#### Tests:
+- [ ] Enemigos atacan bases periódicamente
+- [ ] PvP invasiones solo con consentimiento
+- [ ] Formación de equipos funciona
+- [ ] Notificaciones y teleportación de emergencia operativas
+
+---
+
+## � Multoijugador - Fases 8-9
 
 ### 🌍 Fase 8: Networking Básico (4-5 semanas)
+### 🌍 Fase 8: Networking Básico (4-5 semanas)
 
+**Objetivo**: 8 jugadores pueden jugar juntos en mundos de misión y bases
 **Objetivo**: 8 jugadores pueden jugar juntos en mundos de misión y bases
 
 #### Features Core:
@@ -522,28 +636,41 @@
   - Sincronización entre mundos de misión y bases
   - Estado de jugador persistente entre mundos
   - Inventario sincronizado durante teleportación
+- [ ] **Sincronización Multi-Mundo**
+  - Sincronización entre mundos de misión y bases
+  - Estado de jugador persistente entre mundos
+  - Inventario sincronizado durante teleportación
 
 - [ ] **Sincronización de Enemigos**
   - Servidor autoritativo
   - Posición, estado
   - Vida, muerte
   - Spawning sincronizado en múltiples mundos
+  - Spawning sincronizado en múltiples mundos
 
+- [ ] **Sincronización de Voxels Multi-Mundo**
+  - Delta compression para cambios de voxels
 - [ ] **Sincronización de Voxels Multi-Mundo**
   - Delta compression para cambios de voxels
   - Batch updates (cada 100ms)
   - Interest management por mundo
   - Persistencia de cambios en bases
+  - Interest management por mundo
+  - Persistencia de cambios en bases
 
+- [ ] **Fuego Amigo y PvP**
 - [ ] **Fuego Amigo y PvP**
   - Daño entre jugadores habilitado
   - Indicadores de equipo (marcadores)
+  - PvP opcional en invasiones de bases
   - PvP opcional en invasiones de bases
 
 #### Optimizaciones:
 - [ ] Delta compression para voxels
 - [ ] Interest management por mundo activo
+- [ ] Interest management por mundo activo
 - [ ] Bandwidth limiting (<10MB/s por jugador)
+- [ ] Compresión de datos de mundo inactivo
 - [ ] Compresión de datos de mundo inactivo
 
 #### Tests:
@@ -551,19 +678,31 @@
 - [ ] Destrucción de voxels sincronizada en múltiples mundos
 - [ ] Teleportación entre mundos sin desincronización
 - [ ] Invasiones PvP funcionales
+- [ ] Destrucción de voxels sincronizada en múltiples mundos
+- [ ] Teleportación entre mundos sin desincronización
+- [ ] Invasiones PvP funcionales
 
 ---
 
 ### ⚡ Fase 9: Optimización de Red (2-3 semanas)
+### ⚡ Fase 9: Optimización de Red (2-3 semanas)
 
+**Objetivo**: Multijugador fluido y eficiente con múltiples mundos
 **Objetivo**: Multijugador fluido y eficiente con múltiples mundos
 
 #### Features Core:
 - [ ] **Client-Side Prediction Multi-Mundo**
   - Predicción de movimiento en diferentes tipos de mundo
+- [ ] **Client-Side Prediction Multi-Mundo**
+  - Predicción de movimiento en diferentes tipos de mundo
   - Rollback en caso de desincronización
   - Interpolación suave durante teleportación
+  - Interpolación suave durante teleportación
 
+- [ ] **Optimización de Bandwidth Multi-Mundo**
+  - Compresión agresiva para datos de mundo
+  - Solo enviar cambios (delta) por mundo activo
+  - Priorización de datos críticos por proximidad
 - [ ] **Optimización de Bandwidth Multi-Mundo**
   - Compresión agresiva para datos de mundo
   - Solo enviar cambios (delta) por mundo activo
@@ -573,8 +712,15 @@
   - Lobby system con selección de misiones
   - Matchmaking basado en progreso
   - Reconexión automática con restauración de mundo
+- [ ] **Session Management Avanzado**
+  - Lobby system con selección de misiones
+  - Matchmaking basado en progreso
+  - Reconexión automática con restauración de mundo
 
 #### Tests:
+- [ ] <100ms latencia promedio en múltiples mundos
+- [ ] <5MB/s bandwidth por jugador total
+- [ ] Reconexión sin pérdida de progreso o posición en mundo
 - [ ] <100ms latencia promedio en múltiples mundos
 - [ ] <5MB/s bandwidth por jugador total
 - [ ] Reconexión sin pérdida de progreso o posición en mundo
@@ -582,9 +728,12 @@
 ---
 
 ## 🌲 Mundo Abierto y Progresión - Fases 10-12
+## 🌲 Mundo Abierto y Progresión - Fases 10-12
 
 ### 🗺️ Fase 10: Mapa Overworld y Progreso (3-4 semanas)
+### 🗺️ Fase 10: Mapa Overworld y Progreso (3-4 semanas)
 
+**Objetivo**: Sistema de progresión global con mapa overworld
 **Objetivo**: Sistema de progresión global con mapa overworld
 
 #### Features Core:
@@ -601,7 +750,22 @@
   - Múltiples jugadores pueden progresar independientemente
 
 - [ ] **Generación Procedural Avanzada**
+- [ ] **Mapa Overworld**
+  - Mapa global que muestra progreso desbloqueado
+  - Regiones con diferentes biomas
+  - Sets de misiones (3-4 misiones por set)
+  - Desbloqueo progresivo de áreas
+
+- [ ] **Sistema de Progreso**
+  - Completar set de misiones desbloquea nueva región
+  - Progreso persistente entre sesiones
+  - Dificultad escalable según progreso
+  - Múltiples jugadores pueden progresar independientemente
+
+- [ ] **Generación Procedural Avanzada**
   - Noise-based terrain (FastNoise2)
+  - Montañas, valles, llanuras en overworld
+  - Biomas coherentes que influyen en mundos de misión
   - Montañas, valles, llanuras en overworld
   - Biomas coherentes que influyen en mundos de misión
 
@@ -610,11 +774,17 @@
 - [ ] Desbloqueo de regiones funciona
 - [ ] Progreso persiste entre sesiones
 - [ ] Biomas influyen en generación de misiones
+- [ ] Overworld muestra progreso correctamente
+- [ ] Desbloqueo de regiones funciona
+- [ ] Progreso persiste entre sesiones
+- [ ] Biomas influyen en generación de misiones
 
 ---
 
 ### �️ Fase 11: Clima y Ambiente (2-3 semanas)
+### �️ Fase 11: Clima y Ambiente (2-3 semanas)
 
+**Objetivo**: Mundos vivos con clima dinámico
 **Objetivo**: Mundos vivos con clima dinámico
 
 #### Features Core:
@@ -622,10 +792,14 @@
   - 20 minutos real = 1 día en juego
   - Iluminación dinámica
   - Skybox dinámico por bioma
+  - Skybox dinámico por bioma
 
+- [ ] **Clima Dinámico por Bioma**
 - [ ] **Clima Dinámico por Bioma**
   - Lluvia (reduce visibilidad)
   - Nieve (en bioma nieve)
+  - Tormentas de arena (en desierto)
+  - Niebla volcánica (en volcán)
   - Tormentas de arena (en desierto)
   - Niebla volcánica (en volcán)
 
@@ -635,8 +809,10 @@
   - Ahogamiento (daño después de 30s bajo agua)
 
 - [ ] **Animales por Bioma**
+- [ ] **Animales por Bioma**
   - Neutrales (conejos, ciervos)
   - Hostiles (lobos, osos)
+  - Drops de recursos específicos por bioma
   - Drops de recursos específicos por bioma
 
 #### Tests:
@@ -644,33 +820,48 @@
 - [ ] Clima apropiado por bioma
 - [ ] Natación y ahogamiento funcionales
 - [ ] Animales spawean según bioma
+- [ ] Clima apropiado por bioma
+- [ ] Natación y ahogamiento funcionales
+- [ ] Animales spawean según bioma
 
 ---
 
 ### 🏗️ Fase 12: Construcción Avanzada (3-4 semanas)
+### 🏗️ Fase 12: Construcción Avanzada (3-4 semanas)
 
+**Objetivo**: Sistema completo de construcción para bases y estructuras
 **Objetivo**: Sistema completo de construcción para bases y estructuras
 
 #### Features Core:
+- [ ] **Modo Construcción en Bases**
 - [ ] **Modo Construcción en Bases**
   - Colocar voxels desde inventario
   - Preview de colocación
   - Rotación de bloques
   - Herramientas de construcción especializadas
+  - Herramientas de construcción especializadas
 
+- [ ] **Estructuras Defensivas**
 - [ ] **Estructuras Defensivas**
   - Muros defensivos
   - Torretas automáticas
+  - Torretas automáticas
   - Trampas básicas
+  - Puertas y sistemas de acceso
   - Puertas y sistemas de acceso
 
 - [ ] **Física de Colapso Mejorada**
+- [ ] **Física de Colapso Mejorada**
   - Edificios sin soporte colapsan
+  - Simulación simplificada (voxels desaparecen)
   - Simulación simplificada (voxels desaparecen)
   - Drops de voxels al colapsar
   - Detección de integridad estructural
+  - Detección de integridad estructural
 
 #### Tests:
+- [ ] Construcción fluida en bases
+- [ ] Estructuras defensivas funcionales
 - [ ] Construcción fluida en bases
 - [ ] Estructuras defensivas funcionales
 - [ ] Colapso de edificios sin crash
@@ -679,18 +870,26 @@
 ---
 
 ## 🎨 Polish y Optimización - Fases 15+
+## 🎨 Polish y Optimización - Fases 15+
 
+### ✨ Fase 15: Audio y VFX (2-3 semanas)
 ### ✨ Fase 15: Audio y VFX (2-3 semanas)
 
 #### Features:
 - [ ] Música dinámica por bioma y situación
+- [ ] Música dinámica por bioma y situación
 - [ ] Sonidos posicionales 3D
+- [ ] Chat de voz posicional
+- [ ] Efectos de partículas para destrucción masiva
 - [ ] Chat de voz posicional
 - [ ] Efectos de partículas para destrucción masiva
 - [ ] Post-processing (bloom, color grading)
 - [ ] Efectos visuales para teleportación
 - [ ] Audio ambiental por tipo de mundo
+- [ ] Efectos visuales para teleportación
+- [ ] Audio ambiental por tipo de mundo
 
+### 🔧 Fase 16: Optimización Final (ongoing)
 ### 🔧 Fase 16: Optimización Final (ongoing)
 
 #### Targets Actualizados:
@@ -700,8 +899,26 @@
 - [ ] <10MB/s bandwidth por jugador
 - [ ] <5 segundos carga de mundo de misión
 - [ ] <1 segundo teleportación entre mundos
+#### Targets Actualizados:
+- [ ] 60 FPS con 500 enemigos en múltiples mundos
+- [ ] <16ms frame time con greedy meshing
+- [ ] <4GB RAM total para todos los mundos cargados
+- [ ] <10MB/s bandwidth por jugador
+- [ ] <5 segundos carga de mundo de misión
+- [ ] <1 segundo teleportación entre mundos
 
 ### 🚀 Fase 17: Contenido Adicional (futuro)
+### 🚀 Fase 17: Contenido Adicional (futuro)
+
+- [ ] Más tipos de enemigos por bioma
+- [ ] Más biomas (pantano, tundra, cavernas)
+- [ ] Dungeons subterráneos procedurales
+- [ ] Clanes y guerras entre bases
+- [ ] Trading automatizado entre bases
+- [ ] Vehículos para exploración rápida
+- [ ] Más armas y herramientas especializadas
+- [ ] Eventos mundiales que afectan todos los jugadores
+- [ ] Construcción colaborativa de mega-estructuras
 
 - [ ] Más tipos de enemigos por bioma
 - [ ] Más biomas (pantano, tundra, cavernas)
@@ -715,6 +932,7 @@
 
 ---
 
+## 📊 Timeline Estimado Actualizado
 ## 📊 Timeline Estimado Actualizado
 
 | Fase | Duración | Acumulado | Enfoque |
@@ -746,9 +964,12 @@
 ---
 
 ## 🎯 Milestones Clave Actualizados
+## 🎯 Milestones Clave Actualizados
 
 ### Milestone 1: Gameplay Loop Básico (Mes 4)
 - ✅ Movimiento
+- ✅ Destrucción de voxels con chunks 2048
+- ✅ Greedy meshing para rendimiento
 - ✅ Destrucción de voxels con chunks 2048
 - ✅ Greedy meshing para rendimiento
 - ✅ Inventario
@@ -768,7 +989,24 @@
 - ✅ Sincronización multi-mundo
 - ✅ PvP en invasiones de bases
 - ✅ Teleportación entre mundos
+### Milestone 2: Arquitectura de Mundos (Mes 7)
+- ✅ Mundos de misión procedurales
+- ✅ Bases subterráneas persistentes
+- ✅ Sistema de invasión de bases
+- ✅ Dual contouring para terreno
+- ✅ Streaming de mundos dinámico
 
+### Milestone 3: Multiplayer Funcional (Mes 9)
+- ✅ 8 jugadores en múltiples mundos
+- ✅ Sincronización multi-mundo
+- ✅ PvP en invasiones de bases
+- ✅ Teleportación entre mundos
+
+### Milestone 4: Mundo Completo (Mes 12)
+- ✅ Mapa overworld con progresión
+- ✅ Clima dinámico por bioma
+- ✅ Construcción avanzada en bases
+- ✅ Sistema de streaming optimizado
 ### Milestone 4: Mundo Completo (Mes 12)
 - ✅ Mapa overworld con progresión
 - ✅ Clima dinámico por bioma
@@ -780,9 +1018,15 @@
 - ✅ Loot por bioma
 - ✅ Sistema de extracción
 - ✅ Misiones dinámicas
+### Milestone 5: Progresión Completa (Mes 13.5)
+- ✅ Niveles y habilidades
+- ✅ Loot por bioma
+- ✅ Sistema de extracción
+- ✅ Misiones dinámicas
 
 ---
 
+## 🔥 Prioridades de Optimización Actualizadas
 ## 🔥 Prioridades de Optimización Actualizadas
 
 ### Críticas (hacer temprano):
@@ -796,6 +1040,10 @@
 8. ✅ **Face Culling Inteligente** - Completado ✅
 
 ### Importantes (hacer medio):
+7. **Memory Management Multi-Mundo** - Fase 5-6 (NUEVO)
+8. **Client Prediction Multi-Mundo** - Fase 9
+9. **Chunk Streaming por Mundo** - Fase 8
+10. **Compression de Mundos Inactivos** - Fase 9 (NUEVO)
 7. **Memory Management Multi-Mundo** - Fase 5-6 (NUEVO)
 8. **Client Prediction Multi-Mundo** - Fase 9
 9. **Chunk Streaming por Mundo** - Fase 8
