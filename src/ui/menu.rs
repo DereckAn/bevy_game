@@ -23,34 +23,56 @@ pub enum MenuAction {
 ///
 /// Crea todo los botones y elementos visuales del menu
 pub fn setup_main_menu(mut commands: Commands) {
-    info!("Creando menuy principal ...");
+    info!("Creando menú principal...");
 
+    // Contenedor principal (toda la pantalla)
     commands
         .spawn((
             Node {
-                width: Val::Percent(100.0),              // 100% del ancho de pantalla
-                height: Val::Percent(100.0),             // 100% del alto de pantalla
-                align_items: AlignItems::Center,         // Centrar verticalmente
-                justify_content: JustifyContent::Center, // Centrar horizontalmente
-                flex_direction: FlexDirection::Column,   // Botones en la columna
-                row_gap: Val::Px(20.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row, // Horizontal
+                justify_content: JustifyContent::FlexEnd, // Alinea a la DERECHA
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)), // Dondo gris oscuro
-            MainMenuUI, // Marcamos esta entidad para poder eliminarla despues
+            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+            MainMenuUI,
         ))
         .with_children(|parent| {
-            // Boton PLAY
-            create_menu_button(parent, "PLAY", MenuAction::Play);
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Px(30.0),
+                         border: UiRect::all(Val::Px(4.0)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.0, 1.0, 0.8)),
+                ))
+                .with_children(|parent| {
+                    create_menu_button(parent, "⚙️", MenuAction::Settings);
+                });
 
-            // Boton SETTINGS
-            create_menu_button(parent, "SETTINGS", MenuAction::Settings);
-
-            // Boton CREDITS
-            create_menu_button(parent, "CREDITS", MenuAction::Credits);
-
-            // Bototn QUIT
-            create_menu_button(parent, "QUIT", MenuAction::Quit);
+            // ========================================
+            // CONTENEDOR DERECHO (30% del ancho)
+            // ========================================
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Percent(40.0),               // 30% del ancho de pantalla
+                        height: Val::Percent(100.0),             // 100% de altura
+                        flex_direction: FlexDirection::Column,   // Botones en columna
+                        justify_content: JustifyContent::Center, // Centrar verticalmente
+                        align_items: AlignItems::Center,         // Centrar horizontalmente
+                        border: UiRect::all(Val::Px(4.0)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.0, 1.0, 0.8)),
+                ))
+                .with_children(|parent| {
+                    create_menu_button(parent, "PLAY", MenuAction::Play);
+                    create_menu_button(parent, "SETTINGS", MenuAction::Settings);
+                });
         });
 }
 
@@ -75,7 +97,7 @@ fn create_menu_button(parent: &mut ChildSpawnerCommands<'_>, text: &str, action:
         .spawn((
             Button, // Componente que hace que sea clickable
             Node {
-                width: Val::Px(300.0),             // Ancho de boton
+                width: Val::Percent(100.0),        // Ancho de boton
                 height: Val::Px(80.0),             // Alto del boton
                 border: UiRect::all(Val::Px(4.0)), // Borde de 4 pixeles
                 justify_content: JustifyContent::Center,
@@ -100,15 +122,15 @@ fn create_menu_button(parent: &mut ChildSpawnerCommands<'_>, text: &str, action:
         });
 }
 
-
 /// Sistema que detecta interacciones con los btones del menu
-/// 
+///
 /// Cambia colores cuando el mouse esta encima y ejecuta acciones al hacer ckick
 pub fn menu_button_system(
     mut interaction_query: Query<
-    (&Interaction, &mut BackgroundColor, &MenuAction),
-    (Changed<Interaction>, With<Button>)>,
-    mut next_state: ResMut<NextState<GameState>>
+        (&Interaction, &mut BackgroundColor, &MenuAction),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut next_state: ResMut<NextState<GameState>>,
 ) {
     for (interaction, mut color, menu_action) in &mut interaction_query {
         match *interaction {
