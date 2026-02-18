@@ -52,16 +52,7 @@ impl DownsampledChunk {
                         .map(|(idx, _)| idx)
                         .unwrap_or(0);
                     
-                    voxel_types[x][y][z] = match most_common {
-                        0 => VoxelType::Air,
-                        1 => VoxelType::Stone,
-                        2 => VoxelType::Dirt,
-                        3 => VoxelType::Wood,
-                        4 => VoxelType::Metal,
-                        5 => VoxelType::Grass,
-                        6 => VoxelType::Sand,
-                        _ => VoxelType::Air,
-                    };
+                    voxel_types[x][y][z] = VoxelType::from_u8(most_common as u8);
                 }
             }
         }
@@ -101,16 +92,7 @@ impl DownsampledChunk {
                         .map(|(idx, _)| idx)
                         .unwrap_or(0);
                     
-                    voxel_types[x][y][z] = match most_common {
-                        0 => VoxelType::Air,
-                        1 => VoxelType::Stone,
-                        2 => VoxelType::Dirt,
-                        3 => VoxelType::Wood,
-                        4 => VoxelType::Metal,
-                        5 => VoxelType::Grass,
-                        6 => VoxelType::Sand,
-                        _ => VoxelType::Air,
-                    };
+                    voxel_types[x][y][z] = VoxelType::from_u8(most_common as u8);
                 }
             }
         }
@@ -150,16 +132,7 @@ impl DownsampledChunk {
                         .map(|(idx, _)| idx)
                         .unwrap_or(0);
                     
-                    voxel_types[x][y][z] = match most_common {
-                        0 => VoxelType::Air,
-                        1 => VoxelType::Stone,
-                        2 => VoxelType::Dirt,
-                        3 => VoxelType::Wood,
-                        4 => VoxelType::Metal,
-                        5 => VoxelType::Grass,
-                        6 => VoxelType::Sand,
-                        _ => VoxelType::Air,
-                    };
+                    voxel_types[x][y][z] = VoxelType::from_u8(most_common as u8);
                 }
             }
         }

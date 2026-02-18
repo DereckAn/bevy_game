@@ -9,6 +9,7 @@
 
 mod core; // Declara el módulo 'core' (busca src/core/mod.rs)
 mod debug;
+mod ui;
 mod physics; // Declara el módulo 'physics' (busca src/physics/mod.rs)
 mod player; // Declara el módulo 'player' (busca src/player/mod.rs)
 mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el módulo 'debug' (busca src/debug/mod.rs)
@@ -17,7 +18,7 @@ mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el 
 // IMPORTS (TRAER CÓDIGO DE OTROS MÓDULOS)
 // ============================================================================
 use std::collections::HashMap;
-
+use ui::UIPlugin;
 use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions},
@@ -33,6 +34,8 @@ use voxel::{
     unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
     update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
 };
+
+use crate::core::GameState;
 
 // ============================================================================
 // FUNCIÓN PRINCIPAL
@@ -57,6 +60,7 @@ fn main() {
             ..default()
         })) // Añade plugins básicos (ventana, input, render, etc.)
         .add_plugins(PhysicsPlugin) // Añade nuestro plugin de física (Rapier)
+        .add_plugins(UIPlugin) // Anade el plugin de ui 
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
@@ -69,7 +73,7 @@ fn main() {
             IVec3::new(200, 10, 200),
         )))
         .insert_resource(SpatialHashGrid::default())
-        .add_systems(Startup, setup) // Registra la función 'setup' para ejecutar al inicio
+        .add_systems(OnEnter(GameState::InGame), setup)
         .add_systems(
             Update,
             (

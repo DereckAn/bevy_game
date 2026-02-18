@@ -63,6 +63,10 @@ impl BiomeType {
 pub struct BiomeGenerator {
     biome_noise: FastNoiseLite,
     moisture_noise: FastNoiseLite,
+    /// Ruido de terreno pre-construido para cada bioma (indexado por BiomeType)
+    terrain_noises: [FastNoiseLite; 5],
+    /// Ruido de detalle para montañas (pre-construido)
+    mountain_detail_noise: FastNoiseLite,
 }
 
 impl BiomeGenerator {
@@ -72,67 +76,92 @@ impl BiomeGenerator {
         biome_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
         biome_noise.set_frequency(Some(0.003)); // Biomas grandes
         biome_noise.set_seed(Some(seed));
-        
+
         // Ruido para humedad (futuro: árboles, agua, etc.)
         let mut moisture_noise = FastNoiseLite::new();
         moisture_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
         moisture_noise.set_frequency(Some(0.005));
         moisture_noise.set_seed(Some(seed + 1000));
-        
+
+        // Pre-construir ruido de terreno para cada bioma
+        let biomes = [
+            BiomeType::Plains,
+            BiomeType::Hills,
+            BiomeType::Mountains,
+            BiomeType::Valley,
+            BiomeType::Plateau,
+        ];
+        let terrain_noises = biomes.map(|biome| {
+            let mut noise = FastNoiseLite::new();
+            noise.set_noise_type(Some(NoiseType::OpenSimplex2));
+            noise.set_fractal_type(Some(FractalType::FBm));
+            noise.set_fractal_octaves(Some(biome.octaves()));
+            noise.set_frequency(Some(biome.frequency()));
+            noise.set_seed(Some(12345));
+            noise
+        });
+
+        // Pre-construir ruido de detalle para montañas
+        let mut mountain_detail_noise = FastNoiseLite::new();
+        mountain_detail_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
+        mountain_detail_noise.set_frequency(Some(0.08));
+        mountain_detail_noise.set_seed(Some(54321));
+
         Self {
             biome_noise,
             moisture_noise,
+            terrain_noises,
+            mountain_detail_noise,
         }
     }
-    
+
     /// Obtiene el bioma en una posición mundial
     pub fn get_biome(&mut self, world_x: f32, world_z: f32) -> BiomeType {
         let biome_value = self.biome_noise.get_noise_2d(world_x, world_z);
         let moisture = self.moisture_noise.get_noise_2d(world_x, world_z);
-        
+
         // Usar biome_value y moisture para determinar bioma
         match (biome_value, moisture) {
             // Montañas: valores altos de biome
             (b, _) if b > 0.4 => BiomeType::Mountains,
-            
+
             // Valles: valores muy bajos
             (b, _) if b < -0.4 => BiomeType::Valley,
-            
+
             // Mesetas: valores medios-altos con baja humedad
             (b, m) if b > 0.1 && m < -0.2 => BiomeType::Plateau,
-            
+
             // Colinas: valores medios
             (b, _) if b > -0.1 && b < 0.1 => BiomeType::Hills,
-            
+
             // Llanuras: por defecto
             _ => BiomeType::Plains,
         }
     }
-    
+
+    /// Índice en terrain_noises para cada bioma
+    fn biome_index(biome: BiomeType) -> usize {
+        match biome {
+            BiomeType::Plains => 0,
+            BiomeType::Hills => 1,
+            BiomeType::Mountains => 2,
+            BiomeType::Valley => 3,
+            BiomeType::Plateau => 4,
+        }
+    }
+
     /// Genera altura del terreno con biomas
     pub fn generate_height(&mut self, world_x: f32, world_z: f32) -> f32 {
         let biome = self.get_biome(world_x, world_z);
-        
-        // Crear ruido específico para este bioma
-        let mut terrain_noise = FastNoiseLite::new();
-        terrain_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
-        terrain_noise.set_fractal_type(Some(FractalType::FBm));
-        terrain_noise.set_fractal_octaves(Some(biome.octaves()));
-        terrain_noise.set_frequency(Some(biome.frequency()));
-        terrain_noise.set_seed(Some(12345));
-        
-        // Calcular altura base + variación
-        let noise_value = terrain_noise.get_noise_2d(world_x, world_z);
+
+        // Usar ruido pre-construido para este bioma
+        let idx = Self::biome_index(biome);
+        let noise_value = self.terrain_noises[idx].get_noise_2d(world_x, world_z);
         let height = biome.base_height() + noise_value * biome.amplitude();
-        
+
         // Agregar capa adicional de detalle para montañas
         if matches!(biome, BiomeType::Mountains) {
-            let mut detail_noise = FastNoiseLite::new();
-            detail_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
-            detail_noise.set_frequency(Some(0.08)); // Detalles pequeños
-            detail_noise.set_seed(Some(54321));
-            
-            let detail = detail_noise.get_noise_2d(world_x, world_z) * 2.0;
+            let detail = self.mountain_detail_noise.get_noise_2d(world_x, world_z) * 2.0;
             height + detail
         } else {
             height
@@ -142,7 +171,7 @@ impl BiomeGenerator {
 
 /// Generador de terreno con múltiples capas de ruido
 pub struct TerrainGenerator {
-    biome_gen: BiomeGenerator,
+    pub biome_gen: BiomeGenerator,
     cave_noise: FastNoiseLite,
 }
 

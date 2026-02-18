@@ -8,7 +8,7 @@ use super::{
     tools::{Tool, ToolType},
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::{physics::spawn_rapier_voxel_drop, player::components::Player};
+use crate::{physics::{spawn_rapier_voxel_drop, create_terrain_collider, Collider}, player::components::Player};
 use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -431,6 +431,13 @@ pub fn update_voxel_breaking_system(
                     if let Ok(chunk) = chunks_read.get(chunk_entity) {
                         // Generar nuevo mesh con greedy meshing y neighbors
                         let new_mesh = greedy_mesh_basechunk(chunk, &chunk_map, &chunks_read);
+
+                        // Actualizar collider con la nueva geometría
+                        if new_mesh.count_vertices() > 0 {
+                            commands.entity(chunk_entity).insert(create_terrain_collider(&new_mesh));
+                        } else {
+                            commands.entity(chunk_entity).remove::<Collider>();
+                        }
 
                         if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity) {
                             *mesh3d = Mesh3d(meshes.add(new_mesh));

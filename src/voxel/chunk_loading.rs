@@ -17,7 +17,7 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task},
 };
 use futures_lite::future;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 /// Radio de carga de chunks (en chunks, no metros)
 /// Aumentado para incluir chunks LOD distantes
@@ -72,7 +72,7 @@ impl ChunkType {
 #[derive(Resource, Default)]
 pub struct ChunkLoadQueue {
     // Chunks a cargar con su tipo (Real o Lod)
-    pub to_load: Vec<(IVec3, ChunkType)>,
+    pub to_load: VecDeque<(IVec3, ChunkType)>,
     pub to_unload: Vec<Entity>,
 
     // Conversiones pendientes
@@ -146,10 +146,10 @@ pub fn update_chunk_load_queue(
     }
 
     // Encontrar chunks que necesitan ser cargados
-    load_queue.to_load.clear();
+    let mut to_load_vec: Vec<(IVec3, ChunkType)> = Vec::new();
     for chunk_pos in &chunks_needed {
         if !chunk_map.chunks.contains_key(chunk_pos) {
-            // Calcular disntancia al jugador (solo horizontal x , z)
+            // Calcular distancia al jugador (solo horizontal x, z)
             let dx = chunk_pos.x - player_chunk.x;
             let dz = chunk_pos.z - player_chunk.z;
             let distance_chunks = ((dx * dx + dz * dz) as f32).sqrt() as i32;
@@ -157,18 +157,20 @@ pub fn update_chunk_load_queue(
             // Determinar tipo de chunk segun distancia
             let chunk_type = ChunkType::from_distance(distance_chunks);
 
-            load_queue.to_load.push((*chunk_pos, chunk_type));
+            to_load_vec.push((*chunk_pos, chunk_type));
         }
     }
 
     // Ordenar por distancia al jugador (cargar los más cercanos primero)
     let player_pos = player_chunk;
-    load_queue.to_load.sort_by_key(|(pos, _chunk_type)| {
+    to_load_vec.sort_by_key(|(pos, _chunk_type)| {
         let dx = pos.x - player_pos.x;
         let dy = pos.y - player_pos.y;
         let dz = pos.z - player_pos.z;
         dx * dx + dy * dy + dz * dz
     });
+
+    load_queue.to_load = VecDeque::from(to_load_vec);
 
     // Verificar cuáles chunks están fuera del radio de descarga
     // OPTIMIZACIÓN: Usar Spatial Hash Grid con distancia HORIZONTAL (2D)
@@ -206,9 +208,7 @@ pub fn load_chunks_system(
     let chunks_to_load = load_queue.to_load.len().min(MAX_CHUNKS_PER_FRAME);
 
     for _ in 0..chunks_to_load {
-        if let Some((chunk_pos, chunk_type)) = load_queue.to_load.first().copied() {
-            // Remover el primer elemento (más cercano)
-            load_queue.to_load.remove(0);
+        if let Some((chunk_pos, chunk_type)) = load_queue.to_load.pop_front() {
             // Verificar que no se haya cargado mientras tanto
             if chunk_map.chunks.contains_key(&chunk_pos) {
                 continue;
@@ -240,8 +240,9 @@ pub fn load_chunks_system(
 
                 ChunkType::Lod => {
                     // chunk Lod solo superficie (generacion sincrona por ahora)
+                    let delta = chunk_pos - load_queue.last_player_chunk;
                     let distance_chunks =
-                        ((chunk_pos.x.pow(2) + chunk_pos.z.pow(2)) as f32).sqrt() as i32;
+                        ((delta.x.pow(2) + delta.z.pow(2)) as f32).sqrt() as i32;
                     let lod_level = LodLevel::from_distance(distance_chunks);
 
                     let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
@@ -453,6 +454,7 @@ pub fn update_chunk_transitions_system(
 pub fn convert_lod_to_real_system(
     mut commands: Commands,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    mut chunk_map: ResMut<ChunkMap>,
     lod_query: Query<&LodChunk>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
@@ -481,7 +483,9 @@ pub fn convert_lod_to_real_system(
                 // Crear nueva entidad con la tarea
                 let new_entity = commands.spawn(ChunkGenerationTask { task }).id();
 
-                // Actualizar el ChunkMap se hará en complete_chunk_generation_system
+                // Actualizar ChunkMap para que apunte a la nueva entidad
+                chunk_map.chunks.insert(chunk_pos, new_entity);
+
                 info!("Converting LOD → Real at {:?}", chunk_pos);
             }
         }
@@ -510,9 +514,10 @@ pub fn convert_real_to_lod_system(
             if let Ok(base_chunk) = base_query.get(entity) {
                 let chunk_pos = base_chunk.position;
 
-                // Calcular distancia para determinar nivel LOD
+                // Calcular distancia al jugador para determinar nivel LOD
+                let delta = chunk_pos - load_queue.last_player_chunk;
                 let distance_chunks =
-                    ((chunk_pos.x * chunk_pos.x + chunk_pos.z * chunk_pos.z) as f32).sqrt() as i32;
+                    ((delta.x * delta.x + delta.z * delta.z) as f32).sqrt() as i32;
                 let lod_level = LodLevel::from_distance(distance_chunks);
 
                 // Crear LOD chunk desde el BaseChunk existente

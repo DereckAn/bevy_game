@@ -34,55 +34,50 @@ impl BaseChunk {
 
     /// Generación de terreno con biomas
     /// Combina FastNoiseLite + Rayon + Sistema de Biomas
+    /// Optimizado: calcula heightmap una vez por columna XZ (33x33 = 1,089 evaluaciones)
+    /// en lugar de por cada voxel (33³ = 35,937 evaluaciones)
     pub fn generate_terrain(&mut self) {
         let chunk_pos = self.position;
-        
+
         // Crear generador de terreno UNA VEZ para todo el chunk
         let mut terrain_gen = TerrainGenerator::new(12345);
-        
-        // Calcular todas las densidades en paralelo
-        let total_size = (BASE_CHUNK_SIZE + 1).pow(3);
-        
-        // Pre-calcular coordenadas mundiales para evitar recalcular en cada thread
-        let mut world_coords = Vec::with_capacity(total_size);
-        for idx in 0..total_size {
-            let x = idx % (BASE_CHUNK_SIZE + 1);
-            let y = (idx / (BASE_CHUNK_SIZE + 1)) % (BASE_CHUNK_SIZE + 1);
-            let z = idx / ((BASE_CHUNK_SIZE + 1) * (BASE_CHUNK_SIZE + 1));
 
-            let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + x as i32) as f32 * VOXEL_SIZE;
-            let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + z as i32) as f32 * VOXEL_SIZE;
-            let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
-            
-            world_coords.push((world_x, world_y, world_z));
-        }
-        
-        // Calcular densidades (sin paralelización para evitar problemas con el generador)
-        let densities_flat: Vec<f32> = world_coords.iter()
-            .map(|(world_x, world_y, world_z)| {
-                terrain_gen.get_density(*world_x, *world_y, *world_z)
-            })
-            .collect();
+        // Paso 1: Calcular heightmap 2D (solo XZ, una vez por columna)
+        // Necesitamos (BASE_CHUNK_SIZE + 1) para las densidades en los bordes
+        let grid = BASE_CHUNK_SIZE + 1;
+        let mut heightmap = vec![0.0f32; grid * grid];
 
-        // Copiar resultados al array 3D
-        for (idx, &density) in densities_flat.iter().enumerate() {
-            let x = idx % (BASE_CHUNK_SIZE + 1);
-            let y = (idx / (BASE_CHUNK_SIZE + 1)) % (BASE_CHUNK_SIZE + 1);
-            let z = idx / ((BASE_CHUNK_SIZE + 1) * (BASE_CHUNK_SIZE + 1));
-            self.densities[x][y][z] = density;
+        for z in 0..grid {
+            for x in 0..grid {
+                let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + x as i32) as f32 * VOXEL_SIZE;
+                let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + z as i32) as f32 * VOXEL_SIZE;
+                heightmap[x + z * grid] = terrain_gen.biome_gen.generate_height(world_x, world_z);
+            }
         }
 
-        // Calcular tipos de voxel también en paralelo
+        // Paso 2: Calcular densidades usando el heightmap cacheado (solo aritmética)
+        for z in 0..grid {
+            for y in 0..grid {
+                let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
+                for x in 0..grid {
+                    let terrain_height = heightmap[x + z * grid];
+                    self.densities[x][y][z] = terrain_height - world_y;
+                }
+            }
+        }
+
+        // Paso 3: Calcular tipos de voxel en paralelo usando las densidades ya calculadas
+        let densities_ref = &self.densities;
         let voxel_types_flat: Vec<VoxelType> = (0..BASE_CHUNK_SIZE.pow(3))
             .into_par_iter()
             .map(|idx| {
                 let x = idx % BASE_CHUNK_SIZE;
                 let y = (idx / BASE_CHUNK_SIZE) % BASE_CHUNK_SIZE;
                 let z = idx / (BASE_CHUNK_SIZE * BASE_CHUNK_SIZE);
-                
+
                 let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f64 * VOXEL_SIZE as f64;
-                let density = densities_flat[x + y * (BASE_CHUNK_SIZE + 1) + z * (BASE_CHUNK_SIZE + 1) * (BASE_CHUNK_SIZE + 1)];
-                
+                let density = densities_ref[x][y][z];
+
                 VoxelType::from_density(density, world_y)
             })
             .collect();

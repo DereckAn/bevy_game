@@ -175,6 +175,22 @@ impl VoxelType {
         matches!(self, VoxelType::Air)
     }
 
+    /// Convierte un u8 a VoxelType de forma segura.
+    /// Valores fuera de rango retornan Air.
+    #[inline]
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => VoxelType::Air,
+            1 => VoxelType::Dirt,
+            2 => VoxelType::Stone,
+            3 => VoxelType::Wood,
+            4 => VoxelType::Metal,
+            5 => VoxelType::Grass,
+            6 => VoxelType::Sand,
+            _ => VoxelType::Air,
+        }
+    }
+
     /// Convierte un valor de densidad a un tipo de voxel.
     ///
     /// Esta función es temporal para mantener compatibilidad con el sistema
