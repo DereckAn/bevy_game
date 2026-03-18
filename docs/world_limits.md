@@ -17,9 +17,11 @@ ChunkOctree::new(BoundingBox::new(
 - **Total Volume**: 3.2 million chunks possible
 
 ### Active Loading Area
-- **Load Radius**: 16 chunks (~51 meters)
+- **Load Radius**: 64 chunks (~204 meters) — Real chunks with physics
+- **LOD Radius**: up to 200 chunks — Surface-only LOD chunks, no physics
 - **Vertical Range**: Y=-1 to Y=3 (5 levels, ~16 meters)
-- **Active Chunks**: ~400 chunks loaded at once
+- **Active Real Chunks**: ~6,400 chunks max (π × 64²)
+- **Unload Radius**: 70 chunks
 
 ## How to Change World Size
 

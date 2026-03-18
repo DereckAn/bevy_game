@@ -3,6 +3,11 @@
 **Date:** February 16, 2026
 **Scope:** Full review of the voxel world generation system, architecture assessment for future scalability, and phased plan to reach production quality.
 
+> **Status (April 2026):**
+> - Bug #1 (FastNoiseLite re-allocated per call) — **FIXED**: `biomes.rs` now pre-builds one `FastNoiseLite` per biome in `BiomeGenerator::new()`, stored in `terrain_noises` array.
+> - Bug #2 (terrain height recomputed 33x per column) — **FIXED**: `dynamic_chunks.rs` now pre-computes a 2D heightmap before the 3D density pass.
+> - All other findings remain valid and unresolved — see `STATUS.md` for current bug list.
+
 ---
 
 ## Table of Contents

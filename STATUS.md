@@ -1,161 +1,151 @@
 # Estado Actual del Proyecto - Voxel Game
 
-**Fecha**: 30 de Diciembre, 2025
+**Fecha de última actualización**: Abril 2026
 
-## ✅ Implementaciones Completadas
+## Resumen
 
-### 1. Sistema de Chunks Dinámicos con Generación Asíncrona
-- **Radio de carga**: 16 chunks (reducido desde 32 para mejor rendimiento)
-- **Generación asíncrona**: 32 chunks por frame usando `AsyncComputeTaskPool`
-- **Chunks verticales**: Genera desde Y=-1 hasta Y=3 (5 niveles)
-- **Descarga automática**: Elimina chunks lejanos (radio 20)
-- **Estado**: ✅ FUNCIONANDO
+Juego voxel en primera persona (estilo Minecraft) construido con Bevy 0.17 + Rapier3D. El mundo es terreno procedural infinito dividido en chunks de 32³. Actualmente funcional con generación asíncrona, sistema de biomas, greedy meshing, y un sistema LOD de dos capas (chunks reales cercanos + chunks LOD distantes).
 
-### 2. Sistema de Biomas y Terreno Procedural
-- **5 Biomas implementados**:
-  - Plains (llanuras): Terreno plano y suave
-  - Hills (colinas): Ondulaciones medianas
-  - Mountains (montañas): Picos altos hasta 13m
-  - Valley (valles): Depresiones
-  - Plateau (mesetas): Superficies planas elevadas
-- **Transiciones suaves**: Usando noise para selección de biomas
-- **Generación consistente**: Un solo `TerrainGenerator` por chunk
-- **Estado**: ✅ FUNCIONANDO
-
-### 3. Sistema de Frustum Culling
-- **Implementado**: Sistema simplificado usando distancia + ángulo
-- **Mejora esperada**: 30-50% de FPS
-- **Método**: Oculta chunks fuera de vista (distancia > 200m o ángulo > 110°)
-- **Estado**: ⚠️ DESHABILITADO (tenía bugs, necesita pruebas)
-- **Multiplayer**: ✅ Compatible - es client-side only (ver docs/multiplayer_architecture.md)
-
-### 4. Optimizaciones de Rendimiento
-- Reducción de radio de carga: 32 → 16 chunks
-- Reducción de chunks por frame: 64 → 32
-- Reducción de rango vertical: Y=-2..5 → Y=-1..3
-- Verificación de meshes vacíos (no crear colliders para chunks de aire)
-- **Estado**: ✅ APLICADO
-
-## 📊 Rendimiento Actual
-
-### Antes de Optimizaciones
-- **FPS**: ~30 FPS (bajó desde 144 FPS)
-- **Causa**: Generación de chunks verticales multiplicó carga por 5x
-- **Chunks iniciales**: ~400 chunks
-
-### Después de Optimizaciones (Esperado)
-- **FPS objetivo**: 60-90 FPS
-- **Frustum culling**: Debería mejorar 50-75%
-- **Chunks visibles**: ~50-60% de los cargados
-
-## ⚠️ Sistemas Deshabilitados Temporalmente
-
-### 1. Sistema de Caché en Disco
-- **Razón**: Hacía todo muy lento
-- **Estado**: Código presente pero deshabilitado
-- **Futuro**: Necesita optimización (Phase 6 del roadmap)
-
-### 2. Sistema de LOD/Downsampling
-- **Razón**: Causaba panic por overflow
-- **Estado**: Código presente pero no usado
-- **Futuro**: Necesita corrección y optimización (Phase 7 del roadmap)
-
-## 🎯 Próximos Pasos (En Orden de Prioridad)
-
-### Inmediato - Probar Sin Frustum Culling
-1. **Medir FPS actual** sin frustum culling (está deshabilitado)
-2. **Verificar estabilidad** del juego
-3. **Decidir** si habilitar frustum culling o implementar otras optimizaciones
-
-### Opción A: Habilitar Frustum Culling (Si FPS < 45)
-- Descomentar `update_frustum_culling` en main.rs
-- Probar con FOV amplio (110°) para evitar pop-in
-- Ajustar parámetros si chunks desaparecen incorrectamente
-
-### Opción B: Otras Optimizaciones (Si FPS 45-60)
-Implementar optimizaciones del roadmap que no tienen bugs:
-
-#### Phase 6: Optimización de Caché
-- Cache en memoria (HashMap) en lugar de disco
-- Guardar a disco solo al cerrar el juego
-- Compresión de datos (LZ4)
-
-#### Phase 7: Optimización de LOD
-- Corregir el bug de overflow en downsampling
-- Pre-generar todos los niveles de LOD
-- Cambiar LOD basado en distancia
-
-#### Phase 8: Chunk Pooling
-- Reusar chunks en lugar de crear/destruir
-- Pool de meshes y colliders
-- Reducir allocaciones
-
-#### Phase 9: GPU Instancing
-- Renderizar múltiples chunks con un solo draw call
-- Reducir overhead de CPU
-
-#### Phase 10: Mejoras de Generación Procedural
-- Cache de valores de noise
-- Generación más eficiente
-
-## 📁 Archivos Clave
-
-### Sistemas Principales
-- `src/voxel/chunk_loading.rs` - Carga dinámica de chunks
-- `src/voxel/dynamic_chunks.rs` - Generación de terreno con biomas
-- `src/voxel/biomes.rs` - Sistema de biomas
-- `src/voxel/frustum_culling.rs` - Culling de chunks invisibles (NUEVO)
-- `src/main.rs` - Inicialización y registro de sistemas
-
-### Documentación
-- `docs/optimization_roadmap.md` - Plan completo de optimización
-- `docs/architecture.md` - Arquitectura del sistema
-- `STATUS.md` - Este archivo
-
-## 🐛 Problemas Conocidos
-
-1. **FPS bajo**: ~30 FPS con chunks verticales (necesita más optimización)
-2. **Frustum culling con bugs**: Chunks desaparecen incorrectamente (DESHABILITADO)
-3. **Cache lento**: Sistema de disco deshabilitado
-4. **LOD con bug**: Overflow en downsampling
-5. **Warnings**: Muchos warnings de código no usado (sistemas deshabilitados)
-
-## 💡 Notas Técnicas
-
-### Frustum Culling
-- Usa 6 planos para definir el frustum de la cámara
-- Verifica cada chunk con esfera envolvente
-- Actualiza `Visibility` component (Hidden/Visible)
-- Bevy automáticamente no renderiza entidades Hidden
-
-### Generación de Terreno
-- Usa FastNoiseLite para generación procedural
-- Cada chunk tiene su propio TerrainGenerator
-- Biomas se seleccionan con noise 2D
-- Altura se calcula con noise 3D + parámetros del bioma
-
-### Chunks Verticales
-- Cada posición (X, Z) tiene múltiples chunks en Y
-- Permite montañas altas y cuevas profundas
-- Aumenta carga pero da más libertad de diseño
-
-## 🎮 Controles del Juego
-
-- **WASD**: Movimiento
-- **Espacio**: Saltar
-- **Mouse**: Mirar alrededor
-- **Click Izquierdo**: Romper voxel (hold)
-- **ESC**: Salir
-
-## 📈 Métricas en Pantalla
-
-El juego muestra en la esquina superior izquierda:
-- **FPS**: Frames por segundo
-- **Frame Time**: Tiempo por frame en ms
+**Rendimiento actual**: ~30-45 FPS (sin optimizaciones pendientes aplicadas)
 
 ---
 
-**Última actualización**: Distant Horizons causó lag extremo (<1 FPS), DESHABILITADO inmediatamente
-**Estado actual**: Juego funciona normalmente (30-45 FPS) sin Distant Horizons
-**Versión optimizada**: Disponible pero deshabilitada (ver docs/URGENT_FIX_DISTANT_HORIZONS.md)
-**Próximo paso**: Implementar generación asíncrona antes de habilitar chunks distantes
+## ✅ Sistemas Implementados y Funcionando
+
+### 1. Generación de Terreno con Biomas
+- **5 biomas**: Plains, Hills, Mountains, Valley, Plateau
+- **FastNoiseLite** para ruido procedural con transiciones suaves entre biomas
+- **Heightmap cacheado**: Se calcula una vez por columna XZ (1,089 evaluaciones) en lugar de por cada voxel (35,937), reduciendo cálculos ~33x
+- **Rayon** para asignación de tipos de voxel en paralelo
+- **Archivo**: `src/voxel/biomes.rs`, `src/voxel/dynamic_chunks.rs`
+
+### 2. Chunks Asíncronos (Real Chunks)
+- **Radio de carga**: 64 chunks horizontales
+- **Radio de descarga**: 70 chunks
+- **Rango vertical**: Y=-1 hasta Y=3 (5 niveles)
+- **Generación en background**: `AsyncComputeTaskPool`, hasta 32 chunks por frame
+- **Ordenados por distancia**: Los chunks más cercanos al jugador se cargan primero
+- **Archivo**: `src/voxel/chunk_loading.rs`
+
+### 3. Sistema LOD para Chunks Distantes
+- **Rango**: 32 a 200 chunks de distancia
+- **Tres niveles LOD**: Medium (16² grid), Low (8² grid), Minimal (4² grid)
+- **Solo superficie**: Guarda altura + tipo de voxel por columna, sin volumen completo
+- **Sin colisión física**: Mucho más barato de renderizar
+- **Conversiones Real ↔ LOD**: Con histéresis (30/36 chunks) para evitar thrashing
+- **Archivo**: `src/voxel/lod_chunks.rs`, `src/voxel/chunk_loading.rs`
+
+### 4. Greedy Meshing
+- **Reducción de triángulos**: 70-95% comparado con naive meshing
+- **Verificación cross-chunk**: Elimina caras en las costuras entre chunks
+- **Versión simple** (sin vecinos): Usada durante generación inicial y async tasks
+- **Versión completa** (con vecinos): Usada al completar la tarea async para corregir seams
+- **Archivo**: `src/voxel/greedy_meshing.rs`
+
+### 5. Física y Colisiones
+- **Rapier3D**: Colisores generados desde el mesh de cada chunk real
+- **Solo chunks reales tienen colisión** — chunks LOD no tienen colider
+- **Voxel breaking**: Raycast desde cámara, re-meshea chunks afectados
+- **Archivo**: `src/physics/`, `src/voxel/destruction.rs`
+
+### 6. Frustum Culling
+- **Estado**: ✅ HABILITADO (en main.rs)
+- **Método**: Distancia + ángulo (FOV 110°, distancia máx 200m)
+- **Limitación conocida**: Solo aplica a `BaseChunk`. Los `LodChunk` **no son culleados** — este es un bug pendiente.
+- **Archivo**: `src/voxel/frustum_culling.rs`
+
+### 7. Estructuras de Datos Espaciales
+- **ChunkMap**: `HashMap<IVec3, Entity>` — lookup O(1) por posición
+- **ChunkOctree**: Búsquedas espaciales O(log n)
+- **SpatialHashGrid**: Queries de radio horizontal eficientes
+- **Archivos**: `src/voxel/octree.rs`, `src/voxel/spatial_hash.rs`
+
+### 8. UI y Game States
+- **Estados**: `MainMenu` → `InGame` → `Paused`
+- **Menú principal**: Play / Settings
+- **HUD**: Overlay de FPS y frame time (esquina superior izquierda)
+- **Archivos**: `src/ui/`, `src/core/states.rs`, `src/debug/`
+
+---
+
+## ⚠️ Sistemas Deshabilitados (Código Presente, No Activo)
+
+### Caché en Disco (`src/voxel/chunk_cache.rs`)
+- **Razón**: I/O síncrono hacía todo muy lento
+- **Futuro**: Necesita reescritura con I/O asíncrono en batch
+
+### LOD Downsampling (`src/voxel/downsampling.rs`)
+- **Razón**: Panic por overflow en el algoritmo de downsampling
+- **Futuro**: Corregir el bug de overflow antes de habilitar
+
+---
+
+## 🐛 Bugs Conocidos
+
+| Bug | Impacto | Prioridad |
+|-----|---------|-----------|
+| Frustum culling no cubre `LodChunk` | FPS más bajo de lo posible (GPU renderiza chunks LOD fuera de vista) | Alta |
+| Chunks LOD se generan en el main thread | Stutters al cargar chunks distantes | Alta |
+| Seams visuales al inicio | Cracks en bordes de chunks durante los primeros segundos | Baja |
+| Frustum culling con bugs en edge cases | Chunks pueden desaparecer incorrectamente | Media |
+
+---
+
+## 📊 Constantes de Configuración
+
+```rust
+// src/voxel/chunk_loading.rs
+CHUNK_LOAD_RADIUS = 64          // Radio de carga de chunks reales
+CHUNK_UNLOAD_RADIUS = 70        // Radio de descarga
+MAX_CHUNKS_PER_FRAME = 32       // Chunks generados por frame (async)
+REAL_CHUNK_RADIUS = 32          // Hasta aquí: chunks con física
+LOD_TO_REAL_DISTANCE = 30       // Umbral conversión LOD → Real
+REAL_TO_LOD_DISTANCE = 36       // Umbral conversión Real → LOD (histéresis)
+MAX_LOD_RADIUS = 200            // Límite máximo de chunks LOD
+
+// src/core/constants.rs
+BASE_CHUNK_SIZE = 32            // Tamaño de chunk en voxels
+VOXEL_SIZE = 0.1                // Tamaño de voxel en metros (10cm)
+```
+
+---
+
+## 🎮 Controles
+
+| Tecla | Acción |
+|-------|--------|
+| WASD | Movimiento |
+| Espacio | Saltar |
+| Mouse | Mirar alrededor |
+| Click Izquierdo (hold) | Romper voxel |
+| ESC | Salir |
+
+---
+
+## 📁 Archivos Clave
+
+```
+src/
+├── main.rs                        # Inicialización, registro de sistemas
+├── core/
+│   ├── constants.rs               # BASE_CHUNK_SIZE, VOXEL_SIZE, etc.
+│   └── states.rs                  # GameState enum
+├── voxel/
+│   ├── dynamic_chunks.rs          # BaseChunk, generate_terrain()
+│   ├── biomes.rs                  # BiomeGenerator, TerrainGenerator
+│   ├── chunk_loading.rs           # Carga/descarga async, sistema LOD
+│   ├── greedy_meshing.rs          # Algoritmo de meshing optimizado
+│   ├── lod_chunks.rs              # LodChunk, mesh_lod_chunk()
+│   ├── lod_system.rs              # Sistema de actualización LOD
+│   ├── frustum_culling.rs         # Culling por distancia y ángulo
+│   ├── destruction.rs             # Raycast + voxel breaking
+│   ├── octree.rs                  # ChunkOctree para búsquedas espaciales
+│   ├── spatial_hash.rs            # SpatialHashGrid
+│   ├── voxel_types.rs             # VoxelType enum (Air, Dirt, Stone, etc.)
+│   ├── chunk_cache.rs             # Caché en disco (DESHABILITADO)
+│   └── downsampling.rs            # Downsampling LOD (DESHABILITADO)
+├── player/                        # Controlador primera persona, cámara
+├── physics/                       # Integración Rapier3D
+├── ui/                            # Menú principal, HUD
+└── debug/                         # Overlay de FPS/frame time
+```
