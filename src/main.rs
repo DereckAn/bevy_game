@@ -19,11 +19,8 @@ mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el 
 // ============================================================================
 use std::collections::HashMap;
 use ui::UIPlugin;
-use bevy::{
-    prelude::*,
-    window::{CursorGrabMode, CursorOptions},
-};
-use core::GameSettings; // Importa GameSettings desde nuestro módulo core
+use bevy::prelude::*;
+use core::{GameSettings, WorldSeed}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
@@ -31,7 +28,7 @@ use voxel::{
     BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkOctree, SpatialHashGrid,
     complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
     greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system,
-    unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
+    teardown_world, unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
     update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
 };
 
@@ -51,12 +48,8 @@ fn main() {
                 title: "Voxel game".to_string(),
                 ..default()
             }),
-            // Configuración del cursor como componente separado
-            primary_cursor_options: Some(CursorOptions {
-                visible: false,
-                grab_mode: CursorGrabMode::Locked,
-                ..default()
-            }),
+            // El cursor arranca visible (estamos en MainMenu); el estado
+            // del juego lo bloquea/libera en player/input.rs
             ..default()
         })) // Añade plugins básicos (ventana, input, render, etc.)
         .add_plugins(PhysicsPlugin) // Añade nuestro plugin de física (Rapier)
@@ -64,6 +57,7 @@ fn main() {
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
+        .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
@@ -73,7 +67,16 @@ fn main() {
             IVec3::new(200, 10, 200),
         )))
         .insert_resource(SpatialHashGrid::default())
-        .add_systems(OnEnter(GameState::InGame), setup)
+        // El terreno se genera solo al empezar partida, no al reanudar desde pausa
+        .add_systems(
+            OnTransition {
+                exited: GameState::MainMenu,
+                entered: GameState::InGame,
+            },
+            setup,
+        )
+        // Al volver al menú se destruye el mundo para que el próximo Play arranque limpio
+        .add_systems(OnEnter(GameState::MainMenu), teardown_world)
         .add_systems(
             Update,
             (
@@ -92,7 +95,8 @@ fn main() {
                 // Optimización: Frustum culling
                 update_frustum_culling,
             )
-                .chain(),
+                .chain()
+                .run_if(in_state(GameState::InGame)),
         )
         .run(); // Inicia el loop principal del juego
 }
@@ -115,6 +119,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>, // Recurso mutable para gestionar materiales
     mut chunk_map: ResMut<ChunkMap>,
     mut octree: ResMut<ChunkOctree>,
+    world_seed: Res<WorldSeed>,
 ) {
     // ========================================================================
     // INICIALIZAR CACHÉ DE CHUNKS (DESHABILITADO TEMPORALMENTE)
@@ -151,7 +156,7 @@ fn setup(
             if cx * cx + cz * cz <= initial_radius * initial_radius {
                 // Generar chunks en múltiples niveles verticales
                 for cy in y_min..=y_max {
-                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz));
+                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz), world_seed.0);
                     temp_chunks.insert(base_chunk.position, base_chunk);
                 }
             }

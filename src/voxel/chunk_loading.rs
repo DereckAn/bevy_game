@@ -4,12 +4,12 @@
 //! Incluye caché persistente en disco
 
 use crate::{
-    core::BASE_CHUNK_SIZE,
+    core::{BASE_CHUNK_SIZE, WORLD_CHUNK_RADIUS, WorldSeed},
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        BaseChunk, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel, SpatialHashGrid,
-        TerrainGenerator, greedy_mesh_basechunk_simple, mesh_lod_chunk,
+        BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel,
+        SpatialHashGrid, TerrainGenerator, greedy_mesh_basechunk_simple, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -90,6 +90,37 @@ pub struct ChunkGenerationTask {
     pub task: Task<(IVec3, BaseChunk, Mesh)>,
 }
 
+/// Destruye el mundo y reinicia los recursos de chunks.
+///
+/// Se ejecuta al volver al menú principal (desde InGame o Paused) para que una
+/// nueva partida arranque limpia, sin chunks ni luces duplicadas.
+pub fn teardown_world(
+    mut commands: Commands,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut octree: ResMut<ChunkOctree>,
+    mut spatial_hash: ResMut<SpatialHashGrid>,
+    mut load_queue: ResMut<ChunkLoadQueue>,
+    chunks: Query<Entity, Or<(With<BaseChunk>, With<LodChunk>, With<ChunkGenerationTask>)>>,
+    lights: Query<Entity, With<DirectionalLight>>,
+) {
+    // Despawnear chunks vía queries: solo devuelven entidades vivas, así
+    // evitamos intentar destruir IDs obsoletos guardados en chunk_map.
+    for entity in &chunks {
+        commands.entity(entity).despawn();
+    }
+    for entity in &lights {
+        commands.entity(entity).despawn();
+    }
+
+    chunk_map.chunks.clear();
+    spatial_hash.clear();
+    *load_queue = ChunkLoadQueue::default();
+    *octree = ChunkOctree::new(BoundingBox::new(
+        IVec3::new(-200, -10, -200),
+        IVec3::new(200, 10, 200),
+    ));
+}
+
 /// Sistema que detecta cuando el jugador se mueve y actualiza la cola de carga
 pub fn update_chunk_load_queue(
     player_query: Query<&Transform, With<Player>>,
@@ -140,6 +171,12 @@ pub fn update_chunk_load_queue(
             // Solo iterar en el rango válido de Z
             for cz in -max_z..=max_z {
                 let chunk_pos = IVec3::new(player_chunk.x + cx, cy, player_chunk.z + cz);
+                // Mapa finito: no generar nada fuera del límite del mundo
+                if chunk_pos.x.abs() > WORLD_CHUNK_RADIUS
+                    || chunk_pos.z.abs() > WORLD_CHUNK_RADIUS
+                {
+                    continue;
+                }
                 chunks_needed.insert(chunk_pos);
             }
         }
@@ -201,8 +238,10 @@ pub fn load_chunks_system(
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    world_seed: Res<WorldSeed>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
+    let seed = world_seed.0;
 
     // Iniciar generación de hasta MAX_CHUNKS_PER_FRAME chunks por frame
     let chunks_to_load = load_queue.to_load.len().min(MAX_CHUNKS_PER_FRAME);
@@ -226,7 +265,7 @@ pub fn load_chunks_system(
                 ChunkType::Real => {
                     // Chunk real con volumen completo
                     let task = thread_pool.spawn(async move {
-                        let base_chunk = BaseChunk::new(chunk_pos);
+                        let base_chunk = BaseChunk::new(chunk_pos, seed);
                         // Usar greedy_mesh_basechunk_simple por ahora
                         // Se regenerará con vecinos en complete_chunk_generation_system
                         let mesh = greedy_mesh_basechunk_simple(&base_chunk);
@@ -246,7 +285,7 @@ pub fn load_chunks_system(
                     let lod_level = LodLevel::from_distance(distance_chunks);
 
                     let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
-                    let mut terrain_gen = TerrainGenerator::new(12345); // Mismo seed
+                    let mut terrain_gen = TerrainGenerator::new(seed); // Mismo seed del mundo
                     lod_chunk.generate_surface(&mut terrain_gen);
 
                     let mesh = mesh_lod_chunk(&lod_chunk);
@@ -456,8 +495,10 @@ pub fn convert_lod_to_real_system(
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut chunk_map: ResMut<ChunkMap>,
     lod_query: Query<&LodChunk>,
+    world_seed: Res<WorldSeed>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
+    let seed = world_seed.0;
 
     // Procesar hasta MAX_CHUNK_TRANSITIONS_PER_FRAME conversiones
     let conversions_to_do = load_queue
@@ -472,7 +513,7 @@ pub fn convert_lod_to_real_system(
 
                 // Generar BaseChunk asíncronamente
                 let task = thread_pool.spawn(async move {
-                    let base_chunk = BaseChunk::new(chunk_pos);
+                    let base_chunk = BaseChunk::new(chunk_pos, seed);
                     let mesh = greedy_mesh_basechunk_simple(&base_chunk);
                     (chunk_pos, base_chunk, mesh)
                 });

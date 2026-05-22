@@ -7,6 +7,11 @@
 // Chunk base de 32³ como "Lay of the Land"
 pub const BASE_CHUNK_SIZE: usize = 32;
 
+// Radio del mundo en chunks desde el origen (mapa FINITO).
+// 128 → mapa de ~256×256 chunks (~820 m de lado con VOXEL_SIZE=0.1).
+// Más allá de este límite no se generan chunks.
+pub const WORLD_CHUNK_RADIUS: i32 = 128;
+
 // Tamaño de voxel en metros
 pub const VOXEL_SIZE: f32 = 0.1;
 

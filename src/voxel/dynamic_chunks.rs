@@ -2,10 +2,10 @@
 //! Chunks base de 32³ con generacion de terreno optimizada
 //! Incluye sistema de biomas con montañas, valles, llanuras, etc.
 
+use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE};
+use crate::voxel::{TerrainGenerator, VoxelType};
 use bevy::prelude::*;
 use rayon::prelude::*;
-use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::voxel::{VoxelType, TerrainGenerator};
 
 /// Chunk base de 32³ (usa heap para evitar stack overflow)
 #[derive(Component)]
@@ -16,15 +16,19 @@ pub struct BaseChunk {
 }
 
 impl BaseChunk {
-    pub fn new(position: IVec3) -> Self {
+    pub fn new(position: IVec3, seed: i32) -> Self {
         let mut chunk = Self {
-            densities: Box::new([[[0.0; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]),
-            voxel_types: Box::new([[[VoxelType::Air; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]),
+            densities: Box::new(
+                [[[0.0; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1],
+            ),
+            voxel_types: Box::new(
+                [[[VoxelType::Air; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE],
+            ),
             position,
         };
-        
+
         // Generar terreno usando la versión optimizada con biomas
-        chunk.generate_terrain();
+        chunk.generate_terrain(seed);
         chunk
     }
 
@@ -36,11 +40,11 @@ impl BaseChunk {
     /// Combina FastNoiseLite + Rayon + Sistema de Biomas
     /// Optimizado: calcula heightmap una vez por columna XZ (33x33 = 1,089 evaluaciones)
     /// en lugar de por cada voxel (33³ = 35,937 evaluaciones)
-    pub fn generate_terrain(&mut self) {
+    pub fn generate_terrain(&mut self, seed: i32) {
         let chunk_pos = self.position;
 
         // Crear generador de terreno UNA VEZ para todo el chunk
-        let mut terrain_gen = TerrainGenerator::new(12345);
+        let mut terrain_gen = TerrainGenerator::new(seed);
 
         // Paso 1: Calcular heightmap 2D (solo XZ, una vez por columna)
         // Necesitamos (BASE_CHUNK_SIZE + 1) para las densidades en los bordes
@@ -67,7 +71,10 @@ impl BaseChunk {
         }
 
         // Paso 3: Calcular tipos de voxel en paralelo usando las densidades ya calculadas
+        // Se clasifican por PROFUNDIDAD bajo la superficie (pasto/tierra/piedra),
+        // no por altura absoluta, para que la superficie siempre sea excavable.
         let densities_ref = &self.densities;
+        let heightmap_ref = &heightmap;
         let voxel_types_flat: Vec<VoxelType> = (0..BASE_CHUNK_SIZE.pow(3))
             .into_par_iter()
             .map(|idx| {
@@ -75,10 +82,11 @@ impl BaseChunk {
                 let y = (idx / BASE_CHUNK_SIZE) % BASE_CHUNK_SIZE;
                 let z = idx / (BASE_CHUNK_SIZE * BASE_CHUNK_SIZE);
 
-                let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f64 * VOXEL_SIZE as f64;
+                let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
+                let terrain_height = heightmap_ref[x + z * grid];
                 let density = densities_ref[x][y][z];
 
-                VoxelType::from_density(density, world_y)
+                VoxelType::from_depth(density, terrain_height - world_y)
             })
             .collect();
 

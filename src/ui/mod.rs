@@ -3,6 +3,7 @@
 //! Maneja todos los menus, botones y elementos visiales de la ui
 
 pub mod menu;
+pub mod pause;
 
 pub use menu::*;
 
@@ -14,7 +15,6 @@ pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
     fn build(&self, app: &mut App) {
-        // Por ahora esta
         app
             // REgistrar el sustema de estados
             .init_state::<crate::core::GameState>()
@@ -23,6 +23,12 @@ impl Plugin for UIPlugin {
             // Sistema que corren MIENTRAS estamos en el menu
             .add_systems(Update, menu_button_system.run_if(in_state(MainMenu)))
             // Sistemas que corren AL SALIR del menu
-            .add_systems(OnExit(MainMenu), cleanup_main_menu);
+            .add_systems(OnExit(MainMenu), cleanup_main_menu)
+            // ----- Menú de pausa -----
+            // ESC alterna pausa (corre en cualquier estado, ignora MainMenu)
+            .add_systems(Update, pause::toggle_pause)
+            .add_systems(OnEnter(Paused), pause::setup_pause_menu)
+            .add_systems(OnExit(Paused), pause::cleanup_pause_menu)
+            .add_systems(Update, pause::pause_button_system.run_if(in_state(Paused)));
     }
 }

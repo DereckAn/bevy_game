@@ -16,3 +16,16 @@ impl GameSettings {
         }
     }
 }
+
+/// Semilla del mundo actual.
+///
+/// Se aleatoriza en cada arranque para generar un mapa distinto cada vez.
+#[derive(Resource, Clone, Copy)]
+pub struct WorldSeed(pub i32);
+
+impl WorldSeed {
+    /// Genera una semilla aleatoria nueva.
+    pub fn random() -> Self {
+        Self(rand::random::<i32>())
+    }
+}

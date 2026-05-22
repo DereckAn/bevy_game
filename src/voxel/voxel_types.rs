@@ -220,6 +220,28 @@ impl VoxelType {
             }
         }
     }
+
+    /// Elige el tipo de voxel según su PROFUNDIDAD bajo la superficie.
+    ///
+    /// Capas tipo Minecraft, independientes de la altura absoluta: la
+    /// superficie es siempre pasto/tierra (excavable con pala), y la piedra
+    /// solo aparece en profundidad. Esto evita que valles bajos queden
+    /// cubiertos de piedra indestructible.
+    ///
+    /// # Parámetros
+    /// - `density`: densidad del voxel (`<= 0` = aire)
+    /// - `depth_below_surface`: metros bajo la superficie del terreno
+    pub fn from_depth(density: f32, depth_below_surface: f32) -> Self {
+        if density <= 0.0 {
+            VoxelType::Air
+        } else if depth_below_surface < 0.1 {
+            VoxelType::Grass // Capa superior (~1 voxel)
+        } else if depth_below_surface < 0.5 {
+            VoxelType::Dirt // Tierra bajo el pasto (~4 voxels)
+        } else {
+            VoxelType::Stone // Roca en profundidad
+        }
+    }
 }
 
 // ============================================================================
@@ -254,6 +276,26 @@ mod tests {
         assert_eq!(VoxelType::Dirt.properties().hardness, 1.0);
         assert_eq!(VoxelType::Stone.properties().hardness, 5.0);
         assert_eq!(VoxelType::Metal.properties().hardness, 10.0);
+    }
+
+    #[test]
+    fn test_from_depth_surface_is_grass() {
+        assert_eq!(VoxelType::from_depth(1.0, 0.0), VoxelType::Grass);
+    }
+
+    #[test]
+    fn test_from_depth_just_below_surface_is_dirt() {
+        assert_eq!(VoxelType::from_depth(1.0, 0.3), VoxelType::Dirt);
+    }
+
+    #[test]
+    fn test_from_depth_deep_is_stone() {
+        assert_eq!(VoxelType::from_depth(1.0, 1.0), VoxelType::Stone);
+    }
+
+    #[test]
+    fn test_from_depth_air_when_no_density() {
+        assert_eq!(VoxelType::from_depth(-1.0, 0.0), VoxelType::Air);
     }
 
     #[test]

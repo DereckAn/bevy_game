@@ -1,23 +1,43 @@
-pub mod components;
-pub mod movement;
 pub mod camera;
+pub mod components;
 pub mod input;
+pub mod movement;
 
 use bevy::prelude::*;
-pub use components::*;
-use movement::*;
 use camera::*;
+pub use components::*;
 use input::*;
+use movement::*;
+
+use crate::core::GameState;
 
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_player)
-            .add_systems(Update, (
-                player_look,
-                player_movement,
-                cursor_grab,
-            ));
+        app
+            // El jugador se crea SOLO al empezar partida (MainMenu → InGame), no al
+            // arrancar ni al reanudar, para que no caiga por gravedad durante el menú
+            // ni se reinicie su posición al despausar.
+            .add_systems(
+                OnTransition {
+                    exited: GameState::MainMenu,
+                    entered: GameState::InGame,
+                },
+                spawn_player,
+            )
+            // El jugador se elimina al llegar al menú principal desde cualquier
+            // estado (InGame o Paused), evitando cámaras/jugadores duplicados.
+            .add_systems(OnEnter(GameState::MainMenu), despawn_player)
+            // Cursor: bloqueado siempre que estemos en juego, libre en los menús
+            .add_systems(OnEnter(GameState::InGame), grab_cursor)
+            .add_systems(OnEnter(GameState::Paused), release_cursor)
+            .add_systems(OnEnter(GameState::MainMenu), release_cursor)
+            // Movimiento y cámara solo activos durante el juego
+            .add_systems(
+                Update,
+                (player_look, player_movement, cursor_grab_on_click)
+                    .run_if(in_state(GameState::InGame)),
+            );
     }
 }

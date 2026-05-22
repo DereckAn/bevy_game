@@ -25,6 +25,10 @@ pub enum MenuAction {
 pub fn setup_main_menu(mut commands: Commands) {
     info!("Creando menú principal...");
 
+    // Cámara para renderizar la UI del menú (el jugador aún no existe, así que
+    // no hay Camera3d todavía). Se elimina al salir del menú via MainMenuUI.
+    commands.spawn((Camera2d, MainMenuUI));
+
     // Contenedor principal (toda la pantalla)
     commands
         .spawn((
@@ -44,7 +48,7 @@ pub fn setup_main_menu(mut commands: Commands) {
                     Node {
                         width: Val::Percent(100.0),
                         height: Val::Px(30.0),
-                         border: UiRect::all(Val::Px(4.0)),
+                        border: UiRect::all(Val::Px(4.0)),
                         ..default()
                     },
                     BorderColor::all(Color::srgb(0.0, 1.0, 0.8)),
@@ -107,7 +111,7 @@ fn create_menu_button(parent: &mut ChildSpawnerCommands<'_>, text: &str, action:
             BorderColor::all(Color::srgb(0.8, 0.8, 0.8)), // Color del borde (gris claro)
             BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),  // Fondo del boton (gris color)
             action,                                       // Guardamos la accion del boton
-            MainMenuUI,                                   // marcamos para limpieza
+                                                          // Sin MainMenuUI: es hijo del contenedor raíz y se limpia en cascada
         ))
         .with_children(|parent| {
             // Texto dentro del boton

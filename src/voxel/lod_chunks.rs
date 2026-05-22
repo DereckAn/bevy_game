@@ -138,8 +138,8 @@ impl LodChunk {
                 self.surface_heights[index] = surface_y;
 
                 // Determinar el tipo de voxel en la superficie
-                // Usar la misma lógica que BaseChunk para consistencia
-                self.surface_types[index] = VoxelType::from_density(1.0, surface_y as f64);
+                // La superficie siempre es pasto (profundidad 0), igual que BaseChunk
+                self.surface_types[index] = VoxelType::from_depth(1.0, 0.0);
             }
         }
     }
