@@ -61,6 +61,18 @@
 
 ---
 
+### Performance pass — ✅ DONE (round 1, rebalanced)
+- **Bounded completion work per frame, balanced against generation.** `complete_chunk_generation_system` was processing *every* finished async task in one frame, each doing a full neighbor-aware greedy remesh **and** a Rapier trimesh collider build on the **main thread** — the stutter source.
+  - **First attempt (BUG):** capped completions to 6/frame while generation still started 32/frame → integration fell behind, generated-but-unmeshed chunks piled up → "holes everywhere" while moving.
+  - **Fix:** `MAX_CHUNKS_PER_FRAME` 32→**16** (throttle generation at the source) and `MAX_CHUNK_COMPLETIONS_PER_FRAME` = **24** (completion must stay ≥ generation so integration never falls behind). Both below the old 32-burst → smoother frame time, no backlog/holes.
+- **Removed wasted async meshing.** Tasks computed `greedy_mesh_basechunk_simple`, but the result was discarded (`_temp_mesh`) and re-meshed on completion. Tasks now return just `(pos, BaseChunk)` → less worker-thread CPU, chunks finish sooner.
+
+**Invariant to remember:** `MAX_CHUNK_COMPLETIONS_PER_FRAME` must be ≥ `MAX_CHUNKS_PER_FRAME`, or chunks generate faster than they're meshed and the terrain fills with holes.
+
+**Proposed perf round 2 (not done — needs buy-in, more invasive):**
+- **Heightmap cache across vertical chunks.** The documented main bottleneck: each XZ column generates 5 Y-level chunks, and each recomputes the *same* 2D heightmap (~4k noise samples). Caching it per (cx,cz) cuts ~80% of generation noise. Requires a shared concurrent cache (`Arc<Mutex<HashMap<IVec2, Arc<Vec<f32>>>>>` as a Resource, cloned into async tasks, cleared in `teardown_world`) threaded through `generate_terrain`. Moderate refactor.
+- **Limit physics colliders to a near-player radius** (colliders are built for all real chunks ≤32; player only touches nearby terrain). Cuts trimesh-build cost but changes where the player can collide — gameplay decision.
+
 ## Remaining / follow-ups (next session)
 
 - **[teardown] Minor leftovers not cleaned on Quit-to-Menu:** in-flight voxel drops (`RapierVoxelDrop`) and `VoxelBreaking` markers aren't despawned by `teardown_world`. Harmless (markers are state-gated, drops are rare) but worth adding for completeness.

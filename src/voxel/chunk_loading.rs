@@ -9,7 +9,7 @@ use crate::{
     player::Player,
     voxel::{
         BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel,
-        SpatialHashGrid, TerrainGenerator, greedy_mesh_basechunk_simple, mesh_lod_chunk,
+        SpatialHashGrid, TerrainGenerator, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -26,8 +26,20 @@ pub const CHUNK_LOAD_RADIUS: i32 = 64;
 /// Radio de descarga de chunks (debe ser mayor que LOAD_RADIUS)
 pub const CHUNK_UNLOAD_RADIUS: i32 = 70;
 
-/// Máximo de chunks a generar por frame (reducido para mejor FPS)
-pub const MAX_CHUNKS_PER_FRAME: usize = 32;
+/// Máximo de chunks cuya GENERACIÓN async se inicia por frame.
+///
+/// Throttle en el origen: menos tareas iniciadas = menos remallado+collider que
+/// integrar después, suavizando el frame time.
+pub const MAX_CHUNKS_PER_FRAME: usize = 16;
+
+/// Máximo de tareas de generación a COMPLETAR (integrar) por frame.
+///
+/// Completar implica remallado con vecinos + collider Rapier en el hilo
+/// principal: trabajo caro y síncrono. Acota los tirones cuando muchas tareas
+/// terminan a la vez, PERO debe ser >= MAX_CHUNKS_PER_FRAME para que la
+/// integración no se quede atrás de la generación (si no, se acumulan chunks
+/// generados sin mesh = huecos en el terreno).
+pub const MAX_CHUNK_COMPLETIONS_PER_FRAME: usize = 24;
 
 /// Máximo de chunks a eliminar por frame
 pub const MAX_CHUNKS_TO_UNLOAD_PER_FRAME: usize = 16;
@@ -87,7 +99,7 @@ pub struct ChunkLoadQueue {
 /// Componente para chunks que están siendo generados asíncronamente
 #[derive(Component)]
 pub struct ChunkGenerationTask {
-    pub task: Task<(IVec3, BaseChunk, Mesh)>,
+    pub task: Task<(IVec3, BaseChunk)>,
 }
 
 /// Destruye el mundo y reinicia los recursos de chunks.
@@ -265,11 +277,9 @@ pub fn load_chunks_system(
                 ChunkType::Real => {
                     // Chunk real con volumen completo
                     let task = thread_pool.spawn(async move {
+                        // El mallado se hace con vecinos en complete_chunk_generation_system
                         let base_chunk = BaseChunk::new(chunk_pos, seed);
-                        // Usar greedy_mesh_basechunk_simple por ahora
-                        // Se regenerará con vecinos en complete_chunk_generation_system
-                        let mesh = greedy_mesh_basechunk_simple(&base_chunk);
-                        (chunk_pos, base_chunk, mesh)
+                        (chunk_pos, base_chunk)
                     });
 
                     commands
@@ -342,7 +352,12 @@ pub fn complete_chunk_generation_system(
     let mut completed_this_frame = 0;
 
     for (entity, mut task) in task_query.iter_mut() {
-        if let Some((chunk_pos, base_chunk, _temp_mesh)) =
+        // Limitar el trabajo síncrono (remallado + collider) por frame
+        if completed_this_frame >= MAX_CHUNK_COMPLETIONS_PER_FRAME {
+            break;
+        }
+
+        if let Some((chunk_pos, base_chunk)) =
             future::block_on(future::poll_once(&mut task.task))
         {
             // Regenerar mesh CON verificación de vecinos para eliminar gaps
@@ -514,8 +529,7 @@ pub fn convert_lod_to_real_system(
                 // Generar BaseChunk asíncronamente
                 let task = thread_pool.spawn(async move {
                     let base_chunk = BaseChunk::new(chunk_pos, seed);
-                    let mesh = greedy_mesh_basechunk_simple(&base_chunk);
-                    (chunk_pos, base_chunk, mesh)
+                    (chunk_pos, base_chunk)
                 });
 
                 // Despawnear el LOD chunk y crear tarea de generación
