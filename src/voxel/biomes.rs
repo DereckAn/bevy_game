@@ -3,16 +3,6 @@
 
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 
-/// Tipos de biomas disponibles
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BiomeType {
-    Plains,    // Llanuras planas
-    Hills,     // Colinas suaves
-    Mountains, // Montañas altas
-    Valley,    // Valles profundos
-    Plateau,   // Mesetas
-}
-
 // ============================================================================
 // PARÁMETROS DE RELIEVE CONTINUO
 // ============================================================================
@@ -47,8 +37,6 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 pub struct BiomeGenerator {
     /// Continentalidad: campo suave que controla el relieve (valle ↔ montaña)
     biome_noise: FastNoiseLite,
-    /// Humedad (para clasificación de bioma y, a futuro, vegetación)
-    moisture_noise: FastNoiseLite,
     /// Detalle fractal compartido del terreno (mismo en todo el mundo)
     terrain_noise: FastNoiseLite,
     /// Detalle adicional para montañas (entra gradualmente con la altura)
@@ -62,12 +50,6 @@ impl BiomeGenerator {
         biome_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
         biome_noise.set_frequency(Some(0.003)); // Biomas grandes, transiciones largas
         biome_noise.set_seed(Some(seed));
-
-        // Ruido para humedad (futuro: árboles, agua, etc.)
-        let mut moisture_noise = FastNoiseLite::new();
-        moisture_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
-        moisture_noise.set_frequency(Some(0.005));
-        moisture_noise.set_seed(Some(seed.wrapping_add(1000)));
 
         // Detalle fractal del terreno: una sola capa para todo el mundo, así
         // el relieve local es uniforme y solo cambian base/amplitud.
@@ -86,23 +68,8 @@ impl BiomeGenerator {
 
         Self {
             biome_noise,
-            moisture_noise,
             terrain_noise,
             mountain_detail_noise,
-        }
-    }
-
-    /// Obtiene el bioma en una posición mundial (clasificación para materiales).
-    pub fn get_biome(&mut self, world_x: f32, world_z: f32) -> BiomeType {
-        let biome_value = self.biome_noise.get_noise_2d(world_x, world_z);
-        let moisture = self.moisture_noise.get_noise_2d(world_x, world_z);
-
-        match (biome_value, moisture) {
-            (b, _) if b > 0.4 => BiomeType::Mountains,
-            (b, _) if b < -0.4 => BiomeType::Valley,
-            (b, m) if b > 0.1 && m < -0.2 => BiomeType::Plateau,
-            (b, _) if b > -0.1 && b < 0.1 => BiomeType::Hills,
-            _ => BiomeType::Plains,
         }
     }
 
@@ -135,22 +102,12 @@ impl BiomeGenerator {
 /// Generador de terreno con múltiples capas de ruido
 pub struct TerrainGenerator {
     pub biome_gen: BiomeGenerator,
-    cave_noise: FastNoiseLite,
 }
 
 impl TerrainGenerator {
     pub fn new(seed: i32) -> Self {
-        let biome_gen = BiomeGenerator::new(seed);
-
-        // Ruido para cuevas (futuro)
-        let mut cave_noise = FastNoiseLite::new();
-        cave_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
-        cave_noise.set_frequency(Some(0.05));
-        cave_noise.set_seed(Some(seed.wrapping_add(2000)));
-
         Self {
-            biome_gen,
-            cave_noise,
+            biome_gen: BiomeGenerator::new(seed),
         }
     }
 
@@ -160,8 +117,6 @@ impl TerrainGenerator {
         let terrain_height = self.biome_gen.generate_height(world_x, world_z);
 
         // Densidad básica: positivo bajo tierra, negativo en aire
-        let density = terrain_height - world_y;
-
-        density
+        terrain_height - world_y
     }
 }

@@ -26,7 +26,6 @@ pub mod tools;
 pub mod voxel_types;
 
 pub use biomes::*;
-pub use chunk_cache::*;
 pub use chunk_loading::*;
 pub use destruction::*;
 pub use downsampling::*;

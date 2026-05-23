@@ -1,24 +1,20 @@
-//! Módulo de física 
-//! 
+//! Módulo de física
+//!
 //! Sistema de física usando Rapier para colisiones realistas de terreno y drops de voxels.
 //! Optimizado para multijugador con física determinística.
 
-pub mod components;
 pub mod rapier_integration;
 
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 // Re-exportar componentes de Rapier que usamos
-pub use bevy_rapier3d::prelude::{RigidBody, Collider, Velocity, Restitution, Friction};
+pub use bevy_rapier3d::prelude::{Collider, RigidBody};
 
 // Re-exportar nuestras funciones personalizadas
 pub use rapier_integration::{
-    RapierVoxelDrop, 
-    spawn_rapier_voxel_drop, 
-    collect_rapier_drops_system,
+    collect_rapier_drops_system, create_chunk_collider, spawn_rapier_voxel_drop,
     update_rapier_drops_system,
-    create_chunk_collider
 };
 
 /// Plugin de física que configura Rapier para el juego de voxels
@@ -30,12 +26,11 @@ impl Plugin for PhysicsPlugin {
             // Agregar Rapier plugin con configuración básica
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
             // .add_plugins(RapierDebugRenderPlugin::default()) // Para debug visual
-            
             // Agregar sistemas de drops
-            .add_systems(Update, (
-                update_rapier_drops_system,
-                collect_rapier_drops_system,
-            ));
+            .add_systems(
+                Update,
+                (update_rapier_drops_system, collect_rapier_drops_system),
+            );
     }
 }
 

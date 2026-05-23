@@ -47,17 +47,11 @@ pub const MAX_CHUNKS_TO_UNLOAD_PER_FRAME: usize = 16;
 /// Máximo de conversiones Real ↔ LOD por frame
 pub const MAX_CHUNK_TRANSITIONS_PER_FRAME: usize = 4;
 
-/// Distancia para chunks reales (con física)
-pub const REAL_CHUNK_RADIUS: i32 = 32;
-
 /// Distancia para convertir LOD → Real (con hysteresis)
 pub const LOD_TO_REAL_DISTANCE: i32 = 30;
 
 /// Distancia para convertir Real → LOD (con hysteresis)
 pub const REAL_TO_LOD_DISTANCE: i32 = 36;
-
-/// Radio máximo de chunks LOD
-pub const MAX_LOD_RADIUS: i32 = 200;
 
 /// Tipo de chunk a generar segun distancia
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,7 +131,6 @@ pub fn teardown_world(
 pub fn update_chunk_load_queue(
     player_query: Query<&Transform, With<Player>>,
     chunk_map: Res<ChunkMap>,
-    octree: Res<ChunkOctree>,
     spatial_hash: Res<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
 ) {

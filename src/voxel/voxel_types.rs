@@ -191,36 +191,7 @@ impl VoxelType {
         }
     }
 
-    /// Convierte un valor de densidad a un tipo de voxel.
-    ///
-    /// Esta función es temporal para mantener compatibilidad con el sistema
-    /// de generación actual basado en densidad.
-    ///
-    /// # Lógica
-    /// - Densidad > 0.0 = Sólido (elegimos tipo según altura)
-    /// - Densidad <= 0.0 = Aire
-    ///
-    /// # Parámetros
-    /// - `density`: Valor de densidad del voxel
-    /// - `world_y`: Altura en el mundo (para elegir tipo)
-    pub fn from_density(density: f32, world_y: f64) -> Self {
-        if density <= 0.0 {
-            VoxelType::Air
-        } else {
-            // Elegir tipo basado en altura
-            // Esto es temporal - en el futuro usaremos biomas
-            if world_y < 0.5 {
-                VoxelType::Stone // Profundo = piedra
-            } else if world_y < 1.5 {
-                VoxelType::Dirt // Medio = tierra
-            } else if world_y < 1.6 {
-                VoxelType::Grass // Superficie = pasto
-            } else {
-                VoxelType::Dirt // Por defecto
-            }
-        }
-    }
-
+    
     /// Elige el tipo de voxel según su PROFUNDIDAD bajo la superficie.
     ///
     /// Capas tipo Minecraft, independientes de la altura absoluta: la
@@ -296,20 +267,5 @@ mod tests {
     #[test]
     fn test_from_depth_air_when_no_density() {
         assert_eq!(VoxelType::from_depth(-1.0, 0.0), VoxelType::Air);
-    }
-
-    #[test]
-    fn test_from_density() {
-        // Aire
-        assert_eq!(VoxelType::from_density(-1.0, 2.0), VoxelType::Air);
-
-        // Piedra (profundo)
-        assert_eq!(VoxelType::from_density(1.0, 0.0), VoxelType::Stone);
-
-        // Tierra (medio)
-        assert_eq!(VoxelType::from_density(1.0, 1.0), VoxelType::Dirt);
-
-        // Pasto (superficie)
-        assert_eq!(VoxelType::from_density(1.0, 1.55), VoxelType::Grass);
     }
 }

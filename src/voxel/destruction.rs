@@ -3,12 +3,15 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
-    BaseChunk, VoxelType,
     greedy_meshing::greedy_mesh_basechunk,
     tools::{Tool, ToolType},
+    BaseChunk, VoxelType,
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::{physics::{spawn_rapier_voxel_drop, create_terrain_collider, Collider}, player::components::Player};
+use crate::{
+    physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider},
+    player::components::Player,
+};
 use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -286,7 +289,7 @@ pub fn start_voxel_breaking_system(
     let ray_direction = camera_transform.forward().as_vec3();
 
     // Hacer raycast para encontrar voxel
-    let Some((chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
+    let Some((_chunk_entity, chunk_pos, local_pos, voxel_type)) = raycast_voxel(
         ray_origin,
         ray_direction,
         5.0, // Maximo 5 metros de distancia
@@ -434,7 +437,9 @@ pub fn update_voxel_breaking_system(
 
                         // Actualizar collider con la nueva geometría
                         if new_mesh.count_vertices() > 0 {
-                            commands.entity(chunk_entity).insert(create_terrain_collider(&new_mesh));
+                            commands
+                                .entity(chunk_entity)
+                                .insert(create_terrain_collider(&new_mesh));
                         } else {
                             commands.entity(chunk_entity).remove::<Collider>();
                         }

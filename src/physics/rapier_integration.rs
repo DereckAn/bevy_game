@@ -1,11 +1,8 @@
 //! Rapier Physics Integration for Voxel Drops
 
+use crate::{core::constants::VOXEL_SIZE, voxel::VoxelType};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
-use crate::{
-    core::constants::VOXEL_SIZE, 
-    voxel::VoxelType
-};
 
 /// Component for voxel drops with Rapier physics
 #[derive(Component, Debug)]
@@ -42,9 +39,13 @@ pub fn spawn_rapier_voxel_drop(
     current_time: f32,
 ) {
     let properties = voxel_type.properties();
-    
+
     // Create visual representation
-    let cube_mesh = meshes.add(Cuboid::new(VOXEL_SIZE * 0.8, VOXEL_SIZE * 0.8, VOXEL_SIZE * 0.8));
+    let cube_mesh = meshes.add(Cuboid::new(
+        VOXEL_SIZE * 0.8,
+        VOXEL_SIZE * 0.8,
+        VOXEL_SIZE * 0.8,
+    ));
     let material = materials.add(StandardMaterial {
         base_color: properties.color,
         metallic: 0.1,
@@ -73,19 +74,15 @@ pub fn spawn_rapier_voxel_drop(
         Transform::from_translation(spawn_position), // Usar posición corregida
         GlobalTransform::default(),
         Visibility::default(),
-        
         // Game logic component
         RapierVoxelDrop::new(voxel_type, quantity, current_time),
-        
         // Rapier physics components
         RigidBody::Dynamic,
         Collider::cuboid(VOXEL_SIZE * 0.4, VOXEL_SIZE * 0.4, VOXEL_SIZE * 0.4),
-        
         // Physics properties based on voxel type
         AdditionalMassProperties::Mass(properties.density),
         Restitution::coefficient(0.3), // Bounciness
         Friction::coefficient(0.7),    // Surface friction
-        
         // Initial velocity
         Velocity {
             linvel: initial_velocity,
@@ -95,10 +92,8 @@ pub fn spawn_rapier_voxel_drop(
                 (rand::random::<f32>() - 0.5) * 1.0,
             ),
         },
-        
         // Prevent sleeping for small objects
         Sleeping::disabled(),
-        
         // Collision groups for optimization
         CollisionGroups::new(Group::GROUP_1, Group::ALL),
     ));
@@ -107,17 +102,30 @@ pub fn spawn_rapier_voxel_drop(
 /// System to collect drops when player approaches
 pub fn collect_rapier_drops_system(
     mut commands: Commands,
-    player_query: Query<&Transform, (With<crate::player::components::Player>, Without<RapierVoxelDrop>)>,
-    drop_query: Query<(Entity, &Transform, &RapierVoxelDrop), Without<crate::player::components::Player>>,
+    player_query: Query<
+        &Transform,
+        (
+            With<crate::player::components::Player>,
+            Without<RapierVoxelDrop>,
+        ),
+    >,
+    drop_query: Query<
+        (Entity, &Transform, &RapierVoxelDrop),
+        Without<crate::player::components::Player>,
+    >,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
     };
 
     for (entity, drop_transform, drop) in drop_query.iter() {
-        if !drop.can_collect { continue; }
+        if !drop.can_collect {
+            continue;
+        }
 
-        let distance = player_transform.translation.distance(drop_transform.translation);
+        let distance = player_transform
+            .translation
+            .distance(drop_transform.translation);
 
         if distance <= 2.0 {
             info!("Collected {:?} x{}", drop.voxel_type, drop.quantity);
