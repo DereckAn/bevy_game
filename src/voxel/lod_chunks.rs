@@ -71,41 +71,6 @@ impl LodChunk {
         }
     }
 
-    /// Crea un LodChunk desde un BaseChunk existente
-    /// Usado para conversiones Real → LOD cuando el jugador se aleja
-    pub fn from_base_chunk(base_chunk: &crate::voxel::BaseChunk, lod_level: LodLevel) -> Self {
-        let mut lod_chunk = Self::new(base_chunk.position, lod_level);
-        let grid_size = lod_level.grid_size();
-        let step_size = 32 / grid_size;
-
-        // Extraer superficie del BaseChunk
-        for z in 0..grid_size {
-            for x in 0..grid_size {
-                // Muestrear en el centro del "super-voxel"
-                let local_x = (x * step_size + step_size / 2).min(31);
-                let local_z = (z * step_size + step_size / 2).min(31);
-
-                // Buscar desde arriba hacia abajo para encontrar la superficie
-                let mut surface_y = 0.0;
-                let mut surface_type = VoxelType::Air;
-
-                for y in (0..32).rev() {
-                    if base_chunk.voxel_types[local_x][y][local_z] != VoxelType::Air {
-                        surface_y = (base_chunk.position.y * 32 + y as i32) as f32 * 0.1;
-                        surface_type = base_chunk.voxel_types[local_x][y][local_z];
-                        break;
-                    }
-                }
-
-                let index = x + z * grid_size;
-                lod_chunk.surface_heights[index] = surface_y;
-                lod_chunk.surface_types[index] = surface_type;
-            }
-        }
-
-        lod_chunk
-    }
-
     /// Genera la superficie del terreno para este chunk LOD
     pub fn generate_surface(&mut self, terrain_gen: &mut TerrainGenerator) {
         let grid_size = self.lod_level.grid_size();
@@ -124,14 +89,10 @@ impl LodChunk {
                 let world_x = (self.position.x * 32 + local_x) as f32 * 0.1;
                 let world_z = (self.position.z * 32 + local_z) as f32 * 0.1;
 
-                // Buscar la superficie usando binary search (mucho más rápido)
-                let surface_y = find_surface_height(
-                    terrain_gen,
-                    world_x,
-                    world_z,
-                    -50.0, // Mín: -5 metros (suficiente para valles profundos)
-                    50.0,  // Máx: +5 metros (suficiente para montañas altas)
-                );
+                // La densidad es `generate_height(x,z) - y` (monótona en Y),
+                // así que la superficie ES la altura del terreno directamente:
+                // una sola evaluación de noise en vez de binary search.
+                let surface_y = terrain_gen.biome_gen.generate_height(world_x, world_z);
 
                 // Guardar la altura de la superficie
                 let index = x + z * grid_size;
@@ -143,37 +104,6 @@ impl LodChunk {
             }
         }
     }
-}
-
-/// Encuentra la altura de la superficie usando binary search
-/// Mucho más eficiente que iterar linealmente
-fn find_surface_height(
-    terrain_gen: &mut TerrainGenerator,
-    world_x: f32,
-    world_z: f32,
-    min_y: f32,
-    max_y: f32,
-) -> f32 {
-    let mut low = min_y;
-    let mut high = max_y;
-    let precision = 0.1; // Precisión de 0.1 metros (1 voxel)
-
-    // Binary search para encontrar la transición aire/sólido
-    while (high - low) > precision {
-        let mid = (low + high) / 2.0;
-        let density = terrain_gen.get_density(world_x, mid, world_z);
-
-        if density > 0.0 {
-            // Estamos bajo tierra, buscar arriba
-            low = mid;
-        } else {
-            // Estamos en aire, buscar abajo
-            high = mid;
-        }
-    }
-
-    // Retornar la superficie encontrada (el punto más alto sólido)
-    low
 }
 
 // Genera un mesh para renderizar el chunk LOD
@@ -326,14 +256,14 @@ fn add_top_face(
     // Normal apuntando hacia arriba
     normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
 
-    // 2 triángulos
+    // 2 triángulos (winding CCW visto desde +Y, para backface culling)
     indices.extend_from_slice(&[
         base_idx,
+        base_idx + 2,
         base_idx + 1,
-        base_idx + 2,
         base_idx,
-        base_idx + 2,
         base_idx + 3,
+        base_idx + 2,
     ]);
 }
 /// Agrega una cara lateral (vertical)
@@ -359,13 +289,26 @@ fn add_side_face(
     // Normal de la cara
     normals.extend_from_slice(&[normal; 4]);
 
-    // 2 triángulos
-    indices.extend_from_slice(&[
-        base_idx,
-        base_idx + 1,
-        base_idx + 2,
-        base_idx,
-        base_idx + 2,
-        base_idx + 3,
-    ]);
+    // 2 triángulos. El orden de vértices produce winding frontal hacia el eje
+    // negativo; para caras que miran al eje positivo hay que invertirlo
+    // (necesario con backface culling activo).
+    if normal[0] > 0.0 || normal[2] > 0.0 {
+        indices.extend_from_slice(&[
+            base_idx,
+            base_idx + 2,
+            base_idx + 1,
+            base_idx,
+            base_idx + 3,
+            base_idx + 2,
+        ]);
+    } else {
+        indices.extend_from_slice(&[
+            base_idx,
+            base_idx + 1,
+            base_idx + 2,
+            base_idx,
+            base_idx + 2,
+            base_idx + 3,
+        ]);
+    }
 }

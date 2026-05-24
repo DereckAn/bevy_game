@@ -74,6 +74,77 @@ impl ChunkType {
     }
 }
 
+/// Materiales compartidos por todos los chunks.
+///
+/// Un puñado de handles fijos (uno por color de debug) en lugar de un
+/// `StandardMaterial` nuevo por chunk: miles de materiales idénticos rompen
+/// el batching del renderer y multiplican los draw calls. Además NO desactivan
+/// `cull_mode`, así el GPU descarta las caras traseras (≈mitad de fragmentos).
+#[derive(Resource)]
+pub struct ChunkMaterials {
+    /// Por nivel de `ChunkLOD` (chunks reales): Ultra, High, Medium, Low, Minimal
+    real: [Handle<StandardMaterial>; 5],
+    /// Por nivel de `LodLevel` (chunks LOD): Medium, Low, Minimal
+    lod: [Handle<StandardMaterial>; 3],
+}
+
+impl FromWorld for ChunkMaterials {
+    fn from_world(world: &mut World) -> Self {
+        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+
+        let real = [
+            ChunkLOD::Ultra,
+            ChunkLOD::High,
+            ChunkLOD::Medium,
+            ChunkLOD::Low,
+            ChunkLOD::Minimal,
+        ]
+        .map(|lod| {
+            materials.add(StandardMaterial {
+                base_color: lod.debug_color(),
+                ..default()
+            })
+        });
+
+        // Colores de debug por nivel LOD (naranja → rojo según distancia)
+        let lod = [
+            Color::srgb(1.0, 0.6, 0.0), // Medium (32-64 chunks)
+            Color::srgb(1.0, 0.3, 0.0), // Low (64-128)
+            Color::srgb(0.8, 0.0, 0.0), // Minimal (128+)
+        ]
+        .map(|color| {
+            materials.add(StandardMaterial {
+                base_color: color,
+                ..default()
+            })
+        });
+
+        Self { real, lod }
+    }
+}
+
+impl ChunkMaterials {
+    pub fn real_handle(&self, lod: ChunkLOD) -> Handle<StandardMaterial> {
+        let idx = match lod {
+            ChunkLOD::Ultra => 0,
+            ChunkLOD::High => 1,
+            ChunkLOD::Medium => 2,
+            ChunkLOD::Low => 3,
+            ChunkLOD::Minimal => 4,
+        };
+        self.real[idx].clone()
+    }
+
+    pub fn lod_handle(&self, level: LodLevel) -> Handle<StandardMaterial> {
+        let idx = match level {
+            LodLevel::Medium => 0,
+            LodLevel::Low => 1,
+            LodLevel::Minimal => 2,
+        };
+        self.lod[idx].clone()
+    }
+}
+
 /// Recurso que rastrea qué chunks necesitan ser cargados
 #[derive(Resource, Default)]
 pub struct ChunkLoadQueue {
@@ -199,6 +270,13 @@ pub fn update_chunk_load_queue(
             // Determinar tipo de chunk segun distancia
             let chunk_type = ChunkType::from_distance(distance_chunks);
 
+            // Los LOD son heightmaps con alturas ABSOLUTAS (ignoran position.y):
+            // un solo chunk en y=0 representa la columna entera. Cargar los
+            // demás niveles Y produciría 5 meshes idénticos apilados.
+            if chunk_type == ChunkType::Lod && chunk_pos.y != 0 {
+                continue;
+            }
+
             to_load_vec.push((*chunk_pos, chunk_type));
         }
     }
@@ -242,7 +320,7 @@ pub fn load_chunks_system(
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    chunk_materials: Res<ChunkMaterials>,
     world_seed: Res<WorldSeed>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
@@ -295,21 +373,10 @@ pub fn load_chunks_system(
 
                     // Solo renderizar si el mesh tiene vértices
                     if mesh.count_vertices() > 0 {
-                        // Color según nivel LOD (para debug)
-                        let color = match lod_level {
-                            LodLevel::Medium => Color::srgb(1.0, 0.6, 0.0), // Naranja (32-64 chunks)
-                            LodLevel::Low => Color::srgb(1.0, 0.3, 0.0), // Naranja oscuro (64-128)
-                            LodLevel::Minimal => Color::srgb(0.8, 0.0, 0.0), // Rojo (128+)
-                        };
-
                         // Insertar componentes para renderizado (SIN colisión)
                         commands.entity(chunk_entity).insert((
                             Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(materials.add(StandardMaterial {
-                                base_color: color,
-                                cull_mode: None,
-                                ..default()
-                            })),
+                            MeshMaterial3d(chunk_materials.lod_handle(lod_level)),
                             Transform::default(),
                             lod_chunk,
                             ChunkLOD::from_distance(distance_chunks as f32),
@@ -332,7 +399,7 @@ pub fn load_chunks_system(
 pub fn complete_chunk_generation_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    chunk_materials: Res<ChunkMaterials>,
     mut octree: ResMut<ChunkOctree>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut task_query: Query<(Entity, &mut ChunkGenerationTask)>,
@@ -365,11 +432,7 @@ pub fn complete_chunk_generation_system(
                     .entity(entity)
                     .insert((
                         Mesh3d(meshes.add(mesh.clone())),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: ChunkLOD::Ultra.debug_color(),
-                            cull_mode: None,
-                            ..default()
-                        })),
+                        MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                         Transform::default(),
                         base_chunk,
                         ChunkLOD::Ultra,
@@ -383,11 +446,7 @@ pub fn complete_chunk_generation_system(
                     .entity(entity)
                     .insert((
                         Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(materials.add(StandardMaterial {
-                            base_color: ChunkLOD::Ultra.debug_color(),
-                            cull_mode: None,
-                            ..default()
-                        })),
+                        MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                         Transform::default(),
                         base_chunk,
                         ChunkLOD::Ultra,
@@ -546,11 +605,12 @@ pub fn convert_real_to_lod_system(
     mut load_queue: ResMut<ChunkLoadQueue>,
     base_query: Query<&BaseChunk>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    chunk_materials: Res<ChunkMaterials>,
     mut chunk_map: ResMut<ChunkMap>,
+    mut octree: ResMut<ChunkOctree>,
+    mut spatial_hash: ResMut<SpatialHashGrid>,
+    world_seed: Res<WorldSeed>,
 ) {
-    use crate::voxel::debug_color_from_distance;
-
     // Procesar hasta MAX_CHUNK_TRANSITIONS_PER_FRAME conversiones
     let conversions_to_do = load_queue
         .to_convert_to_lod
@@ -562,20 +622,33 @@ pub fn convert_real_to_lod_system(
             if let Ok(base_chunk) = base_query.get(entity) {
                 let chunk_pos = base_chunk.position;
 
+                // Solo la columna y=0 se convierte en LOD (heightmap con
+                // alturas absolutas que representa la columna entera); los
+                // demás niveles Y simplemente se descartan.
+                if chunk_pos.y != 0 {
+                    commands.entity(entity).despawn();
+                    chunk_map.chunks.remove(&chunk_pos);
+                    octree.remove(chunk_pos);
+                    spatial_hash.remove(chunk_pos);
+                    continue;
+                }
+
                 // Calcular distancia al jugador para determinar nivel LOD
                 let delta = chunk_pos - load_queue.last_player_chunk;
                 let distance_chunks =
                     ((delta.x * delta.x + delta.z * delta.z) as f32).sqrt() as i32;
                 let lod_level = LodLevel::from_distance(distance_chunks);
 
-                // Crear LOD chunk desde el BaseChunk existente
-                let lod_chunk = LodChunk::from_base_chunk(base_chunk, lod_level);
+                // Regenerar la superficie desde el noise: el volumen del chunk
+                // y=0 no contiene las montañas de los niveles superiores, así
+                // que extraerla de ahí aplanaría el terreno alto.
+                let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
+                let mut terrain_gen = TerrainGenerator::new(world_seed.0);
+                lod_chunk.generate_surface(&mut terrain_gen);
                 let mesh = mesh_lod_chunk(&lod_chunk);
 
                 // Solo crear si el mesh tiene vértices
                 if mesh.count_vertices() > 0 {
-                    let color = debug_color_from_distance(distance_chunks as f32);
-
                     // Despawnear el BaseChunk
                     commands.entity(entity).despawn();
 
@@ -583,11 +656,7 @@ pub fn convert_real_to_lod_system(
                     let new_entity = commands
                         .spawn((
                             Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(materials.add(StandardMaterial {
-                                base_color: color,
-                                cull_mode: None,
-                                ..default()
-                            })),
+                            MeshMaterial3d(chunk_materials.lod_handle(lod_level)),
                             Transform::default(),
                             lod_chunk,
                         ))

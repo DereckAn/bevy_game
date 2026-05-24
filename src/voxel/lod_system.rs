@@ -63,14 +63,18 @@ impl ChunkLOD {
 /// (Downsampling deshabilitado temporalmente para mejor rendimiento inicial)
 pub fn update_chunk_lod_system(
     player_query: Query<&Transform, With<Player>>,
-    mut chunk_query: Query<(&BaseChunk, &mut ChunkLOD, &MeshMaterial3d<StandardMaterial>)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut chunk_query: Query<(
+        &BaseChunk,
+        &mut ChunkLOD,
+        &mut MeshMaterial3d<StandardMaterial>,
+    )>,
+    chunk_materials: Res<crate::voxel::ChunkMaterials>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
     };
 
-    for (base_chunk, mut chunk_lod, material_handle) in chunk_query.iter_mut() {
+    for (base_chunk, mut chunk_lod, mut material_handle) in chunk_query.iter_mut() {
         // Calcular posición del chunk en el mundo desde su posición en la grilla
         let chunk_world_pos = Vec3::new(
             base_chunk.position.x as f32 * BASE_CHUNK_SIZE as f32 * 0.1,
@@ -84,32 +88,9 @@ pub fn update_chunk_lod_system(
         if *chunk_lod != new_lod {
             *chunk_lod = new_lod;
 
-            // Actualizar color del material
-            if let Some(material) = materials.get_mut(&material_handle.0) {
-                material.base_color = new_lod.debug_color();
-            }
+            // Los materiales son compartidos: cambiar el handle, no mutar el
+            // material (eso recolorearía TODOS los chunks de ese nivel).
+            material_handle.0 = chunk_materials.real_handle(new_lod);
         }
     }
-}
-
-/// Calcula el color de debug basado en la distancia del chunk al jugador
-/// 0-32 chunks: Verde brillante (chunks reales con física)
-/// 32-200 chunks: Gradiente verde → amarillo → naranja → rojo (chunks LOD)
-pub fn debug_color_from_distance(distance_chunks: f32) -> Color {
-    // 0-32 chunks: Verde brillante (chunks reales)
-    if distance_chunks <= 32.0 {
-        return Color::srgb(0.2, 0.8, 0.2);
-    }
-
-    // 32-200 chunks: Gradiente verde → rojo
-    let t = (distance_chunks - 32.0) / (200.0 - 32.0); // Normalizar a 0.0-1.0
-    let t = t.clamp(0.0, 1.0);
-
-    // Interpolación de color suave
-    // Verde (0.2, 0.8, 0.2) → Rojo (0.9, 0.1, 0.1)
-    let r = 0.2 + t * 0.7; // 0.2 → 0.9
-    let g = 0.8 - t * 0.7; // 0.8 → 0.1
-    let b = 0.2 - t * 0.1; // 0.2 → 0.1
-
-    Color::srgb(r, g, b)
 }

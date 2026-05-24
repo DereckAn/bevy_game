@@ -25,11 +25,12 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkOctree, SpatialHashGrid,
-    complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
-    greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system,
-    teardown_world, unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
-    update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
+    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, ChunkOctree,
+    SpatialHashGrid, complete_chunk_generation_system, convert_lod_to_real_system,
+    convert_real_to_lod_system, greedy_mesh_basechunk_simple, load_chunks_system,
+    start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
+    update_chunk_lod_system, update_chunk_transitions_system, update_frustum_culling,
+    update_voxel_breaking_system,
 };
 
 use crate::core::GameState;
@@ -67,6 +68,7 @@ fn main() {
             IVec3::new(200, 10, 200),
         )))
         .insert_resource(SpatialHashGrid::default())
+        .init_resource::<ChunkMaterials>()
         // El terreno se genera solo al empezar partida, no al reanudar desde pausa
         .add_systems(
             OnTransition {
@@ -116,7 +118,7 @@ fn main() {
 fn setup(
     mut commands: Commands, // Sistema de comandos para crear/modificar entidades
     mut meshes: ResMut<Assets<Mesh>>, // Recurso mutable para gestionar mallas 3D
-    mut materials: ResMut<Assets<StandardMaterial>>, // Recurso mutable para gestionar materiales
+    chunk_materials: Res<ChunkMaterials>, // Materiales compartidos de chunks
     mut chunk_map: ResMut<ChunkMap>,
     mut octree: ResMut<ChunkOctree>,
     world_seed: Res<WorldSeed>,
@@ -174,11 +176,7 @@ fn setup(
             let chunk_entity = commands
                 .spawn((
                     Mesh3d(meshes.add(mesh.clone())),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: ChunkLOD::Ultra.debug_color(),
-                        cull_mode: None,
-                        ..default()
-                    })),
+                    MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                     Transform::default(),
                     base_chunk,
                     ChunkLOD::Ultra,
@@ -194,11 +192,7 @@ fn setup(
             let chunk_entity = commands
                 .spawn((
                     Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: ChunkLOD::Ultra.debug_color(),
-                        cull_mode: None,
-                        ..default()
-                    })),
+                    MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                     Transform::default(),
                     base_chunk,
                     ChunkLOD::Ultra,
