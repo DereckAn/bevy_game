@@ -3,13 +3,13 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
+    BaseChunk, VoxelType,
     greedy_meshing::greedy_mesh_basechunk,
     tools::{Tool, ToolType},
-    BaseChunk, VoxelType,
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::{
-    physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider},
+    physics::{Collider, create_terrain_collider, spawn_rapier_voxel_drop},
     player::components::Player,
 };
 use bevy::ecs::system::ParamSet;
@@ -39,6 +39,17 @@ pub struct VoxelBreaking {
 #[derive(Resource)]
 pub struct ChunkMap {
     pub chunks: HashMap<IVec3, Entity>,
+}
+
+/// Vocels modificados por el jugador, agrupados por chunk
+///
+/// el mundo autoritativo es "seed + estos diffs" : al regenerar un chunk
+/// (carga normal o venversionLOD -> real) se aplican encima del terreno
+/// procedural, asi las modificaciones del jugador sovreviven.
+#[derive(Resource, Debug, Default)]
+pub struct VoxelDiffs {
+    /// chunk_pos -> (local_pos -> voxel_type)
+    pub chunks: HashMap<IVec3, HashMap<IVec3, VoxelType>>,
 }
 
 // ============================================================================
@@ -349,6 +360,7 @@ pub fn update_voxel_breaking_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut mesh_query: Query<&mut Mesh3d>,
+    mut voxel_diffs: ResMut<VoxelDiffs>,
 ) {
     for (entity, mut breaking) in breaking_query.iter_mut() {
         // Actualizar preogreso basado en tiempo
@@ -388,6 +400,19 @@ pub fn update_voxel_breaking_system(
                                 // Convertir a aire
                                 chunk.voxel_types[target_x][target_y][target_z] = VoxelType::Air;
                                 chunk.densities[target_x][target_y][target_z] = -1.0;
+
+                                voxel_diffs
+                                    .chunks
+                                    .entry(breaking.chunk_pos)
+                                    .or_default()
+                                    .insert(
+                                        IVec3::new(
+                                            target_x as i32,
+                                            target_y as i32,
+                                            target_z as i32,
+                                        ),
+                                        VoxelType::Air,
+                                    );
 
                                 // Calcular drops para este voxel
                                 let drops = tool_type.calculate_drops(voxel_type);

@@ -6,6 +6,7 @@ use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::{TerrainGenerator, VoxelType};
 use bevy::prelude::*;
 use rayon::prelude::*;
+use std::collections::HashMap;
 
 /// Chunk base de 32³ (usa heap para evitar stack overflow)
 #[derive(Component)]
@@ -16,6 +17,27 @@ pub struct BaseChunk {
 }
 
 impl BaseChunk {
+    /// Aplica los diffs del juegador encima del terreno procedural.
+    ///
+    /// Cada entrada (local_pos, -> tipo) sobrescribe un voxel ya generado desde
+    /// el seed. La densidad se mantiene sincronizada (negativa = aire, positiva = solido)
+    /// porq ue el greedy meshing decide que caras dibujhar leyendo dnsities, no voxel_types.
+    pub fn apply_diffs(&mut self, diffs: &HashMap<IVec3, VoxelType>) {
+        for (local_pos, voxel_type) in diffs {
+            let x = local_pos.x as usize;
+            let y = local_pos.y as usize;
+            let z = local_pos.z as usize;
+
+            self.voxel_types[x][y][z] = *voxel_type;
+            self.densities[x][y][z] = if *voxel_type == VoxelType::Air {
+                -1.0
+            } else {
+                1.0
+            };
+        }
+    }
+
+    
     pub fn new(position: IVec3, seed: i32) -> Self {
         let mut chunk = Self {
             densities: Box::new(

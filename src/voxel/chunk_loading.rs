@@ -8,8 +8,7 @@ use crate::{
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel,
-        SpatialHashGrid, TerrainGenerator, mesh_lod_chunk,
+        self, BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk
     },
 };
 use bevy::{
@@ -179,6 +178,7 @@ pub fn teardown_world(
     mut load_queue: ResMut<ChunkLoadQueue>,
     chunks: Query<Entity, Or<(With<BaseChunk>, With<LodChunk>, With<ChunkGenerationTask>)>>,
     lights: Query<Entity, With<DirectionalLight>>,
+    mut voxel_diffs: ResMut<VoxelDiffs>,
 ) {
     // Despawnear chunks vía queries: solo devuelven entidades vivas, así
     // evitamos intentar destruir IDs obsoletos guardados en chunk_map.
@@ -190,6 +190,7 @@ pub fn teardown_world(
     }
 
     chunk_map.chunks.clear();
+    voxel_diffs.chunks.clear();
     spatial_hash.clear();
     *load_queue = ChunkLoadQueue::default();
     *octree = ChunkOctree::new(BoundingBox::new(
@@ -248,8 +249,7 @@ pub fn update_chunk_load_queue(
             for cz in -max_z..=max_z {
                 let chunk_pos = IVec3::new(player_chunk.x + cx, cy, player_chunk.z + cz);
                 // Mapa finito: no generar nada fuera del límite del mundo
-                if chunk_pos.x.abs() > WORLD_CHUNK_RADIUS
-                    || chunk_pos.z.abs() > WORLD_CHUNK_RADIUS
+                if chunk_pos.x.abs() > WORLD_CHUNK_RADIUS || chunk_pos.z.abs() > WORLD_CHUNK_RADIUS
                 {
                     continue;
                 }
@@ -322,6 +322,7 @@ pub fn load_chunks_system(
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_materials: Res<ChunkMaterials>,
     world_seed: Res<WorldSeed>,
+    voxel_diffs: Res<VoxelDiffs>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
     let seed = world_seed.0;
@@ -346,10 +347,17 @@ pub fn load_chunks_system(
             // Genera chunk segun tipo
             match chunk_type {
                 ChunkType::Real => {
-                    // Chunk real con volumen completo
+                    // Copia los diffs de ESTE chunk antes de lanzar la tarea 
+                    let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
+
+
                     let task = thread_pool.spawn(async move {
                         // El mallado se hace con vecinos en complete_chunk_generation_system
-                        let base_chunk = BaseChunk::new(chunk_pos, seed);
+                        let mut base_chunk = BaseChunk::new(chunk_pos, seed);
+
+                        if let Some(diffs) = &chunk_diffs {
+                            base_chunk.apply_diffs(diffs);
+                        }
                         (chunk_pos, base_chunk)
                     });
 
@@ -361,8 +369,7 @@ pub fn load_chunks_system(
                 ChunkType::Lod => {
                     // chunk Lod solo superficie (generacion sincrona por ahora)
                     let delta = chunk_pos - load_queue.last_player_chunk;
-                    let distance_chunks =
-                        ((delta.x.pow(2) + delta.z.pow(2)) as f32).sqrt() as i32;
+                    let distance_chunks = ((delta.x.pow(2) + delta.z.pow(2)) as f32).sqrt() as i32;
                     let lod_level = LodLevel::from_distance(distance_chunks);
 
                     let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
@@ -417,9 +424,7 @@ pub fn complete_chunk_generation_system(
             break;
         }
 
-        if let Some((chunk_pos, base_chunk)) =
-            future::block_on(future::poll_once(&mut task.task))
-        {
+        if let Some((chunk_pos, base_chunk)) = future::block_on(future::poll_once(&mut task.task)) {
             // Regenerar mesh CON verificación de vecinos para eliminar gaps
             let mesh = greedy_mesh_basechunk(&base_chunk, &chunk_map, &base_chunks);
 
@@ -563,6 +568,7 @@ pub fn convert_lod_to_real_system(
     mut chunk_map: ResMut<ChunkMap>,
     lod_query: Query<&LodChunk>,
     world_seed: Res<WorldSeed>,
+    voxel_diffs: Res<VoxelDiffs>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
     let seed = world_seed.0;
@@ -577,10 +583,14 @@ pub fn convert_lod_to_real_system(
         if let Some(entity) = load_queue.to_convert_to_real.pop() {
             if let Ok(lod_chunk) = lod_query.get(entity) {
                 let chunk_pos = lod_chunk.position;
+                let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
 
                 // Generar BaseChunk asíncronamente
                 let task = thread_pool.spawn(async move {
-                    let base_chunk = BaseChunk::new(chunk_pos, seed);
+                    let mut base_chunk = BaseChunk::new(chunk_pos, seed);
+                    if let Some(diffs) = chunk_diffs {
+                        base_chunk.apply_diffs(&diffs);
+                    }
                     (chunk_pos, base_chunk)
                 });
 

@@ -30,7 +30,7 @@ use voxel::{
     convert_real_to_lod_system, greedy_mesh_basechunk_simple, load_chunks_system,
     start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
     update_chunk_lod_system, update_chunk_transitions_system, update_frustum_culling,
-    update_voxel_breaking_system,
+    update_voxel_breaking_system, VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -68,6 +68,7 @@ fn main() {
             IVec3::new(200, 10, 200),
         )))
         .insert_resource(SpatialHashGrid::default())
+        .init_resource::<VoxelDiffs>()
         .init_resource::<ChunkMaterials>()
         // El terreno se genera solo al empezar partida, no al reanudar desde pausa
         .add_systems(
