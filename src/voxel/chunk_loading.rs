@@ -8,7 +8,8 @@ use crate::{
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        self, BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk
+        self, BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel,
+        SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -149,7 +150,7 @@ impl ChunkMaterials {
 pub struct ChunkLoadQueue {
     // Chunks a cargar con su tipo (Real o Lod)
     pub to_load: VecDeque<(IVec3, ChunkType)>,
-    pub to_unload: Vec<Entity>,
+    pub to_unload: Vec<(IVec3, Entity)>,
 
     // Conversiones pendientes
     pub to_convert_to_real: Vec<Entity>, // LOD → Real
@@ -308,7 +309,7 @@ pub fn update_chunk_load_queue(
     // Descargar chunks que NO están en el set de chunks a mantener
     for (chunk_pos, &entity) in &chunk_map.chunks {
         if !keep_set.contains(chunk_pos) {
-            load_queue.to_unload.push(entity);
+            load_queue.to_unload.push((*chunk_pos, entity));
         }
     }
 }
@@ -347,9 +348,8 @@ pub fn load_chunks_system(
             // Genera chunk segun tipo
             match chunk_type {
                 ChunkType::Real => {
-                    // Copia los diffs de ESTE chunk antes de lanzar la tarea 
+                    // Copia los diffs de ESTE chunk antes de lanzar la tarea
                     let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
-
 
                     let task = thread_pool.spawn(async move {
                         // El mallado se hace con vecinos en complete_chunk_generation_system
@@ -484,7 +484,6 @@ pub fn unload_chunks_system(
     mut octree: ResMut<ChunkOctree>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
-    chunk_query: Query<Option<&BaseChunk>>,
 ) {
     // Descargar hasta MAX_CHUNKS_TO_UNLOAD_PER_FRAME chunks por frame
     let chunks_to_unload = load_queue
@@ -493,19 +492,14 @@ pub fn unload_chunks_system(
         .min(MAX_CHUNKS_TO_UNLOAD_PER_FRAME);
 
     for _ in 0..chunks_to_unload {
-        if let Some(entity) = load_queue.to_unload.pop() {
-            if let Ok(maybe_chunk) = chunk_query.get(entity) {
-                // Si el chunk tiene BaseChunk, eliminarlo del octree y spatial hash
-                if let Some(base_chunk) = maybe_chunk {
-                    let chunk_pos = base_chunk.position;
-                    chunk_map.chunks.remove(&chunk_pos);
-                    octree.remove(chunk_pos);
-                    spatial_hash.remove(chunk_pos);
-                }
-
-                // Despawnear entidad (incluso si aún está generándose)
-                commands.entity(entity).despawn();
-            }
+        if let Some((chunk_pos, entity)) = load_queue.to_unload.pop() {
+            // Limpiar SIEMPRE los registros, sea Real, LOD o aún generándose.
+            // Si no, el chunk_map conserva una key fantasma y load_chunks_system
+            // nunca vuelve a cargar esa posición (hueco permanente).
+            chunk_map.chunks.remove(&chunk_pos);
+            octree.remove(chunk_pos);
+            spatial_hash.remove(chunk_pos);
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -528,12 +522,20 @@ pub fn update_chunk_transitions_system(
     base_chunk_query: Query<&BaseChunk>,
     lod_chunk_query: Query<&LodChunk>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    mut last_chunk: Local<IVec3>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
     };
 
     let player_chunk = world_pos_to_chunk_pos(player_transform.translation);
+
+    // Las conversiones solo cambian cuando el jujgador cambia de chunk
+    // Estando quieto, lsos sitemas de conversion siguien drenando las colas.
+    if player_chunk == *last_chunk {
+        return;
+    }
+    *last_chunk = player_chunk;
 
     // Limpiar colas de conversión
     load_queue.to_convert_to_real.clear();
@@ -544,17 +546,14 @@ pub fn update_chunk_transitions_system(
         // Calcular distancia horizontal al jugador (ignorar Y)
         let dx = chunk_pos.x - player_chunk.x;
         let dz = chunk_pos.z - player_chunk.z;
-        let distance_chunks = ((dx * dx + dz * dz) as f32).sqrt() as i32;
+        let distance_sq = dx * dx + dz * dz;
 
-        // Verificar si es BaseChunk o LodChunk
         if base_chunk_query.get(entity).is_ok() {
-            // Es un chunk Real - verificar si debe convertirse a LOD
-            if distance_chunks > REAL_TO_LOD_DISTANCE {
+            if distance_sq > REAL_TO_LOD_DISTANCE * REAL_TO_LOD_DISTANCE {
                 load_queue.to_convert_to_lod.push(entity);
             }
         } else if lod_chunk_query.get(entity).is_ok() {
-            // Es un chunk LOD - verificar si debe convertirse a Real
-            if distance_chunks < LOD_TO_REAL_DISTANCE {
+            if distance_sq < LOD_TO_REAL_DISTANCE * LOD_TO_REAL_DISTANCE {
                 load_queue.to_convert_to_real.push(entity);
             }
         }

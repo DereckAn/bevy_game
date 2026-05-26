@@ -13,6 +13,32 @@ The biggest wins are not in the algorithms (greedy meshing, DDA raycast, and the
 
 ---
 
+## Related feature — Voxel persistence (diffs) — ✅ IMPLEMENTED (June 2026)
+
+Not a performance finding, but a **correctness** fix discovered while reviewing the chunk lifecycle (and prompted by planning for multiplayer). It is recorded here because it touches the same regeneration code as findings #1, #3, and #5.
+
+**Problem**: Player edits (broken voxels) were stored only in the live `BaseChunk`. When a chunk converted Real→LOD or was unloaded, that data was discarded; revisiting the area regenerated pristine terrain from the seed, silently erasing all digging.
+
+**Fix**: Store **diffs, not volumes**. A `VoxelDiffs` resource (`HashMap<IVec3, HashMap<IVec3, VoxelType>>`) records per-chunk modifications. Destruction writes to it; chunk generation (`load_chunks_system` and `convert_lod_to_real_system`) clones the relevant chunk's diffs into the async task and replays them via `BaseChunk::apply_diffs` after seed generation. Diffs are cleared in `teardown_world` (new game = clean world).
+
+**Why diffs over a chunk cache**: a dug tunnel costs ~3 KB instead of caching a 175 KB chunk; survives Real↔LOD round-trips for free; trivially serializable to disk later (save files); and matches the multiplayer model (server authoritative state = `seed + diffs`).
+
+**Note**: `apply_diffs` currently syncs both `voxel_types` and `densities`. Finding #3 (drop `densities`) will remove the second line.
+
+---
+
+## Related bug — Unload leaks ghost chunk-map entries — ✅ FIXED (June 2026)
+
+A **correctness** bug (permanent terrain holes), found while debugging LOD round-trips. Recorded here because the LOD dedup (finding #1) exposed it.
+
+**Problem**: `unload_chunks_system` despawned every entity but only removed it from `chunk_map`/`octree`/`spatial_hash` inside `if let Some(base_chunk) = ...` — i.e. **only for `BaseChunk`s**. LOD chunks and still-generating chunks (no `BaseChunk` component) were despawned but left a **ghost key** in `chunk_map`. On return, `load_chunks_system`'s `contains_key` check saw the ghost and skipped reloading → **permanent hole, no console message**. Triggered by traveling past the 70-chunk unload radius and back; the dedup made the surviving origin chunk a LOD one, walking straight into the bug.
+
+**Fix**: Carry the position in the unload queue — `to_unload: Vec<(IVec3, Entity)>` instead of `Vec<Entity>`. `update_chunk_load_queue` already has `chunk_pos` when building the list (it iterates `chunk_map`), so it stores it. `unload_chunks_system` then cleans the maps **unconditionally** for every chunk type and no longer needs the `Query<Option<&BaseChunk>>` lookup.
+
+**Lesson**: the old code tried to *reconstruct* the position from the entity at unload time, and the reconstruction only worked for one component type. Carrying the data forward removed the bug.
+
+---
+
 ## Tier 1 — Likely the biggest FPS wins
 
 ### 1. Every LOD column is generated and rendered 5 times 🔴 — ✅ IMPLEMENTED (June 2026)
