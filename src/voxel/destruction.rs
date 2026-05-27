@@ -3,13 +3,13 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
-    BaseChunk, VoxelType,
     greedy_meshing::greedy_mesh_basechunk,
     tools::{Tool, ToolType},
+    BaseChunk, VoxelType,
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::{
-    physics::{Collider, create_terrain_collider, spawn_rapier_voxel_drop},
+    physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider},
     player::components::Player,
 };
 use bevy::ecs::system::ParamSet;
@@ -399,7 +399,6 @@ pub fn update_voxel_breaking_system(
                             if voxel_type.is_solid() {
                                 // Convertir a aire
                                 chunk.voxel_types[target_x][target_y][target_z] = VoxelType::Air;
-                                chunk.densities[target_x][target_y][target_z] = -1.0;
 
                                 voxel_diffs
                                     .chunks

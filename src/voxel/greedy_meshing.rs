@@ -1,22 +1,22 @@
 //! # Greedy Meshing Algorithm
-//! 
+//!
 //! Optimiza la generación de meshes combinando caras adyacentes del mismo material
 //! en rectángulos más grandes. Reduce 70-95% de triángulos comparado con naive meshing.
-//! 
+//!
 //! ## Algoritmo:
 //! 1. Para cada eje (X, Y, Z), procesar slices perpendiculares
 //! 2. En cada slice, crear una máscara de caras visibles EN AMBAS DIRECCIONES
 //! 3. Usar greedy algorithm para encontrar rectángulos máximos
 //! 4. Generar quads en lugar de caras individuales
 
-use bevy::prelude::*;
-use bevy::mesh::Indices;
-use bevy::render::render_resource::PrimitiveTopology;
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::voxel::{BaseChunk, VoxelType, ChunkMap};
+use crate::voxel::{BaseChunk, ChunkMap, VoxelType};
+use bevy::mesh::Indices;
+use bevy::prelude::*;
+use bevy::render::render_resource::PrimitiveTopology;
 
 /// Genera mesh optimizado usando greedy meshing (versión simple sin vecinos)
-/// 
+///
 /// Usado durante inicialización cuando no todos los chunks están cargados.
 pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -28,11 +28,29 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
             let mask_pos = generate_slice_mask_simple(chunk, axis, d, 1);
-            greedy_mesh_slice(&mask_pos, chunk, axis, d, 1, &mut positions, &mut normals, &mut indices);
-            
+            greedy_mesh_slice(
+                &mask_pos,
+                chunk,
+                axis,
+                d,
+                1,
+                &mut positions,
+                &mut normals,
+                &mut indices,
+            );
+
             // Dirección negativa
             let mask_neg = generate_slice_mask_simple(chunk, axis, d, -1);
-            greedy_mesh_slice(&mask_neg, chunk, axis, d, -1, &mut positions, &mut normals, &mut indices);
+            greedy_mesh_slice(
+                &mask_neg,
+                chunk,
+                axis,
+                d,
+                -1,
+                &mut positions,
+                &mut normals,
+                &mut indices,
+            );
         }
     }
 
@@ -68,7 +86,7 @@ fn generate_slice_mask_simple(
             let z = pos[2];
 
             // Verificar si este voxel es sólido
-            if chunk.get_density(x, y, z) <= 0.0 {
+            if !chunk.is_solid(x, y, z) {
                 continue;
             }
 
@@ -77,13 +95,20 @@ fn generate_slice_mask_simple(
             let neighbor_y = y as i32 + if axis == 1 { direction } else { 0 };
             let neighbor_z = z as i32 + if axis == 2 { direction } else { 0 };
 
-            let is_face_visible = if neighbor_x < 0 || neighbor_y < 0 || neighbor_z < 0 ||
-                                     neighbor_x >= BASE_CHUNK_SIZE as i32 ||
-                                     neighbor_y >= BASE_CHUNK_SIZE as i32 ||
-                                     neighbor_z >= BASE_CHUNK_SIZE as i32 {
+            let is_face_visible = if neighbor_x < 0
+                || neighbor_y < 0
+                || neighbor_z < 0
+                || neighbor_x >= BASE_CHUNK_SIZE as i32
+                || neighbor_y >= BASE_CHUNK_SIZE as i32
+                || neighbor_z >= BASE_CHUNK_SIZE as i32
+            {
                 true // Borde del chunk
             } else {
-                chunk.get_density(neighbor_x as usize, neighbor_y as usize, neighbor_z as usize) <= 0.0
+                !chunk.is_solid(
+                    neighbor_x as usize,
+                    neighbor_y as usize,
+                    neighbor_z as usize,
+                )
             };
 
             if is_face_visible {
@@ -110,11 +135,29 @@ pub fn greedy_mesh_basechunk(
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
             let mask_pos = generate_slice_mask(chunk, chunk_map, chunks, axis, d, 1);
-            greedy_mesh_slice(&mask_pos, chunk, axis, d, 1, &mut positions, &mut normals, &mut indices);
-            
+            greedy_mesh_slice(
+                &mask_pos,
+                chunk,
+                axis,
+                d,
+                1,
+                &mut positions,
+                &mut normals,
+                &mut indices,
+            );
+
             // Dirección negativa
             let mask_neg = generate_slice_mask(chunk, chunk_map, chunks, axis, d, -1);
-            greedy_mesh_slice(&mask_neg, chunk, axis, d, -1, &mut positions, &mut normals, &mut indices);
+            greedy_mesh_slice(
+                &mask_neg,
+                chunk,
+                axis,
+                d,
+                -1,
+                &mut positions,
+                &mut normals,
+                &mut indices,
+            );
         }
     }
 
@@ -151,7 +194,7 @@ fn generate_slice_mask(
             let y = pos[1];
             let z = pos[2];
 
-            if chunk.get_density(x, y, z) <= 0.0 {
+            if !chunk.is_solid(x, y, z) {
                 continue;
             }
 
@@ -160,15 +203,22 @@ fn generate_slice_mask(
             let neighbor_y = y as i32 + if axis == 1 { direction } else { 0 };
             let neighbor_z = z as i32 + if axis == 2 { direction } else { 0 };
 
-            let is_face_visible = if neighbor_x < 0 || neighbor_y < 0 || neighbor_z < 0 ||
-                                     neighbor_x >= BASE_CHUNK_SIZE as i32 ||
-                                     neighbor_y >= BASE_CHUNK_SIZE as i32 ||
-                                     neighbor_z >= BASE_CHUNK_SIZE as i32 {
+            let is_face_visible = if neighbor_x < 0
+                || neighbor_y < 0
+                || neighbor_z < 0
+                || neighbor_x >= BASE_CHUNK_SIZE as i32
+                || neighbor_y >= BASE_CHUNK_SIZE as i32
+                || neighbor_z >= BASE_CHUNK_SIZE as i32
+            {
                 // Fuera del chunk - verificar chunk vecino
                 is_face_visible_cross_chunk(chunk, chunk_map, chunks, x, y, z, axis, direction)
             } else {
                 // Dentro del chunk
-                chunk.get_density(neighbor_x as usize, neighbor_y as usize, neighbor_z as usize) <= 0.0
+                !chunk.is_solid(
+                    neighbor_x as usize,
+                    neighbor_y as usize,
+                    neighbor_z as usize,
+                )
             };
 
             if is_face_visible {
@@ -208,17 +258,7 @@ fn greedy_mesh_slice(
 
             // Generar quad
             add_greedy_quad(
-                chunk,
-                axis,
-                d,
-                i,
-                j,
-                width,
-                height,
-                direction,
-                positions,
-                normals,
-                indices,
+                chunk, axis, d, i, j, width, height, direction, positions, normals, indices,
             );
         }
     }
@@ -284,9 +324,12 @@ fn add_greedy_quad(
 
     // Posición base en coordenadas mundiales
     let mut base_pos = [0.0; 3];
-    base_pos[axis] = (chunk.position[axis as usize] * BASE_CHUNK_SIZE as i32 + d as i32) as f32 * VOXEL_SIZE;
-    base_pos[u] = (chunk.position[u as usize] * BASE_CHUNK_SIZE as i32 + i as i32) as f32 * VOXEL_SIZE;
-    base_pos[v] = (chunk.position[v as usize] * BASE_CHUNK_SIZE as i32 + j as i32) as f32 * VOXEL_SIZE;
+    base_pos[axis] =
+        (chunk.position[axis as usize] * BASE_CHUNK_SIZE as i32 + d as i32) as f32 * VOXEL_SIZE;
+    base_pos[u] =
+        (chunk.position[u as usize] * BASE_CHUNK_SIZE as i32 + i as i32) as f32 * VOXEL_SIZE;
+    base_pos[v] =
+        (chunk.position[v as usize] * BASE_CHUNK_SIZE as i32 + j as i32) as f32 * VOXEL_SIZE;
 
     // Dimensiones del quad
     let mut size = [0.0; 3];
@@ -348,11 +391,29 @@ fn is_face_visible_cross_chunk(
     if let Some(&neighbor_entity) = chunk_map.chunks.get(&neighbor_chunk_pos) {
         if let Ok(neighbor_chunk) = chunks.get(neighbor_entity) {
             // Posición local en chunk vecino
-            let local_x = if axis == 0 && direction < 0 { BASE_CHUNK_SIZE - 1 } else if axis == 0 && direction > 0 { 0 } else { x };
-            let local_y = if axis == 1 && direction < 0 { BASE_CHUNK_SIZE - 1 } else if axis == 1 && direction > 0 { 0 } else { y };
-            let local_z = if axis == 2 && direction < 0 { BASE_CHUNK_SIZE - 1 } else if axis == 2 && direction > 0 { 0 } else { z };
+            let local_x = if axis == 0 && direction < 0 {
+                BASE_CHUNK_SIZE - 1
+            } else if axis == 0 && direction > 0 {
+                0
+            } else {
+                x
+            };
+            let local_y = if axis == 1 && direction < 0 {
+                BASE_CHUNK_SIZE - 1
+            } else if axis == 1 && direction > 0 {
+                0
+            } else {
+                y
+            };
+            let local_z = if axis == 2 && direction < 0 {
+                BASE_CHUNK_SIZE - 1
+            } else if axis == 2 && direction > 0 {
+                0
+            } else {
+                z
+            };
 
-            return neighbor_chunk.get_density(local_x, local_y, local_z) <= 0.0;
+            return !neighbor_chunk.is_solid(local_x, local_y, local_z);
         }
     }
 
@@ -363,24 +424,46 @@ fn is_face_visible_cross_chunk(
 pub fn greedy_mesh_downsampled(chunk: &crate::voxel::DownsampledChunk) -> Mesh {
     let size = chunk.effective_size();
     let scale = chunk.downsample_factor as f32;
-    
+
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    
+
     // Procesar cada eje (X, Y, Z) para greedy meshing
     for axis in 0..3 {
         for d in 0..size {
             // Dirección positiva
             let mask_pos = generate_downsampled_mask(chunk, axis, d, 1, size);
-            greedy_mesh_downsampled_slice(&mask_pos, chunk, axis, d, 1, size, scale, &mut positions, &mut normals, &mut indices);
-            
+            greedy_mesh_downsampled_slice(
+                &mask_pos,
+                chunk,
+                axis,
+                d,
+                1,
+                size,
+                scale,
+                &mut positions,
+                &mut normals,
+                &mut indices,
+            );
+
             // Dirección negativa
             let mask_neg = generate_downsampled_mask(chunk, axis, d, -1, size);
-            greedy_mesh_downsampled_slice(&mask_neg, chunk, axis, d, -1, size, scale, &mut positions, &mut normals, &mut indices);
+            greedy_mesh_downsampled_slice(
+                &mask_neg,
+                chunk,
+                axis,
+                d,
+                -1,
+                size,
+                scale,
+                &mut positions,
+                &mut normals,
+                &mut indices,
+            );
         }
     }
-    
+
     // Construir mesh final
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -398,7 +481,7 @@ fn generate_downsampled_mask(
     size: usize,
 ) -> Vec<Option<VoxelType>> {
     let mut mask = vec![None; size * size];
-    
+
     for i in 0..size {
         for j in 0..size {
             let (x, y, z) = match axis {
@@ -406,36 +489,36 @@ fn generate_downsampled_mask(
                 1 => (i, d, j),
                 _ => (i, j, d),
             };
-            
+
             if x >= size || y >= size || z >= size {
                 continue;
             }
-            
+
             let current_voxel = chunk.voxel_types[x][y][z];
-            
+
             if current_voxel == VoxelType::Air {
                 continue;
             }
-            
+
             // Verificar si la cara es visible
             let (nx, ny, nz) = match axis {
                 0 => ((d as i32 + direction) as usize, i, j),
                 1 => (i, (d as i32 + direction) as usize, j),
                 _ => (i, j, (d as i32 + direction) as usize),
             };
-            
+
             let neighbor_is_air = if nx >= size || ny >= size || nz >= size {
                 true
             } else {
                 chunk.voxel_types[nx][ny][nz] == VoxelType::Air
             };
-            
+
             if neighbor_is_air {
                 mask[i * size + j] = Some(current_voxel);
             }
         }
     }
-    
+
     mask
 }
 
@@ -453,24 +536,25 @@ fn greedy_mesh_downsampled_slice(
     indices: &mut Vec<u32>,
 ) {
     let mut visited = vec![false; size * size];
-    
+
     for i in 0..size {
         for j in 0..size {
             let idx = i * size + j;
-            
+
             if visited[idx] || mask[idx].is_none() {
                 continue;
             }
-            
+
             let voxel_type = mask[idx].unwrap();
-            
+
             // Encontrar rectángulo máximo
-            let (width, height) = find_max_rect_downsampled(mask, &mut visited, i, j, voxel_type, size);
-            
+            let (width, height) =
+                find_max_rect_downsampled(mask, &mut visited, i, j, voxel_type, size);
+
             // Agregar quad
             add_downsampled_quad(
-                chunk, axis, d, i, j, width, height, direction, voxel_type, scale,
-                positions, normals, indices
+                chunk, axis, d, i, j, width, height, direction, voxel_type, scale, positions,
+                normals, indices,
             );
         }
     }
@@ -493,7 +577,7 @@ fn find_max_rect_downsampled(
         }
         width += 1;
     }
-    
+
     let mut height = 1;
     'outer: while start_i + height < size {
         for w in 0..width {
@@ -504,14 +588,14 @@ fn find_max_rect_downsampled(
         }
         height += 1;
     }
-    
+
     // Marcar como visitados
     for h in 0..height {
         for w in 0..width {
             visited[(start_i + h) * size + start_j + w] = true;
         }
     }
-    
+
     (width, height)
 }
 
@@ -532,9 +616,9 @@ fn add_downsampled_quad(
     indices: &mut Vec<u32>,
 ) {
     let voxel_size = VOXEL_SIZE * scale;
-    
+
     let base_idx = positions.len() as u32;
-    
+
     let (v0, v1, v2, v3, normal) = match (axis, direction) {
         (0, 1) => {
             let x = (d + 1) as f32 * voxel_size;
@@ -543,10 +627,13 @@ fn add_downsampled_quad(
             let z0 = j as f32 * voxel_size;
             let z1 = (j + width) as f32 * voxel_size;
             (
-                [x, y0, z0], [x, y1, z0], [x, y1, z1], [x, y0, z1],
-                [1.0, 0.0, 0.0]
+                [x, y0, z0],
+                [x, y1, z0],
+                [x, y1, z1],
+                [x, y0, z1],
+                [1.0, 0.0, 0.0],
             )
-        },
+        }
         (0, -1) => {
             let x = d as f32 * voxel_size;
             let y0 = i as f32 * voxel_size;
@@ -554,10 +641,13 @@ fn add_downsampled_quad(
             let z0 = j as f32 * voxel_size;
             let z1 = (j + width) as f32 * voxel_size;
             (
-                [x, y0, z1], [x, y1, z1], [x, y1, z0], [x, y0, z0],
-                [-1.0, 0.0, 0.0]
+                [x, y0, z1],
+                [x, y1, z1],
+                [x, y1, z0],
+                [x, y0, z0],
+                [-1.0, 0.0, 0.0],
             )
-        },
+        }
         (1, 1) => {
             let y = (d + 1) as f32 * voxel_size;
             let x0 = i as f32 * voxel_size;
@@ -565,10 +655,13 @@ fn add_downsampled_quad(
             let z0 = j as f32 * voxel_size;
             let z1 = (j + width) as f32 * voxel_size;
             (
-                [x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1],
-                [0.0, 1.0, 0.0]
+                [x0, y, z0],
+                [x1, y, z0],
+                [x1, y, z1],
+                [x0, y, z1],
+                [0.0, 1.0, 0.0],
             )
-        },
+        }
         (1, -1) => {
             let y = d as f32 * voxel_size;
             let x0 = i as f32 * voxel_size;
@@ -576,10 +669,13 @@ fn add_downsampled_quad(
             let z0 = j as f32 * voxel_size;
             let z1 = (j + width) as f32 * voxel_size;
             (
-                [x0, y, z1], [x1, y, z1], [x1, y, z0], [x0, y, z0],
-                [0.0, -1.0, 0.0]
+                [x0, y, z1],
+                [x1, y, z1],
+                [x1, y, z0],
+                [x0, y, z0],
+                [0.0, -1.0, 0.0],
             )
-        },
+        }
         (2, 1) => {
             let z = (d + 1) as f32 * voxel_size;
             let x0 = i as f32 * voxel_size;
@@ -587,10 +683,13 @@ fn add_downsampled_quad(
             let y0 = j as f32 * voxel_size;
             let y1 = (j + width) as f32 * voxel_size;
             (
-                [x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z],
-                [0.0, 0.0, 1.0]
+                [x0, y0, z],
+                [x1, y0, z],
+                [x1, y1, z],
+                [x0, y1, z],
+                [0.0, 0.0, 1.0],
             )
-        },
+        }
         _ => {
             let z = d as f32 * voxel_size;
             let x0 = i as f32 * voxel_size;
@@ -598,13 +697,23 @@ fn add_downsampled_quad(
             let y0 = j as f32 * voxel_size;
             let y1 = (j + width) as f32 * voxel_size;
             (
-                [x0, y1, z], [x1, y1, z], [x1, y0, z], [x0, y0, z],
-                [0.0, 0.0, -1.0]
+                [x0, y1, z],
+                [x1, y1, z],
+                [x1, y0, z],
+                [x0, y0, z],
+                [0.0, 0.0, -1.0],
             )
-        },
+        }
     };
-    
+
     positions.extend_from_slice(&[v0, v1, v2, v3]);
     normals.extend_from_slice(&[normal, normal, normal, normal]);
-    indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+    indices.extend_from_slice(&[
+        base_idx,
+        base_idx + 1,
+        base_idx + 2,
+        base_idx,
+        base_idx + 2,
+        base_idx + 3,
+    ]);
 }

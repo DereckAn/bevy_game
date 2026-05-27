@@ -11,17 +11,15 @@ use std::collections::HashMap;
 /// Chunk base de 32³ (usa heap para evitar stack overflow)
 #[derive(Component)]
 pub struct BaseChunk {
-    pub densities: Box<[[[f32; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]>,
     pub voxel_types: Box<[[[VoxelType; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]>,
     pub position: IVec3,
 }
 
 impl BaseChunk {
-    /// Aplica los diffs del juegador encima del terreno procedural.
+    /// Aplica los diffs del jugador encima del terreno procedural.
     ///
-    /// Cada entrada (local_pos, -> tipo) sobrescribe un voxel ya generado desde
-    /// el seed. La densidad se mantiene sincronizada (negativa = aire, positiva = solido)
-    /// porq ue el greedy meshing decide que caras dibujhar leyendo dnsities, no voxel_types.
+    /// Cada entrada (local_pos → tipo) sobrescribe un voxel ya generado desde
+    /// el seed.
     pub fn apply_diffs(&mut self, diffs: &HashMap<IVec3, VoxelType>) {
         for (local_pos, voxel_type) in diffs {
             let x = local_pos.x as usize;
@@ -29,20 +27,11 @@ impl BaseChunk {
             let z = local_pos.z as usize;
 
             self.voxel_types[x][y][z] = *voxel_type;
-            self.densities[x][y][z] = if *voxel_type == VoxelType::Air {
-                -1.0
-            } else {
-                1.0
-            };
         }
     }
 
-    
     pub fn new(position: IVec3, seed: i32) -> Self {
         let mut chunk = Self {
-            densities: Box::new(
-                [[[0.0; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1]; BASE_CHUNK_SIZE + 1],
-            ),
             voxel_types: Box::new(
                 [[[VoxelType::Air; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE],
             ),
@@ -54,8 +43,10 @@ impl BaseChunk {
         chunk
     }
 
-    pub fn get_density(&self, x: usize, y: usize, z: usize) -> f32 {
-        self.densities[x][y][z]
+    /// Un voxel es sólido si no es aire. Reemplaza a `get_density() <= 0.0`:
+    /// `voxel_types` ya contiene exactamente esa información.
+    pub fn is_solid(&self, x: usize, y: usize, z: usize) -> bool {
+        self.voxel_types[x][y][z] != VoxelType::Air
     }
 
     /// Generación de terreno con biomas
@@ -69,7 +60,6 @@ impl BaseChunk {
         let mut terrain_gen = TerrainGenerator::new(seed);
 
         // Paso 1: Calcular heightmap 2D (solo XZ, una vez por columna)
-        // Necesitamos (BASE_CHUNK_SIZE + 1) para las densidades en los bordes
         let grid = BASE_CHUNK_SIZE + 1;
         let mut heightmap = vec![0.0f32; grid * grid];
 
@@ -81,21 +71,9 @@ impl BaseChunk {
             }
         }
 
-        // Paso 2: Calcular densidades usando el heightmap cacheado (solo aritmética)
-        for z in 0..grid {
-            for y in 0..grid {
-                let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
-                for x in 0..grid {
-                    let terrain_height = heightmap[x + z * grid];
-                    self.densities[x][y][z] = terrain_height - world_y;
-                }
-            }
-        }
-
-        // Paso 3: Calcular tipos de voxel en paralelo usando las densidades ya calculadas
+        // Paso 2: Calcular tipos de voxel en paralelo a partir de la profundidad.
         // Se clasifican por PROFUNDIDAD bajo la superficie (pasto/tierra/piedra),
         // no por altura absoluta, para que la superficie siempre sea excavable.
-        let densities_ref = &self.densities;
         let heightmap_ref = &heightmap;
         let voxel_types_flat: Vec<VoxelType> = (0..BASE_CHUNK_SIZE.pow(3))
             .into_par_iter()
@@ -106,9 +84,9 @@ impl BaseChunk {
 
                 let world_y = (chunk_pos.y * BASE_CHUNK_SIZE as i32 + y as i32) as f32 * VOXEL_SIZE;
                 let terrain_height = heightmap_ref[x + z * grid];
-                let density = densities_ref[x][y][z];
+                let depth = terrain_height - world_y;
 
-                VoxelType::from_depth(density, terrain_height - world_y)
+                VoxelType::from_depth(depth, depth)
             })
             .collect();
 

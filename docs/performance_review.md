@@ -64,7 +64,7 @@ So for each distant column the game generates the surface 5 times (binary-search
 
 **Effort**: Trivial. **Impact**: ~10× cheaper LOD generation. Combined with finding #1, ~50× less LOD generation work — this alone mostly removes the known "LOD blocks the main thread" stutter, even before making LOD async.
 
-### 3. The `densities` array is redundant and dominates memory 🔴
+### 3. The `densities` array is redundant and dominates memory 🔴 — ✅ IMPLEMENTED (June 2026)
 
 **Problem**: `BaseChunk` stores 33³ f32 densities (~143 KB) + 32³ voxel types (32 KB) per chunk (`dynamic_chunks.rs:13-14`). But density is only ever used as a solid/air boolean (`<= 0.0`), and `voxel_types[x][y][z] == Air` carries exactly the same information (destruction already keeps both in sync — it sets `Air` and `-1.0` together).
 
@@ -169,7 +169,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | 2 ✅ | #1 Dedupe LOD per column | Low | 5× less LOD everything |
 | 3 ✅ | #4 Enable backface culling + shared materials | Low | ~2× less GPU fragment work |
 | 4 | #6 Gate transitions on player movement | Low | Removes per-frame full-map scan |
-| 5 | #3 Drop `densities` array | Medium | ~5.5× less memory |
+| 5 ✅ | #3 Drop `densities` array | Medium | ~5.5× less memory |
 | 6 | #5 Mesh + collider off-thread | Medium | Removes frame spikes |
 | 7 | #8 Skip empty chunks via height probe | Medium | ~Half the vertical generation |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
