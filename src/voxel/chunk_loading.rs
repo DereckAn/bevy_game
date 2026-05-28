@@ -32,6 +32,13 @@ pub const CHUNK_UNLOAD_RADIUS: i32 = 70;
 /// integrar después, suavizando el frame time.
 pub const MAX_CHUNKS_PER_FRAME: usize = 16;
 
+/// Presupuesto de tiempo (ms) para integrar chunks por frame.
+///
+/// Acota el trabajo síncrono (remallado + collider) por wall-clock en lugar de
+/// por conteo fijo. Como cada chunk cuesta distinto, un límite de tiempo evita
+/// los picos de frame mucho mejor que "N chunks por frame".
+pub const CHUNK_COMPLETION_BUDGET_MS: u64 = 4;
+
 /// Máximo de tareas de generación a COMPLETAR (integrar) por frame.
 ///
 /// Completar implica remallado con vecinos + collider Rapier en el hilo
@@ -165,6 +172,9 @@ pub struct ChunkLoadQueue {
 #[derive(Component)]
 pub struct ChunkGenerationTask {
     pub task: Task<(IVec3, BaseChunk)>,
+    /// Posición del chunk, para ordenar la integración por cercanía al jugador
+    /// SIN tener que pollear la tarea primero.
+    pub chunk_pos: IVec3,
 }
 
 /// Destruye el mundo y reinicia los recursos de chunks.
@@ -363,7 +373,7 @@ pub fn load_chunks_system(
 
                     commands
                         .entity(chunk_entity)
-                        .insert(ChunkGenerationTask { task });
+                        .insert(ChunkGenerationTask { task, chunk_pos });
                 }
 
                 ChunkType::Lod => {
@@ -412,17 +422,42 @@ pub fn complete_chunk_generation_system(
     mut task_query: Query<(Entity, &mut ChunkGenerationTask)>,
     chunk_map: Res<ChunkMap>,
     base_chunks: Query<&BaseChunk>,
+    player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
 ) {
     use crate::voxel::greedy_mesh_basechunk;
 
-    let mut completed_this_frame = 0;
+    // Posición del jugador en chunks: para integrar primero los huecos cercanos.
+    let player_chunk = player_query
+        .single()
+        .map(|t| world_pos_to_chunk_pos(t.translation))
+        .unwrap_or(IVec3::ZERO);
 
-    for (entity, mut task) in task_query.iter_mut() {
-        // Limitar el trabajo síncrono (remallado + collider) por frame
-        if completed_this_frame >= MAX_CHUNK_COMPLETIONS_PER_FRAME {
+    // Ordenar las tareas por cercanía HORIZONTAL al jugador. El orden de
+    // iter() del ECS es arbitrario; sin esto, dentro del presupuesto de tiempo
+    // se podían integrar chunks lejanos antes que los huecos junto al jugador.
+    let mut pending: Vec<(Entity, IVec3)> =
+        task_query.iter().map(|(e, t)| (e, t.chunk_pos)).collect();
+    pending.sort_by_key(|(_, pos)| {
+        let dx = pos.x - player_chunk.x;
+        let dz = pos.z - player_chunk.z;
+        dx * dx + dz * dz
+    });
+
+    let mut completed_this_frame = 0;
+    let start = std::time::Instant::now();
+
+    for (entity, _) in pending {
+        // Cortar por presupuesto de tiempo O por conteo máximo, lo que ocurra primero.
+        if completed_this_frame >= MAX_CHUNK_COMPLETIONS_PER_FRAME
+            || start.elapsed() >= std::time::Duration::from_millis(CHUNK_COMPLETION_BUDGET_MS)
+        {
             break;
         }
+
+        let Ok((_, mut task)) = task_query.get_mut(entity) else {
+            continue;
+        };
 
         if let Some((chunk_pos, base_chunk)) = future::block_on(future::poll_once(&mut task.task)) {
             // Regenerar mesh CON verificación de vecinos para eliminar gaps
@@ -433,16 +468,19 @@ pub fn complete_chunk_generation_system(
 
             // Solo agregar collider si el mesh tiene geometría
             if has_vertices {
+                // Construir el collider PRIMERO (toma &mesh prestado), luego MOVER elmesh
+                // a Assets sin clonar su buffer de vértices.
+                let collider = create_terrain_collider(&mesh);
                 commands
                     .entity(entity)
                     .insert((
-                        Mesh3d(meshes.add(mesh.clone())),
+                        Mesh3d(meshes.add(mesh)),
                         MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                         Transform::default(),
                         base_chunk,
                         ChunkLOD::Ultra,
                         RigidBody::Fixed,
-                        create_terrain_collider(&mesh),
+                        collider,
                     ))
                     .remove::<ChunkGenerationTask>();
             } else {
@@ -597,7 +635,7 @@ pub fn convert_lod_to_real_system(
                 commands.entity(entity).despawn();
 
                 // Crear nueva entidad con la tarea
-                let new_entity = commands.spawn(ChunkGenerationTask { task }).id();
+                let new_entity = commands.spawn(ChunkGenerationTask { task, chunk_pos }).id();
 
                 // Actualizar ChunkMap para que apunte a la nueva entidad
                 chunk_map.chunks.insert(chunk_pos, new_entity);

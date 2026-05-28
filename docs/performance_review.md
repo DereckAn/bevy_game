@@ -90,7 +90,16 @@ So for each distant column the game generates the surface 5 times (binary-search
 
 **Effort**: Low. **Impact**: High (≈half the GPU fragment work, far fewer draw-call state changes).
 
-### 5. Up to 24 full remesh + trimesh collider builds per frame on the main thread 🔴
+### 5. Up to 24 full remesh + trimesh collider builds per frame on the main thread 🔴 — ✅ IMPLEMENTED (June 2026, options 1+3)
+
+**Implemented**: time budget (`CHUNK_COMPLETION_BUDGET_MS = 4`) instead of relying only on the fixed count, so per-frame integration cost is bounded by wall-clock regardless of chunk cost; and removed the `mesh.clone()` by building the collider from a borrow first, then moving the mesh into `Assets`.
+
+**Not done (option 2)**: full off-thread meshing. Deferred — the neighbor-aware mesher needs adjacent chunk voxels (no ECS access from a worker thread), which would require snapshotting neighbor borders at spawn time (worse seams) plus a re-mesh-on-neighbor-arrival system. Larger, bug-prone; revisit if frame time still spikes after the budget.
+
+**Follow-up — nearest-first integration order (June 2026)**: a side effect of the time budget was that, at spawn, near holes lingered while the distant LOD horizon (generated synchronously, no budget) appeared instantly — terrain seemed to fill far→close. Fixed by sorting pending tasks by horizontal squared distance to the player before integrating, so the budget is spent on the *nearest ready* chunks first. Required storing `chunk_pos` on `ChunkGenerationTask` (the position is otherwise only known after polling the task). `complete_chunk_generation_system` now takes a player `Transform` query, snapshots pending tasks via `iter()`, sorts, then re-fetches each with `get_mut` to poll.
+
+Original analysis below.
+
 
 **Problem**: `complete_chunk_generation_system` does the neighbor-aware greedy remesh **and** `Collider::from_bevy_mesh` (TriMesh = BVH construction, expensive) synchronously, up to `MAX_CHUNK_COMPLETIONS_PER_FRAME = 24` times per frame (`chunk_loading.rs:349-400`). This is almost certainly the main source of frame spikes while exploring.
 
@@ -170,7 +179,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | 3 ✅ | #4 Enable backface culling + shared materials | Low | ~2× less GPU fragment work |
 | 4 | #6 Gate transitions on player movement | Low | Removes per-frame full-map scan |
 | 5 ✅ | #3 Drop `densities` array | Medium | ~5.5× less memory |
-| 6 | #5 Mesh + collider off-thread | Medium | Removes frame spikes |
+| 6 ✅ | #5 Mesh + collider time-budget + no-clone (option 2 deferred) | Low | Removes frame spikes |
 | 7 | #8 Skip empty chunks via height probe | Medium | ~Half the vertical generation |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 
