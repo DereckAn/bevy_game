@@ -25,12 +25,12 @@ use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
-    BaseChunk, BoundingBox, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, ChunkOctree,
-    SpatialHashGrid, complete_chunk_generation_system, convert_lod_to_real_system,
-    convert_real_to_lod_system, greedy_mesh_basechunk_simple, load_chunks_system,
-    start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
-    update_chunk_lod_system, update_chunk_transitions_system, update_frustum_culling,
-    update_voxel_breaking_system, VoxelDiffs,
+    BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, SpatialHashGrid,
+    complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
+    greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system, teardown_world,
+    unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
+    update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
+    VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -63,10 +63,6 @@ fn main() {
             chunks: HashMap::new(),
         })
         .insert_resource(ChunkLoadQueue::default())
-        .insert_resource(ChunkOctree::new(BoundingBox::new(
-            IVec3::new(-200, -10, -200),
-            IVec3::new(200, 10, 200),
-        )))
         .insert_resource(SpatialHashGrid::default())
         .init_resource::<VoxelDiffs>()
         .init_resource::<ChunkMaterials>()
@@ -121,7 +117,6 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>, // Recurso mutable para gestionar mallas 3D
     chunk_materials: Res<ChunkMaterials>, // Materiales compartidos de chunks
     mut chunk_map: ResMut<ChunkMap>,
-    mut octree: ResMut<ChunkOctree>,
     world_seed: Res<WorldSeed>,
 ) {
     // ========================================================================
@@ -187,7 +182,6 @@ fn setup(
                 .id();
 
             chunk_map.chunks.insert(chunk_pos, chunk_entity);
-            octree.insert(chunk_pos);
         } else {
             // Chunk vacío, crear sin collider
             let chunk_entity = commands
@@ -201,12 +195,10 @@ fn setup(
                 .id();
 
             chunk_map.chunks.insert(chunk_pos, chunk_entity);
-            octree.insert(chunk_pos);
         }
     }
 
-    let stats = octree.stats();
-    info!("Initial chunks generated! Octree stats: {:?}", stats);
+    info!("Initial chunks generated!");
 
     // ========================================================================
     // ILUMINACIÓN

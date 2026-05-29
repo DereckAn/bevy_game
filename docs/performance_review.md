@@ -135,7 +135,11 @@ Vertical generation (5 Y levels per column) is the documented main bottleneck. O
 
 In plains terrain this eliminates roughly half of the 5 vertical levels.
 
-### 9. `ChunkOctree` is write-only 🟡
+### 9. `ChunkOctree` is write-only 🟡 — ✅ IMPLEMENTED (June 2026)
+
+**Done**: Deleted `octree.rs` entirely (including `BoundingBox`, `OctreeNode`, `OctreeStats`, and its 3 tests) and removed all `octree.insert/remove/rebuild/stats` calls + `ResMut<ChunkOctree>` params from `setup`, `teardown_world`, `complete_chunk_generation_system`, `unload_chunks_system`, and `convert_real_to_lod_system`. Nothing queried it — `ChunkMap` does lookups, `SpatialHashGrid` does radius queries. Pure maintenance cost removed; warnings dropped 37→34.
+
+
 
 It is inserted/removed/rebuilt everywhere, but nothing ever queries it — `ChunkMap` does the lookups and `SpatialHashGrid` does the radius queries. Its maintenance cost (and unused-code noise) buys nothing.
 
@@ -181,6 +185,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | 5 ✅ | #3 Drop `densities` array | Medium | ~5.5× less memory |
 | 6 ✅ | #5 Mesh + collider time-budget + no-clone (option 2 deferred) | Low | Removes frame spikes |
 | 7 | #8 Skip empty chunks via height probe | Medium | ~Half the vertical generation |
+| — ✅ | #9 Remove write-only `ChunkOctree` | Low | Less per-chunk maintenance |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 
 Steps 1-3 are small, low-risk edits with outsized payoff. Verify FPS / frame time after each step (the debug HUD already shows both).

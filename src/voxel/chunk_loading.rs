@@ -8,8 +8,8 @@ use crate::{
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        self, BaseChunk, BoundingBox, ChunkLOD, ChunkMap, ChunkOctree, LodChunk, LodLevel,
-        SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
+        self, BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid,
+        TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -184,7 +184,6 @@ pub struct ChunkGenerationTask {
 pub fn teardown_world(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
-    mut octree: ResMut<ChunkOctree>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     chunks: Query<Entity, Or<(With<BaseChunk>, With<LodChunk>, With<ChunkGenerationTask>)>>,
@@ -204,10 +203,6 @@ pub fn teardown_world(
     voxel_diffs.chunks.clear();
     spatial_hash.clear();
     *load_queue = ChunkLoadQueue::default();
-    *octree = ChunkOctree::new(BoundingBox::new(
-        IVec3::new(-200, -10, -200),
-        IVec3::new(200, 10, 200),
-    ));
 }
 
 /// Sistema que detecta cuando el jugador se mueve y actualiza la cola de carga
@@ -417,7 +412,6 @@ pub fn complete_chunk_generation_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_materials: Res<ChunkMaterials>,
-    mut octree: ResMut<ChunkOctree>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut task_query: Query<(Entity, &mut ChunkGenerationTask)>,
     chunk_map: Res<ChunkMap>,
@@ -497,7 +491,6 @@ pub fn complete_chunk_generation_system(
                     .remove::<ChunkGenerationTask>();
             }
 
-            octree.insert(chunk_pos);
             load_queue.total_loaded += 1;
             completed_this_frame += 1;
         }
@@ -519,7 +512,6 @@ pub fn complete_chunk_generation_system(
 pub fn unload_chunks_system(
     mut commands: Commands,
     mut chunk_map: ResMut<ChunkMap>,
-    mut octree: ResMut<ChunkOctree>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
 ) {
@@ -535,7 +527,6 @@ pub fn unload_chunks_system(
             // Si no, el chunk_map conserva una key fantasma y load_chunks_system
             // nunca vuelve a cargar esa posición (hueco permanente).
             chunk_map.chunks.remove(&chunk_pos);
-            octree.remove(chunk_pos);
             spatial_hash.remove(chunk_pos);
             commands.entity(entity).despawn();
         }
@@ -654,7 +645,6 @@ pub fn convert_real_to_lod_system(
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_materials: Res<ChunkMaterials>,
     mut chunk_map: ResMut<ChunkMap>,
-    mut octree: ResMut<ChunkOctree>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     world_seed: Res<WorldSeed>,
 ) {
@@ -675,7 +665,6 @@ pub fn convert_real_to_lod_system(
                 if chunk_pos.y != 0 {
                     commands.entity(entity).despawn();
                     chunk_map.chunks.remove(&chunk_pos);
-                    octree.remove(chunk_pos);
                     spatial_hash.remove(chunk_pos);
                     continue;
                 }
