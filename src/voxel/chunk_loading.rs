@@ -4,7 +4,7 @@
 //! Incluye caché persistente en disco
 
 use crate::{
-    core::{BASE_CHUNK_SIZE, WORLD_CHUNK_RADIUS, WorldSeed},
+    core::{BASE_CHUNK_SIZE, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed},
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
@@ -168,6 +168,12 @@ pub struct ChunkLoadQueue {
     pub last_log_time: f32,
 }
 
+/// Marcador para posiciones de chunk que son enteramente aire (por encima del
+/// terreno). Ocupa lugar en `ChunkMap` para no re-evaluarlas, sin almacenar
+/// voxels, mesh ni collider.
+#[derive(Component)]
+pub struct EmptyChunk;
+
 /// Componente para chunks que están siendo generados asíncronamente
 #[derive(Component)]
 pub struct ChunkGenerationTask {
@@ -186,7 +192,15 @@ pub fn teardown_world(
     mut chunk_map: ResMut<ChunkMap>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
-    chunks: Query<Entity, Or<(With<BaseChunk>, With<LodChunk>, With<ChunkGenerationTask>)>>,
+    chunks: Query<
+        Entity,
+        Or<(
+            With<BaseChunk>,
+            With<LodChunk>,
+            With<ChunkGenerationTask>,
+            With<EmptyChunk>,
+        )>,
+    >,
     lights: Query<Entity, With<DirectionalLight>>,
     mut voxel_diffs: ResMut<VoxelDiffs>,
 ) {
@@ -333,6 +347,9 @@ pub fn load_chunks_system(
     let thread_pool = AsyncComputeTaskPool::get();
     let seed = world_seed.0;
 
+    // Generador reutilizado para sondear la altura del terreno (saltar chunks de aire)
+    let mut terrain_gen = TerrainGenerator::new(seed);
+
     // Iniciar generación de hasta MAX_CHUNKS_PER_FRAME chunks por frame
     let chunks_to_load = load_queue.to_load.len().min(MAX_CHUNKS_PER_FRAME);
 
@@ -353,6 +370,17 @@ pub fn load_chunks_system(
             // Genera chunk segun tipo
             match chunk_type {
                 ChunkType::Real => {
+                    // Saltar chunks enteramente por encima del terreno: son puro
+                    // aire, sin geometría ni colisión. Se marcan con EmptyChunk
+                    // (siguen en ChunkMap, así no se vuelven a evaluar). NO se
+                    // saltan si el jugador los modificó (tienen diffs).
+                    if !voxel_diffs.chunks.contains_key(&chunk_pos)
+                        && chunk_is_above_terrain(chunk_pos, &mut terrain_gen)
+                    {
+                        commands.entity(chunk_entity).insert(EmptyChunk);
+                        continue;
+                    }
+
                     // Copia los diffs de ESTE chunk antes de lanzar la tarea
                     let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
 
@@ -531,6 +559,40 @@ pub fn unload_chunks_system(
             commands.entity(entity).despawn();
         }
     }
+}
+
+/// ¿El chunk está enteramente por ENCIMA del terreno (puro aire)?
+///
+/// Como la densidad es `altura(x,z) - y` (monótona en Y), un chunk es todo aire
+/// si la altura MÁXIMA del terreno sobre su huella XZ queda por debajo del fondo
+/// del chunk. Muestrea una rejilla 5×5 (la frecuencia del ruido hace innecesario
+/// muestrear más fino sobre 3.2 m) y añade un margen para no saltar un chunk que
+/// apenas roce el terreno.
+fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator) -> bool {
+    // Y mundial del fondo del chunk (metros)
+    let chunk_bottom_y = chunk_pos.y as f32 * BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+
+    // Margen de seguridad (~5 voxels) contra picos entre muestras
+    let margin = 0.5;
+
+    let step = BASE_CHUNK_SIZE / 4; // 0, 8, 16, 24, 32 → 5 muestras por eje
+    let mut max_height = f32::MIN;
+    let mut sx = 0;
+    while sx <= BASE_CHUNK_SIZE {
+        let mut sz = 0;
+        while sz <= BASE_CHUNK_SIZE {
+            let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + sx as i32) as f32 * VOXEL_SIZE;
+            let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + sz as i32) as f32 * VOXEL_SIZE;
+            let h = terrain_gen.biome_gen.generate_height(world_x, world_z);
+            if h > max_height {
+                max_height = h;
+            }
+            sz += step;
+        }
+        sx += step;
+    }
+
+    max_height + margin < chunk_bottom_y
 }
 
 /// Convierte posición mundial a posición de chunk

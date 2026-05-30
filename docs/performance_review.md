@@ -126,7 +126,13 @@ With 3.2 m chunks the player crosses a boundary every few seconds. Each crossing
 
 **Fix**: Work per-XZ-column (2D set, 5× smaller) and expand Y at dispatch time; or compute the diff incrementally (moving one chunk only changes a thin ring of positions).
 
-### 8. Skip predictably-empty chunks using the heightmap 🟡
+### 8. Skip predictably-empty chunks using the heightmap 🟡 — ✅ IMPLEMENTED (June 2026, all-air case)
+
+**Done**: Before generating a Real chunk, `load_chunks_system` probes the terrain via `chunk_is_above_terrain` — samples a 5×5 grid of `generate_height` over the chunk's XZ footprint, takes the max + 0.5 m margin, and if that's below the chunk's bottom Y, the chunk is entirely air. Such chunks get a zero-size `EmptyChunk` marker (kept in `ChunkMap` so they aren't re-evaluated, cleaned up by unload/teardown like any chunk) instead of a generated `BaseChunk` + mesh + collider. Skipped when the chunk has diffs (future-proofing; today an all-air chunk can't have any). In plains this removes ~3 of the 5 vertical levels.
+
+**Not done (buried case)**: skipping mesh/collider for fully-buried solid chunks while keeping their voxel data — deferred (player can dig into them, so the data must exist; more complex).
+
+
 
 Vertical generation (5 Y levels per column) is the documented main bottleneck. One cheap `generate_height` probe per column corner gives the column's height range **before** dispatching tasks:
 
@@ -168,7 +174,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 
 - **`raycast_voxel`** re-derives the chunk via `world_to_voxel` plus a HashMap+Query lookup at *every* DDA step (`destruction.rs:198-225`). Caching the current chunk while the ray stays inside it removes ~90% of lookups.
 - **Greedy mesher** allocates a fresh mask `Vec` per slice — 192 allocations per chunk. Reuse one buffer (easy once meshing moves off-thread).
-- **Release profile**: add `[profile.release] lto = "thin"` (optionally `codegen-units = 1`) — typically 5-15% runtime gain in math-heavy code.
+- **Release profile**: ✅ IMPLEMENTED (June 2026) — added `[profile.release]` with `lto = "thin"` and `codegen-units = 1`. ~5-15% runtime gain in math-heavy code; tradeoff is longer release compile time.
 - **Dependencies**: the `noise` crate appears unused (`fastnoise-lite` is what's used) — compile-time cost only. Check whether `bevy-inspector-egui` ships in release builds.
 - **Shadows**: a directional light with shadows over tens of thousands of small meshes re-renders much of the scene into shadow cascades. Once draw calls drop (finding #4), consider limiting shadow distance — distant LOD terrain doesn't need to cast shadows.
 
@@ -186,6 +192,8 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | 6 ✅ | #5 Mesh + collider time-budget + no-clone (option 2 deferred) | Low | Removes frame spikes |
 | 7 | #8 Skip empty chunks via height probe | Medium | ~Half the vertical generation |
 | — ✅ | #9 Remove write-only `ChunkOctree` | Low | Less per-chunk maintenance |
+| 7 ✅ | #8 Skip all-air chunks via height probe | Medium | ~Half the vertical generation in plains |
+| — ✅ | Release LTO (`lto="thin"`, `codegen-units=1`) | Trivial | ~5-15% runtime |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 
 Steps 1-3 are small, low-risk edits with outsized payoff. Verify FPS / frame time after each step (the debug HUD already shows both).
