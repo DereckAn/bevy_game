@@ -120,7 +120,11 @@ It iterates all loaded chunks (potentially tens of thousands) with a `sqrt` per 
 
 **Fix**: Gate on player-chunk change (like the load queue already does) and compare squared distances against squared thresholds. The same `sqrt`-avoidance applies in several other spots.
 
-### 7. Chunk-boundary hitch in `update_chunk_load_queue` 🟡
+### 7. Chunk-boundary hitch in `update_chunk_load_queue` 🟡 — ✅ IMPLEMENTED (June 2026)
+
+**Done**: Removed the ~64,000-entry `chunks_needed: HashSet<IVec3>` entirely. It existed to dedup, but the circle-generation triple loop visits each `(cx,cy,cz)` exactly once — no duplicates — so it was pure overhead (64k allocs/hashes + a second 64k iteration). Merged into one pass: generate each position, check `chunk_map.contains_key` inline, push only the missing ones to `to_load_vec`. The unload keep-set rebuild was left as-is (iterates the loaded set, ~thousands — comparatively minor).
+
+
 
 With 3.2 m chunks the player crosses a boundary every few seconds. Each crossing builds a ~64,000-entry `HashSet<IVec3>`, diffs it against the map, sorts, and rebuilds the keep-set (`chunk_loading.rs:153-235`).
 
@@ -193,6 +197,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | 7 | #8 Skip empty chunks via height probe | Medium | ~Half the vertical generation |
 | — ✅ | #9 Remove write-only `ChunkOctree` | Low | Less per-chunk maintenance |
 | 7 ✅ | #8 Skip all-air chunks via height probe | Medium | ~Half the vertical generation in plains |
+| — ✅ | #7 Drop redundant 64k HashSet in load queue | Low | Removes per-boundary hitch |
 | — ✅ | Release LTO (`lto="thin"`, `codegen-units=1`) | Trivial | ~5-15% runtime |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 

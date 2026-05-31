@@ -240,17 +240,16 @@ pub fn update_chunk_load_queue(
 
     load_queue.last_player_chunk = player_chunk;
 
-    // Determinar qué chunks deberían estar cargados (incluyendo verticales)
-    // OPTIMIZACIÓN: Usar algoritmo eficiente para generar círculo
-    let mut chunks_needed: HashSet<IVec3> = HashSet::new();
-
     // Rango vertical reducido: desde -1 hasta +3 chunks (mejor rendimiento)
     let y_min = -1;
     let y_max = 3;
 
-    // OPTIMIZACIÓN: Generar círculo de chunks de manera eficiente
-    // En lugar de iterar cuadrado completo, solo generar puntos dentro del círculo
+    // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
+    // El triple bucle visita cada (cx,cy,cz) exactamente una vez, así que no hay
+    // duplicados que deduplicar: el viejo HashSet de ~64k entradas era puro coste.
+    // Comprobamos chunk_map en el momento y empujamos solo lo que falta cargar.
     let radius_sq = CHUNK_LOAD_RADIUS * CHUNK_LOAD_RADIUS;
+    let mut to_load_vec: Vec<(IVec3, ChunkType)> = Vec::new();
 
     for cy in y_min..=y_max {
         // Usar simetría del círculo para reducir cálculos
@@ -273,31 +272,25 @@ pub fn update_chunk_load_queue(
                 {
                     continue;
                 }
-                chunks_needed.insert(chunk_pos);
+
+                // Solo encolar lo que aún no está cargado
+                if chunk_map.chunks.contains_key(&chunk_pos) {
+                    continue;
+                }
+
+                // Distancia horizontal al jugador = (cx, cz) directamente
+                let distance_chunks = ((x_sq + cz * cz) as f32).sqrt() as i32;
+                let chunk_type = ChunkType::from_distance(distance_chunks);
+
+                // Los LOD son heightmaps con alturas ABSOLUTAS (ignoran position.y):
+                // un solo chunk en y=0 representa la columna entera. Cargar los
+                // demás niveles Y produciría 5 meshes idénticos apilados.
+                if chunk_type == ChunkType::Lod && chunk_pos.y != 0 {
+                    continue;
+                }
+
+                to_load_vec.push((chunk_pos, chunk_type));
             }
-        }
-    }
-
-    // Encontrar chunks que necesitan ser cargados
-    let mut to_load_vec: Vec<(IVec3, ChunkType)> = Vec::new();
-    for chunk_pos in &chunks_needed {
-        if !chunk_map.chunks.contains_key(chunk_pos) {
-            // Calcular distancia al jugador (solo horizontal x, z)
-            let dx = chunk_pos.x - player_chunk.x;
-            let dz = chunk_pos.z - player_chunk.z;
-            let distance_chunks = ((dx * dx + dz * dz) as f32).sqrt() as i32;
-
-            // Determinar tipo de chunk segun distancia
-            let chunk_type = ChunkType::from_distance(distance_chunks);
-
-            // Los LOD son heightmaps con alturas ABSOLUTAS (ignoran position.y):
-            // un solo chunk en y=0 representa la columna entera. Cargar los
-            // demás niveles Y produciría 5 meshes idénticos apilados.
-            if chunk_type == ChunkType::Lod && chunk_pos.y != 0 {
-                continue;
-            }
-
-            to_load_vec.push((*chunk_pos, chunk_type));
         }
     }
 
