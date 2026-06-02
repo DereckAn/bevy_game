@@ -14,7 +14,7 @@ pub use bevy_rapier3d::prelude::{Collider, RigidBody};
 // Re-exportar nuestras funciones personalizadas
 pub use rapier_integration::{
     collect_rapier_drops_system, create_chunk_collider, spawn_rapier_voxel_drop,
-    update_rapier_drops_system,
+    update_rapier_drops_system, DropAssets,
 };
 
 /// Plugin de física que configura Rapier para el juego de voxels
@@ -26,6 +26,8 @@ impl Plugin for PhysicsPlugin {
             // Agregar Rapier plugin con configuración básica
             .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
             // .add_plugins(RapierDebugRenderPlugin::default()) // Para debug visual
+            // Assets compartidos de los drops (mesh + materiales), creados una vez
+            .init_resource::<DropAssets>()
             // Agregar sistemas de drops
             .add_systems(
                 Update,

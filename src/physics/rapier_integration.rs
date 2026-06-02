@@ -4,6 +4,57 @@ use crate::{core::constants::VOXEL_SIZE, voxel::VoxelType};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+/// Assets compartidos por todos los voxel drops.
+///
+/// El cubo es idéntico para cada drop y el material solo depende del tipo de
+/// voxel (7 tipos). Crearlos una vez y clonar los handles evita asignar un
+/// `Mesh` + `StandardMaterial` nuevos por cada drop spawneado.
+#[derive(Resource)]
+pub struct DropAssets {
+    mesh: Handle<Mesh>,
+    /// Indexado por `VoxelType as usize` (Air, Dirt, Stone, Wood, Metal, Grass, Sand)
+    materials: [Handle<StandardMaterial>; 7],
+}
+
+impl FromWorld for DropAssets {
+    fn from_world(world: &mut World) -> Self {
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(Cuboid::new(
+            VOXEL_SIZE * 0.8,
+            VOXEL_SIZE * 0.8,
+            VOXEL_SIZE * 0.8,
+        ));
+
+        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+        let mut make = |vt: VoxelType| {
+            materials.add(StandardMaterial {
+                base_color: vt.properties().color,
+                metallic: 0.1,
+                perceptual_roughness: 0.8,
+                ..default()
+            })
+        };
+
+        // Orden = valores del enum (repr u8): Air=0 .. Sand=6
+        let materials = [
+            make(VoxelType::Air),
+            make(VoxelType::Dirt),
+            make(VoxelType::Stone),
+            make(VoxelType::Wood),
+            make(VoxelType::Metal),
+            make(VoxelType::Grass),
+            make(VoxelType::Sand),
+        ];
+
+        Self { mesh, materials }
+    }
+}
+
+impl DropAssets {
+    fn material(&self, voxel_type: VoxelType) -> Handle<StandardMaterial> {
+        self.materials[voxel_type as usize].clone()
+    }
+}
+
 /// Component for voxel drops with Rapier physics
 #[derive(Component, Debug)]
 pub struct RapierVoxelDrop {
@@ -31,8 +82,7 @@ impl RapierVoxelDrop {
 /// Spawns a voxel drop with real Rapier physics
 pub fn spawn_rapier_voxel_drop(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
+    drop_assets: &DropAssets,
     voxel_type: VoxelType,
     quantity: u32,
     world_position: Vec3,
@@ -40,18 +90,9 @@ pub fn spawn_rapier_voxel_drop(
 ) {
     let properties = voxel_type.properties();
 
-    // Create visual representation
-    let cube_mesh = meshes.add(Cuboid::new(
-        VOXEL_SIZE * 0.8,
-        VOXEL_SIZE * 0.8,
-        VOXEL_SIZE * 0.8,
-    ));
-    let material = materials.add(StandardMaterial {
-        base_color: properties.color,
-        metallic: 0.1,
-        perceptual_roughness: 0.8,
-        ..default()
-    });
+    // Handles compartidos (sin asignar mesh/material nuevos por drop)
+    let cube_mesh = drop_assets.mesh.clone();
+    let material = drop_assets.material(voxel_type);
 
     // ARREGLO: Spawnar drops siempre arriba del voxel destruido
     let spawn_position = Vec3::new(
@@ -92,8 +133,6 @@ pub fn spawn_rapier_voxel_drop(
                 (rand::random::<f32>() - 0.5) * 1.0,
             ),
         },
-        // Prevent sleeping for small objects
-        Sleeping::disabled(),
         // Collision groups for optimization
         CollisionGroups::new(Group::GROUP_1, Group::ALL),
     ));

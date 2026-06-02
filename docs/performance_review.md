@@ -161,7 +161,11 @@ It generates ~400 chunks synchronously — terrain gen + mesh + trimesh collider
 
 **Fix**: Smaller initial radius (the player only needs the chunks under their feet) and let the async loader fill in the rest; or a brief loading state.
 
-### 11. Voxel drops are pricier than they look 🟡
+### 11. Voxel drops are pricier than they look 🟡 — ✅ IMPLEMENTED (June 2026)
+
+**Done**: New `DropAssets` resource (`FromWorld`, registered in `PhysicsPlugin`) holds one shared cube `Handle<Mesh>` and one `Handle<StandardMaterial>` per `VoxelType` (indexed by `voxel_type as usize`). `spawn_rapier_voxel_drop` now takes `&DropAssets` and clones handles instead of calling `meshes.add`/`materials.add` per drop. Also removed `Sleeping::disabled()` so resting drops sleep (no solver cost for their 60 s lifetime). Caller `update_voxel_breaking_system` dropped its now-unused `materials` param.
+
+
 
 - Each drop allocates a brand-new identical cube `Mesh` and `StandardMaterial` (`rapier_integration.rs:44-54`) → cache one handle of each.
 - `Sleeping::disabled()` (`rapier_integration.rs:96`) keeps every drop active in the physics solver for its full 60-second lifetime → let them sleep.
@@ -179,7 +183,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 - **`raycast_voxel`** re-derives the chunk via `world_to_voxel` plus a HashMap+Query lookup at *every* DDA step (`destruction.rs:198-225`). Caching the current chunk while the ray stays inside it removes ~90% of lookups.
 - **Greedy mesher** allocates a fresh mask `Vec` per slice — 192 allocations per chunk. Reuse one buffer (easy once meshing moves off-thread).
 - **Release profile**: ✅ IMPLEMENTED (June 2026) — added `[profile.release]` with `lto = "thin"` and `codegen-units = 1`. ~5-15% runtime gain in math-heavy code; tradeoff is longer release compile time.
-- **Dependencies**: the `noise` crate appears unused (`fastnoise-lite` is what's used) — compile-time cost only. Check whether `bevy-inspector-egui` ships in release builds.
+- **Dependencies**: ✅ removed the unused `noise` crate (June 2026) — confirmed zero references (`fastnoise-lite` is what's used); drops it and its transitive deps from the build graph for faster compiles. Still TODO: check whether `bevy-inspector-egui` ships in release builds.
 - **Shadows**: a directional light with shadows over tens of thousands of small meshes re-renders much of the scene into shadow cascades. Once draw calls drop (finding #4), consider limiting shadow distance — distant LOD terrain doesn't need to cast shadows.
 
 ---
@@ -198,6 +202,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | — ✅ | #9 Remove write-only `ChunkOctree` | Low | Less per-chunk maintenance |
 | 7 ✅ | #8 Skip all-air chunks via height probe | Medium | ~Half the vertical generation in plains |
 | — ✅ | #7 Drop redundant 64k HashSet in load queue | Low | Removes per-boundary hitch |
+| — ✅ | #11 Cache drop mesh/material + let drops sleep | Low | Less alloc + solver cost per drop |
 | — ✅ | Release LTO (`lto="thin"`, `codegen-units=1`) | Trivial | ~5-15% runtime |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 

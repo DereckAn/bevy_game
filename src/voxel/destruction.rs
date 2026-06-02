@@ -9,7 +9,7 @@ use super::{
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::{
-    physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider},
+    physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider, DropAssets},
     player::components::Player,
 };
 use bevy::ecs::system::ParamSet;
@@ -358,9 +358,9 @@ pub fn update_voxel_breaking_system(
     mut commands: Commands,
     mut player_query: Query<&mut Tool, With<Player>>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut mesh_query: Query<&mut Mesh3d>,
     mut voxel_diffs: ResMut<VoxelDiffs>,
+    drop_assets: Res<DropAssets>,
 ) {
     for (entity, mut breaking) in breaking_query.iter_mut() {
         // Actualizar preogreso basado en tiempo
@@ -421,8 +421,7 @@ pub fn update_voxel_breaking_system(
                                 if drops > 0 {
                                     spawn_rapier_voxel_drop(
                                         &mut commands,
-                                        &mut meshes,
-                                        &mut materials,
+                                        &drop_assets,
                                         voxel_type,
                                         drops,
                                         Vec3::new(
