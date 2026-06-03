@@ -12,7 +12,6 @@ use crate::{
     physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider, DropAssets},
     player::components::Player,
 };
-use bevy::ecs::system::ParamSet;
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -40,6 +39,11 @@ pub struct VoxelBreaking {
 pub struct ChunkMap {
     pub chunks: HashMap<IVec3, Entity>,
 }
+
+/// Marca un chunk cuyo mesh/collider quedó obsoleto tras romper voxels.
+/// `remesh_dirty_chunks_system` lo regenera con presupuesto de tiempo.
+#[derive(Component)]
+pub struct DirtyChunk;
 
 /// Vocels modificados por el jugador, agrupados por chunk
 ///
@@ -353,12 +357,10 @@ pub fn start_voxel_breaking_system(
 pub fn update_voxel_breaking_system(
     time: Res<Time>,
     mut breaking_query: Query<(Entity, &mut VoxelBreaking)>,
-    mut chunk_queries: ParamSet<(Query<&mut BaseChunk>, Query<&BaseChunk>)>,
+    mut chunks: Query<&mut BaseChunk>,
     chunk_map: Res<ChunkMap>,
     mut commands: Commands,
     mut player_query: Query<&mut Tool, With<Player>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut mesh_query: Query<&mut Mesh3d>,
     mut voxel_diffs: ResMut<VoxelDiffs>,
     drop_assets: Res<DropAssets>,
 ) {
@@ -371,9 +373,7 @@ pub fn update_voxel_breaking_system(
             // Obtener el chunk
             if let Some(&chunk_entity) = chunk_map.chunks.get(&breaking.chunk_pos) {
                 // Primero modificar el chunk
-                let broken_voxel_type = if let Ok(mut chunk) =
-                    chunk_queries.p0().get_mut(chunk_entity)
-                {
+                let broken_voxel_type = if let Ok(mut chunk) = chunks.get_mut(chunk_entity) {
                     // Obtener herramienta para el patron de destruccion
                     let tool_type = player_query
                         .single()
@@ -450,27 +450,12 @@ pub fn update_voxel_breaking_system(
                     None
                 };
 
-                // Luego regenerar el mesh (después de liberar el borrow mutable)
+                // Marcar el chunk como sucio (tras liberar el borrow mutable).
                 if let Some(_) = broken_voxel_type {
-                    // Usar el query inmutable para generar el mesh con greedy meshing
-                    let chunks_read = chunk_queries.p1();
-                    if let Ok(chunk) = chunks_read.get(chunk_entity) {
-                        // Generar nuevo mesh con greedy meshing y neighbors
-                        let new_mesh = greedy_mesh_basechunk(chunk, &chunk_map, &chunks_read);
-
-                        // Actualizar collider con la nueva geometría
-                        if new_mesh.count_vertices() > 0 {
-                            commands
-                                .entity(chunk_entity)
-                                .insert(create_terrain_collider(&new_mesh));
-                        } else {
-                            commands.entity(chunk_entity).remove::<Collider>();
-                        }
-
-                        if let Ok(mut mesh3d) = mesh_query.get_mut(chunk_entity) {
-                            *mesh3d = Mesh3d(meshes.add(new_mesh));
-                        }
-                    }
+                    // `remesh_dirty_chunks_system` lo remalla con presupuesto de
+                    // tiempo: coalesce varias roturas y saca el remallado +
+                    // collider (caro) del sistema de input.
+                    commands.entity(chunk_entity).insert(DirtyChunk);
 
                     // Danar herramienta del jugador
                     if let Ok(mut tool) = player_query.single_mut() {
@@ -490,5 +475,53 @@ pub fn update_voxel_breaking_system(
             // Eliminar el componente de destruccion
             commands.entity(entity).despawn();
         }
+    }
+}
+
+/// Presupuesto de remallado por destrucción (ms/frame).
+const DIRTY_REMESH_BUDGET_MS: u64 = 4;
+
+/// Remalla los chunks marcados como `DirtyChunk` tras romper voxels.
+///
+/// Saca el remallado + collider (caro) del sistema de input y lo acota por
+/// tiempo: varias roturas en el mismo chunk/frame se coalescen en un remallado,
+/// y las ráfagas (herramientas rápidas, patrones) no causan un pico de frame.
+pub fn remesh_dirty_chunks_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    dirty: Query<Entity, With<DirtyChunk>>,
+    chunks: Query<&BaseChunk>,
+    chunk_map: Res<ChunkMap>,
+    mut mesh_query: Query<&mut Mesh3d>,
+) {
+    let start = std::time::Instant::now();
+
+    for entity in dirty.iter() {
+        if start.elapsed() >= std::time::Duration::from_millis(DIRTY_REMESH_BUDGET_MS) {
+            break; // El resto conserva DirtyChunk y se remalla en frames siguientes
+        }
+
+        // Si ya no es un BaseChunk (despawneado / convertido a LOD), quitar marca
+        let Ok(chunk) = chunks.get(entity) else {
+            commands.entity(entity).remove::<DirtyChunk>();
+            continue;
+        };
+
+        // Remesh con vecinos para eliminar seams
+        let new_mesh = greedy_mesh_basechunk(chunk, &chunk_map, &chunks);
+
+        if new_mesh.count_vertices() > 0 {
+            commands
+                .entity(entity)
+                .insert(create_terrain_collider(&new_mesh));
+        } else {
+            commands.entity(entity).remove::<Collider>();
+        }
+
+        if let Ok(mut mesh3d) = mesh_query.get_mut(entity) {
+            *mesh3d = Mesh3d(meshes.add(new_mesh));
+        }
+
+        commands.entity(entity).remove::<DirtyChunk>();
     }
 }

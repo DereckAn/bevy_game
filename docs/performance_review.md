@@ -170,7 +170,13 @@ It generates ~400 chunks synchronously — terrain gen + mesh + trimesh collider
 - Each drop allocates a brand-new identical cube `Mesh` and `StandardMaterial` (`rapier_integration.rs:44-54`) → cache one handle of each.
 - `Sleeping::disabled()` (`rapier_integration.rs:96`) keeps every drop active in the physics solver for its full 60-second lifetime → let them sleep.
 
-### 12. Destruction remeshes the whole chunk per broken voxel 🟡
+### 12. Destruction remeshes the whole chunk per broken voxel 🟡 — ✅ IMPLEMENTED (June 2026, dirty-flag + budget)
+
+**Done**: Breaking no longer remeshes inline in the input system. `update_voxel_breaking_system` now just modifies voxels, records the diff, spawns drops, and tags the chunk with a `DirtyChunk` marker (its signature lost the `ParamSet`/`meshes`/`mesh_query` — simplified to one `Query<&mut BaseChunk>`). A new `remesh_dirty_chunks_system` (registered right after it in the Update chain) regenerates mesh + TriMesh collider for dirty chunks under a 4 ms/frame budget (`DIRTY_REMESH_BUDGET_MS`), removing the marker when done. This coalesces multiple breaks on the same chunk/frame into one remesh and bounds bursts (fast tools, multi-voxel patterns) so they can't spike a frame.
+
+**Not done**: single-dig remesh cost is unchanged (still a full-chunk greedy mesh + collider BVH, just relocated + bounded). Eliminating that needs off-thread meshing (deferred #5 option 2) or partial/region remeshing.
+
+
 
 Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fine occasionally, but fast tools / multi-voxel patterns will spike. The same "mesh off-thread" machinery from finding #5 would cover this.
 
@@ -203,6 +209,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | 7 ✅ | #8 Skip all-air chunks via height probe | Medium | ~Half the vertical generation in plains |
 | — ✅ | #7 Drop redundant 64k HashSet in load queue | Low | Removes per-boundary hitch |
 | — ✅ | #11 Cache drop mesh/material + let drops sleep | Low | Less alloc + solver cost per drop |
+| — ✅ | #12 Dirty-flag + budgeted destruction remesh | Medium | Bounds dig bursts, off input path |
 | — ✅ | Release LTO (`lto="thin"`, `codegen-units=1`) | Trivial | ~5-15% runtime |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 

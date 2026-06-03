@@ -27,10 +27,10 @@ use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use voxel::{
     BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, SpatialHashGrid,
     complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
-    greedy_mesh_basechunk_simple, load_chunks_system, start_voxel_breaking_system, teardown_world,
-    unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
-    update_chunk_transitions_system, update_frustum_culling, update_voxel_breaking_system,
-    VoxelDiffs,
+    greedy_mesh_basechunk_simple, load_chunks_system, remesh_dirty_chunks_system,
+    start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
+    update_chunk_lod_system, update_chunk_transitions_system, update_frustum_culling,
+    update_voxel_breaking_system, VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -81,6 +81,7 @@ fn main() {
             (
                 start_voxel_breaking_system,
                 update_voxel_breaking_system,
+                remesh_dirty_chunks_system,
                 update_chunk_lod_system,
                 // Sistemas de carga dinámica de chunks (async)
                 update_chunk_load_queue,
