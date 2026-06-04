@@ -15,6 +15,23 @@ use bevy::mesh::Indices;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 
+/// Color verde del suelo, variado suavemente según la posición mundial (X,Z).
+///
+/// Combina varias sinusoides de baja frecuencia (longitudes de onda de ~10-25 m)
+/// para crear parches de verde claro/oscuro a lo largo del terreno, en vez de un
+/// verde plano. Se evalúa por vértice durante el meshing.
+fn surface_green(world_x: f32, world_z: f32) -> [f32; 4] {
+    let n =
+        (world_x * 0.6).sin() + (world_z * 0.45).cos() + (world_x * 0.27 + world_z * 0.31).sin();
+    let t = (n / 3.0) * 0.5 + 0.5; // normalizar a [0, 1]
+
+    // Mezcla entre un verde oscuro (bosque) y uno claro (pasto)
+    let r = 0.20 + (0.40 - 0.20) * t;
+    let g = 0.45 + (0.78 - 0.45) * t;
+    let b = 0.15 + (0.30 - 0.15) * t;
+    [r, g, b, 1.0]
+}
+
 /// Genera mesh optimizado usando greedy meshing (versión simple sin vecinos)
 ///
 /// Usado durante inicialización cuando no todos los chunks están cargados.
@@ -22,6 +39,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
 
     // Procesar cada eje (X, Y, Z) para greedy meshing
     for axis in 0..3 {
@@ -37,6 +55,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
                 &mut positions,
                 &mut normals,
                 &mut indices,
+                &mut colors,
             );
 
             // Dirección negativa
@@ -50,6 +69,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
                 &mut positions,
                 &mut normals,
                 &mut indices,
+                &mut colors,
             );
         }
     }
@@ -58,6 +78,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -129,6 +150,7 @@ pub fn greedy_mesh_basechunk(
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
 
     // Procesar cada eje (X, Y, Z) para greedy meshing
     for axis in 0..3 {
@@ -144,6 +166,7 @@ pub fn greedy_mesh_basechunk(
                 &mut positions,
                 &mut normals,
                 &mut indices,
+                &mut colors,
             );
 
             // Dirección negativa
@@ -157,6 +180,7 @@ pub fn greedy_mesh_basechunk(
                 &mut positions,
                 &mut normals,
                 &mut indices,
+                &mut colors,
             );
         }
     }
@@ -165,6 +189,7 @@ pub fn greedy_mesh_basechunk(
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -240,6 +265,7 @@ fn greedy_mesh_slice(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
+    colors: &mut Vec<[f32; 4]>,
 ) {
     let mut processed = vec![false; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
 
@@ -258,7 +284,7 @@ fn greedy_mesh_slice(
 
             // Generar quad
             add_greedy_quad(
-                chunk, axis, d, i, j, width, height, direction, positions, normals, indices,
+                chunk, axis, d, i, j, width, height, direction, positions, normals, indices, colors,
             );
         }
     }
@@ -318,6 +344,7 @@ fn add_greedy_quad(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
+    colors: &mut Vec<[f32; 4]>,
 ) {
     let u = (axis + 1) % 3;
     let v = (axis + 2) % 3;
@@ -358,6 +385,14 @@ fn add_greedy_quad(
     positions.push(v1);
     positions.push(v2);
     positions.push(v3);
+
+    // Color por vértice: verde variado según la posición mundial (X,Z), para que
+    // el suelo no sea un verde plano. El material del chunk es blanco, así que el
+    // color renderizado = este vertex color.
+    colors.push(surface_green(v0[0], v0[2]));
+    colors.push(surface_green(v1[0], v1[2]));
+    colors.push(surface_green(v2[0], v2[2]));
+    colors.push(surface_green(v3[0], v3[2]));
 
     // Normal según dirección
     let mut normal = [0.0; 3];

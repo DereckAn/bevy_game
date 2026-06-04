@@ -155,7 +155,13 @@ It is inserted/removed/rebuilt everywhere, but nothing ever queries it — `Chun
 
 **Fix**: Remove it, or wire it into something real.
 
-### 10. `setup` freezes the app on Play 🟡
+### 10. `setup` freezes the app on Play 🟡 — ✅ IMPLEMENTED (June 2026)
+
+**Done**: Reduced `setup`'s synchronous `initial_radius` from 5 (~390 chunks) to 2 (~65 chunks). The player spawns at y=20 and free-falls, so only a small patch of ground under spawn must exist instantly; the async loader fills the rest (nearest-first, per the #5 follow-up). Safe because the player's spawn chunk (y=6) ≠ `last_player_chunk` default (0,0,0), so `update_chunk_load_queue` queues on frame 1 — async fill starts immediately, no sentinel needed. ~6× less work on the Play button.
+
+**Note**: could shrink further or apply the #8 air-skip in `setup` too, but radius 2 already removes the perceptible freeze.
+
+
 
 It generates ~400 chunks synchronously — terrain gen + mesh + trimesh collider each (`main.rs:147-211`).
 
@@ -210,6 +216,7 @@ Including a fresh TriMesh collider, synchronously (`destruction.rs:436-449`). Fi
 | — ✅ | #7 Drop redundant 64k HashSet in load queue | Low | Removes per-boundary hitch |
 | — ✅ | #11 Cache drop mesh/material + let drops sleep | Low | Less alloc + solver cost per drop |
 | — ✅ | #12 Dirty-flag + budgeted destruction remesh | Medium | Bounds dig bursts, off input path |
+| — ✅ | #10 Shrink synchronous initial gen (radius 5→2) | Low | Removes Play-button freeze |
 | — ✅ | Release LTO (`lto="thin"`, `codegen-units=1`) | Trivial | ~5-15% runtime |
 | 8 | Rest of Tier 2 / hygiene | Varies | Incremental |
 

@@ -99,16 +99,12 @@ impl FromWorld for ChunkMaterials {
     fn from_world(world: &mut World) -> Self {
         let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
 
-        let real = [
-            ChunkLOD::Ultra,
-            ChunkLOD::High,
-            ChunkLOD::Medium,
-            ChunkLOD::Low,
-            ChunkLOD::Minimal,
-        ]
-        .map(|lod| {
+        // Blanco: el color real del suelo viene de los vertex colors del mesh
+        // (verde variado). 5 handles iguales para que `real_handle` siga indexando
+        // por ChunkLOD aunque `update_chunk_lod_system` los intercambie.
+        let real = [(); 5].map(|_| {
             materials.add(StandardMaterial {
-                base_color: lod.debug_color(),
+                base_color: Color::WHITE,
                 ..default()
             })
         });

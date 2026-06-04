@@ -30,7 +30,7 @@ use voxel::{
     greedy_mesh_basechunk_simple, load_chunks_system, remesh_dirty_chunks_system,
     start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
     update_chunk_lod_system, update_chunk_transitions_system, update_frustum_culling,
-    update_voxel_breaking_system, VoxelDiffs,
+    update_voxel_breaking_system, TerrainGenerator, VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -116,6 +116,7 @@ fn main() {
 fn setup(
     mut commands: Commands, // Sistema de comandos para crear/modificar entidades
     mut meshes: ResMut<Assets<Mesh>>, // Recurso mutable para gestionar mallas 3D
+    mut materials: ResMut<Assets<StandardMaterial>>, // Para el material de la caja de referencia
     chunk_materials: Res<ChunkMaterials>, // Materiales compartidos de chunks
     mut chunk_map: ResMut<ChunkMap>,
     world_seed: Res<WorldSeed>,
@@ -141,9 +142,10 @@ fn setup(
     // GENERACIÓN DE TERRENO INICIAL
     // ========================================================================
 
-    // Generar solo chunks iniciales alrededor del spawn (radio de 5 chunks)
-    // El sistema de carga dinámica generará el resto
-    let initial_radius = 5;
+    // Generar solo el área mínima bajo el spawn (radio de 2 chunks) para que el
+    // jugador tenga suelo al caer; el loader async rellena el resto sin congelar
+    // el arranque. (#10: antes radio 5 ≈ 390 chunks síncronos al pulsar Play.)
+    let initial_radius = 2;
     let y_min = -1; // Chunks bajo tierra
     let y_max = 3; // Chunks en el aire (para montañas)
 
@@ -200,6 +202,29 @@ fn setup(
     }
 
     info!("Initial chunks generated!");
+
+    // ========================================================================
+    // CAJA DE REFERENCIA DE ESCALA (~1.9 m, tamaño de una persona)
+    // ========================================================================
+    // Marcador visual junto al spawn para tener una referencia del tamaño del
+    // jugador. Solo visual (sin colisión): se puede atravesar.
+    {
+        let (ref_x, ref_z) = (1.0_f32, 1.0_f32); // ~1.4 m del origen
+        let height = 1.9; // 190 cm
+
+        // Apoyar la base de la caja sobre el terreno: centro = suelo + media altura
+        let mut terrain_gen = TerrainGenerator::new(world_seed.0);
+        let ground_y = terrain_gen.biome_gen.generate_height(ref_x, ref_z);
+
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(0.5, height, 0.5))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.85, 0.15, 0.15), // rojo, para destacar
+                ..default()
+            })),
+            Transform::from_xyz(ref_x, ground_y + height / 2.0, ref_z),
+        ));
+    }
 
     // ========================================================================
     // ILUMINACIÓN
