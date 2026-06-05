@@ -22,6 +22,7 @@ pub mod lod_chunks;
 pub mod lod_system;
 pub mod spatial_hash;
 pub mod tools;
+pub mod voxel_color;
 pub mod voxel_types;
 
 pub use biomes::*;
@@ -35,4 +36,5 @@ pub use lod_chunks::*;
 pub use lod_system::*;
 pub use spatial_hash::*;
 pub use tools::*;
+pub use voxel_color::*;
 pub use voxel_types::*;

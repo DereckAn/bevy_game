@@ -10,27 +10,10 @@
 //! 4. Generar quads en lugar de caras individuales
 
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::voxel::{BaseChunk, ChunkMap, VoxelType};
+use crate::voxel::{voxel_color, BaseChunk, ChunkMap, VoxelType};
 use bevy::mesh::Indices;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
-
-/// Color verde del suelo, variado suavemente según la posición mundial (X,Z).
-///
-/// Combina varias sinusoides de baja frecuencia (longitudes de onda de ~10-25 m)
-/// para crear parches de verde claro/oscuro a lo largo del terreno, en vez de un
-/// verde plano. Se evalúa por vértice durante el meshing.
-fn surface_green(world_x: f32, world_z: f32) -> [f32; 4] {
-    let n =
-        (world_x * 0.6).sin() + (world_z * 0.45).cos() + (world_x * 0.27 + world_z * 0.31).sin();
-    let t = (n / 3.0) * 0.5 + 0.5; // normalizar a [0, 1]
-
-    // Mezcla entre un verde oscuro (bosque) y uno claro (pasto)
-    let r = 0.20 + (0.40 - 0.20) * t;
-    let g = 0.45 + (0.78 - 0.45) * t;
-    let b = 0.15 + (0.30 - 0.15) * t;
-    [r, g, b, 1.0]
-}
 
 /// Genera mesh optimizado usando greedy meshing (versión simple sin vecinos)
 ///
@@ -279,12 +262,21 @@ fn greedy_mesh_slice(
 
             let voxel_type = mask[idx].unwrap();
 
-            // Encontrar el rectángulo máximo
-            let (width, height) = find_max_rect(mask, &mut processed, i, j, voxel_type);
+            // Las caras SUPERIORES de pasto (eje Y, dirección +1) NO se fusionan:
+            // así cada voxel de pasto recibe su propio color de la paleta. Todo lo
+            // demás se fusiona normal (mantiene el ahorro del greedy meshing).
+            let is_grass_top = voxel_type == VoxelType::Grass && axis == 1 && direction == 1;
+            let (width, height) = if is_grass_top {
+                processed[idx] = true;
+                (1, 1)
+            } else {
+                find_max_rect(mask, &mut processed, i, j, voxel_type)
+            };
 
             // Generar quad
             add_greedy_quad(
-                chunk, axis, d, i, j, width, height, direction, positions, normals, indices, colors,
+                chunk, axis, d, i, j, width, height, direction, voxel_type, positions, normals,
+                indices, colors,
             );
         }
     }
@@ -341,6 +333,7 @@ fn add_greedy_quad(
     width: usize,
     height: usize,
     direction: i32,
+    voxel_type: VoxelType,
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
@@ -386,13 +379,13 @@ fn add_greedy_quad(
     positions.push(v2);
     positions.push(v3);
 
-    // Color por vértice: verde variado según la posición mundial (X,Z), para que
-    // el suelo no sea un verde plano. El material del chunk es blanco, así que el
-    // color renderizado = este vertex color.
-    colors.push(surface_green(v0[0], v0[2]));
-    colors.push(surface_green(v1[0], v1[2]));
-    colors.push(surface_green(v2[0], v2[2]));
-    colors.push(surface_green(v3[0], v3[2]));
+    // Un color POR QUAD (muestreado en su centro) aplicado a los 4 vértices → tile
+    // de color plano. El pasto usa la paleta; el resto, el color real del material.
+    // El material del chunk es blanco, así que el color renderizado = vertex color.
+    let center_x = (v0[0] + v2[0]) * 0.5;
+    let center_z = (v0[2] + v2[2]) * 0.5;
+    let color = voxel_color(voxel_type, center_x, center_z);
+    colors.extend_from_slice(&[color; 4]);
 
     // Normal según dirección
     let mut normal = [0.0; 3];
