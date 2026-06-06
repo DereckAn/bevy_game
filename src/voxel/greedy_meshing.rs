@@ -15,6 +15,48 @@ use bevy::mesh::Indices;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
 
+/// Desnivel (m) por voxel que produce pendiente máxima (slope = 1.0).
+const SLOPE_REF: f32 = 3.0;
+
+/// Altura local (y del voxel sólido más alto) por columna XZ; -1 si la columna
+/// está vacía. Se calcula una vez por chunk y alimenta la pendiente del pasto.
+fn compute_column_top(chunk: &BaseChunk) -> Vec<i32> {
+    let mut top = vec![-1i32; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
+    for z in 0..BASE_CHUNK_SIZE {
+        for x in 0..BASE_CHUNK_SIZE {
+            for y in (0..BASE_CHUNK_SIZE).rev() {
+                if chunk.is_solid(x, y, z) {
+                    top[x + z * BASE_CHUNK_SIZE] = y as i32;
+                    break;
+                }
+            }
+        }
+    }
+    top
+}
+
+/// Pendiente local del terreno en la columna (x,z), normalizada a [0,1]: módulo
+/// del gradiente de la altura de columna contra sus vecinos.
+///
+/// NOTE: fuera del chunk se usa la propia altura (pendiente 0), así que puede
+/// quedar una costura suave de sombreado en los bordes de chunk. Aceptable en
+/// esta primera pasada (evita muestrear columnas de chunks vecinos).
+fn slope_at(column_top: &[i32], x: usize, z: usize) -> f32 {
+    let n = BASE_CHUNK_SIZE as i32;
+    let h = column_top[x + z * BASE_CHUNK_SIZE] as f32;
+    let sample = |xx: i32, zz: i32| -> f32 {
+        if xx < 0 || zz < 0 || xx >= n || zz >= n {
+            h
+        } else {
+            column_top[xx as usize + zz as usize * BASE_CHUNK_SIZE] as f32
+        }
+    };
+    let (xi, zi) = (x as i32, z as i32);
+    let dx = (sample(xi + 1, zi) - sample(xi - 1, zi)) * 0.5;
+    let dz = (sample(xi, zi + 1) - sample(xi, zi - 1)) * 0.5;
+    ((dx * dx + dz * dz).sqrt() / SLOPE_REF).clamp(0.0, 1.0)
+}
+
 /// Genera mesh optimizado usando greedy meshing (versión simple sin vecinos)
 ///
 /// Usado durante inicialización cuando no todos los chunks están cargados.
@@ -24,6 +66,8 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
     let mut indices: Vec<u32> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
 
+    let column_top = compute_column_top(chunk);
+
     // Procesar cada eje (X, Y, Z) para greedy meshing
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
@@ -32,6 +76,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
+                &column_top,
                 axis,
                 d,
                 1,
@@ -46,6 +91,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
+                &column_top,
                 axis,
                 d,
                 -1,
@@ -135,6 +181,8 @@ pub fn greedy_mesh_basechunk(
     let mut indices: Vec<u32> = Vec::new();
     let mut colors: Vec<[f32; 4]> = Vec::new();
 
+    let column_top = compute_column_top(chunk);
+
     // Procesar cada eje (X, Y, Z) para greedy meshing
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
@@ -143,6 +191,7 @@ pub fn greedy_mesh_basechunk(
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
+                &column_top,
                 axis,
                 d,
                 1,
@@ -157,6 +206,7 @@ pub fn greedy_mesh_basechunk(
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
+                &column_top,
                 axis,
                 d,
                 -1,
@@ -242,6 +292,7 @@ fn generate_slice_mask(
 fn greedy_mesh_slice(
     mask: &[Option<VoxelType>],
     chunk: &BaseChunk,
+    column_top: &[i32],
     axis: usize,
     d: usize,
     direction: i32,
@@ -250,6 +301,9 @@ fn greedy_mesh_slice(
     indices: &mut Vec<u32>,
     colors: &mut Vec<[f32; 4]>,
 ) {
+    let u = (axis + 1) % 3;
+    let v = (axis + 2) % 3;
+
     let mut processed = vec![false; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
 
     for j in 0..BASE_CHUNK_SIZE {
@@ -261,6 +315,17 @@ fn greedy_mesh_slice(
             }
 
             let voxel_type = mask[idx].unwrap();
+
+            // Pendiente de la columna del voxel (solo afecta al pasto).
+            let slope = if voxel_type == VoxelType::Grass {
+                let mut pos = [0usize; 3];
+                pos[axis] = d;
+                pos[u] = i;
+                pos[v] = j;
+                slope_at(column_top, pos[0], pos[2])
+            } else {
+                0.0
+            };
 
             // Las caras SUPERIORES de pasto (eje Y, dirección +1) NO se fusionan:
             // así cada voxel de pasto recibe su propio color de la paleta. Todo lo
@@ -275,8 +340,8 @@ fn greedy_mesh_slice(
 
             // Generar quad
             add_greedy_quad(
-                chunk, axis, d, i, j, width, height, direction, voxel_type, positions, normals,
-                indices, colors,
+                chunk, axis, d, i, j, width, height, direction, voxel_type, slope, positions,
+                normals, indices, colors,
             );
         }
     }
@@ -334,6 +399,7 @@ fn add_greedy_quad(
     height: usize,
     direction: i32,
     voxel_type: VoxelType,
+    slope: f32,
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     indices: &mut Vec<u32>,
@@ -380,11 +446,28 @@ fn add_greedy_quad(
     positions.push(v3);
 
     // Un color POR QUAD (muestreado en su centro) aplicado a los 4 vértices → tile
-    // de color plano. El pasto usa la paleta; el resto, el color real del material.
-    // El material del chunk es blanco, así que el color renderizado = vertex color.
+    // de color plano. El pasto usa la fórmula HSL (ruido + altura + pendiente); el
+    // resto, el color real del material. El material del chunk es blanco, así que
+    // el color renderizado = vertex color.
     let center_x = (v0[0] + v2[0]) * 0.5;
+    let center_y = (v0[1] + v2[1]) * 0.5;
     let center_z = (v0[2] + v2[2]) * 0.5;
-    let color = voxel_color(voxel_type, center_x, center_z);
+
+    // Sombreado por orientación de cara (AO barato): la cima a brillo pleno, los
+    // lados más oscuros y la base la más oscura. Da volumen aun sin sombras reales.
+    let face_shade = match (axis, direction) {
+        (1, 1) => 1.0,
+        (1, -1) => 0.5,
+        _ => 0.75,
+    };
+
+    let c = voxel_color(voxel_type, center_x, center_y, center_z, slope);
+    let color = [
+        c[0] * face_shade,
+        c[1] * face_shade,
+        c[2] * face_shade,
+        c[3],
+    ];
     colors.extend_from_slice(&[color; 4]);
 
     // Normal según dirección
