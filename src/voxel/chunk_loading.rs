@@ -8,8 +8,8 @@ use crate::{
     physics::{RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        self, BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid,
-        TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
+        self, BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator,
+        VoxelDiffs, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -364,7 +364,7 @@ pub fn load_chunks_system(
                     // (siguen en ChunkMap, así no se vuelven a evaluar). NO se
                     // saltan si el jugador los modificó (tienen diffs).
                     if !voxel_diffs.chunks.contains_key(&chunk_pos)
-                        && chunk_is_above_terrain(chunk_pos, &mut terrain_gen)
+                        && chunk_is_above_terrain(chunk_pos, &mut terrain_gen, seed)
                     {
                         commands.entity(chunk_entity).insert(EmptyChunk);
                         continue;
@@ -557,7 +557,7 @@ pub fn unload_chunks_system(
 /// del chunk. Muestrea una rejilla 5×5 (la frecuencia del ruido hace innecesario
 /// muestrear más fino sobre 3.2 m) y añade un margen para no saltar un chunk que
 /// apenas roce el terreno.
-fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator) -> bool {
+fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator, seed: i32) -> bool {
     // Y mundial del fondo del chunk (metros)
     let chunk_bottom_y = chunk_pos.y as f32 * BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
 
@@ -579,6 +579,19 @@ fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator) 
             sz += step;
         }
         sx += step;
+    }
+
+    // Un árbol puede subir desde un chunk inferior hasta este: si alguno llega
+    // aquí, NO lo tratamos como aire (si no, se cortaría el árbol).
+    let chunk_bottom_voxel = chunk_pos.y * BASE_CHUNK_SIZE as i32;
+    if let Some(ceiling) = crate::vegetation::trees::tree_ceiling_for_chunk(
+        chunk_pos,
+        &mut terrain_gen.biome_gen,
+        seed,
+    ) {
+        if ceiling >= chunk_bottom_voxel {
+            return false;
+        }
     }
 
     max_height + margin < chunk_bottom_y
