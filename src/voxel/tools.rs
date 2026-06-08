@@ -123,24 +123,28 @@ impl ToolType {
             (ToolType::None, VoxelType::Metal) => (0, 0),
             (ToolType::None, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (2, 3),
             (ToolType::None, VoxelType::Wood) => (1, 2),
+            (ToolType::None, VoxelType::Leaves) => (0, 1),
 
             // Pala (buena para tierra/arena)
             (ToolType::Shovel, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (8, 15),
             (ToolType::Shovel, VoxelType::Stone) => (2, 4),
             (ToolType::Shovel, VoxelType::Wood) => (3, 5),
             (ToolType::Shovel, VoxelType::Metal) => (0, 1),
+            (ToolType::Shovel, VoxelType::Leaves) => (1, 3),
 
             // Pico (bueno para piedra/metal)
             (ToolType::Pickaxe, VoxelType::Stone) => (8, 15),
             (ToolType::Pickaxe, VoxelType::Metal) => (3, 8),
             (ToolType::Pickaxe, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (5, 8),
             (ToolType::Pickaxe, VoxelType::Wood) => (4, 6),
+            (ToolType::Pickaxe, VoxelType::Leaves) => (1, 3),
 
             // Hacha (excelente para madera)
             (ToolType::Axe, VoxelType::Wood) => (10, 30),
             (ToolType::Axe, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (6, 10),
             (ToolType::Axe, VoxelType::Stone) => (3, 6),
             (ToolType::Axe, VoxelType::Metal) => (1, 3),
+            (ToolType::Axe, VoxelType::Leaves) => (1, 3),
 
             // Azada (herramienta especial, por ahora como pala)
             (ToolType::Hoe, voxel) => {

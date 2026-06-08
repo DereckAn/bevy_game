@@ -13,6 +13,7 @@ mod ui;
 mod physics; // Declara el módulo 'physics' (busca src/physics/mod.rs)
 mod player; // Declara el módulo 'player' (busca src/player/mod.rs)
 mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el módulo 'debug' (busca src/debug/mod.rs)
+mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 
 // ============================================================================
 // IMPORTS (TRAER CÓDIGO DE OTROS MÓDULOS)

@@ -42,6 +42,9 @@ pub enum VoxelType {
 
     /// Arena - material suave del desierto
     Sand = 6,
+
+    /// Hojas -  Follajes de los arboles
+    Leaves = 7,
 }
 
 // ============================================================================
@@ -158,6 +161,15 @@ impl VoxelType {
                 name: "Sand",
                 density: 1.0,
             },
+
+            VoxelType::Leaves => VoxelProperties {
+                hardness: 0.2,                      // Muy suave
+                color: Color::srgb(0.2, 0.8, 0.2), // Verde hojas
+                is_solid: true,                    // Tiene colisión
+                drops_self: true,                  // Dropea nada o sticks
+                name: "Leaves",
+                density: 0.1,
+            }
         }
     }
 
@@ -187,6 +199,7 @@ impl VoxelType {
             4 => VoxelType::Metal,
             5 => VoxelType::Grass,
             6 => VoxelType::Sand,
+            7 => VoxelType::Leaves,
             _ => VoxelType::Air,
         }
     }

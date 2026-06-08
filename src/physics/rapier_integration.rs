@@ -13,7 +13,7 @@ use bevy_rapier3d::prelude::*;
 pub struct DropAssets {
     mesh: Handle<Mesh>,
     /// Indexado por `VoxelType as usize` (Air, Dirt, Stone, Wood, Metal, Grass, Sand)
-    materials: [Handle<StandardMaterial>; 7],
+    materials: [Handle<StandardMaterial>; 8],
 }
 
 impl FromWorld for DropAssets {
@@ -43,6 +43,7 @@ impl FromWorld for DropAssets {
             make(VoxelType::Metal),
             make(VoxelType::Grass),
             make(VoxelType::Sand),
+            make(VoxelType::Leaves),
         ];
 
         Self { mesh, materials }

@@ -4,6 +4,7 @@
 
 use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::voxel::{TerrainGenerator, VoxelType};
+use crate::vegetation::trees::{place_trees};
 use bevy::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -97,5 +98,8 @@ impl BaseChunk {
             let z = idx / (BASE_CHUNK_SIZE * BASE_CHUNK_SIZE);
             self.voxel_types[x][y][z] = *voxel_type;
         }
+
+        // Paso 3: decoración determinista — estampar árboles sobre el terreno.
+        place_trees(self, &mut terrain_gen.biome_gen, seed);
     }
 }
