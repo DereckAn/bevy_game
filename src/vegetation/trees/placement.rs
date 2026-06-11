@@ -5,6 +5,7 @@
 //! Todo es función pura de `(celda, seed)`, así cualquier chunk reconstruye los
 //! mismos árboles → consistentes a través de bordes y regeneraciones.
 
+use super::bush::bush_template;
 use super::oak::oak_template;
 use super::pine::pine_template;
 use super::small::tree_template;
@@ -28,6 +29,7 @@ pub enum TreeKind {
     Small,
     Pine,
     Oak,
+    Bush,
 }
 
 /// Un árbol candidato: su columna (x,z) en VOXELS de mundo y su forma.
@@ -47,6 +49,7 @@ impl TreeInstance {
             TreeKind::Small => self.trunk_height + self.canopy_radius,
             TreeKind::Pine => self.trunk_height + 2, // mechón en la punta
             TreeKind::Oak => self.trunk_height + self.trunk_height / 2,
+            TreeKind::Bush => self.canopy_radius, // cúpula de radio = altura
         }
     }
 }
@@ -104,6 +107,17 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
             canopy_radius: 0,
             rng_seed: h2,
         })
+    } else if h2 % 6 == 2 {
+        // arbusto (follaje atravesable)
+        let canopy_radius = 1 + ((h2 >> 8) % 2) as i32; // 1..=2
+        Some(TreeInstance {
+            world_x,
+            world_z,
+            kind: TreeKind::Bush,
+            trunk_height: 0,
+            canopy_radius,
+            rng_seed: h2,
+        })
     } else {
         // arbusto pequeño
         let trunk_height = 4 + ((h >> 28) & 0x3) as i32;
@@ -158,6 +172,7 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                 TreeKind::Small => tree_template(tree.trunk_height, tree.canopy_radius),
                 TreeKind::Pine => pine_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::Oak => oak_template(tree.rng_seed, tree.trunk_height),
+                TreeKind::Bush => bush_template(tree.canopy_radius),
             };
             for tv in template {
                 let world = base + tv.offset;

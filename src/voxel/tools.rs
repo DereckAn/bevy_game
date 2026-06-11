@@ -118,6 +118,9 @@ impl ToolType {
             // Aire no da drops
             (_, VoxelType::Air) => (0, 0),
 
+            // Follaje (pasto/arbustos): no dropea nada
+            (_, VoxelType::Foliage) => (0, 0),
+
             // Manos desnudas (muy poco eficiente)
             (ToolType::None, VoxelType::Stone) => (0, 1),
             (ToolType::None, VoxelType::Metal) => (0, 0),
@@ -257,7 +260,7 @@ impl Tool {
     /// Obtiene el porcentaje de durabilidad restante (0.0 - 1.0)
     pub fn get_durability_percentage(&self) -> f32 {
         if self.tool_type == ToolType::None {
-            return 1.0; // Manos nunca se rompen 
+            return 1.0; // Manos nunca se rompen
         }
 
         let max = self.tool_type.properties().max_durability;

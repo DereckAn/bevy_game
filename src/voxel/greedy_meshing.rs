@@ -170,11 +170,44 @@ fn generate_slice_mask_simple(
     mask
 }
 
-/// Genera mesh optimizado usando greedy meshing (con verificación de vecinos)
+/// ¿Cuenta este voxel como "presente" para esta malla? Para el render, presente
+/// = sólido (se ve). Para el colisionador, presente = colisionable: el follaje
+/// (pasto/arbustos) se ignora, de modo que se puede atravesar.
+#[inline]
+fn voxel_present(vt: VoxelType, collidable_only: bool) -> bool {
+    if collidable_only {
+        vt.is_collidable()
+    } else {
+        vt.is_solid()
+    }
+}
+
+/// Mesh para RENDER (todos los voxeles sólidos, incluido el follaje).
 pub fn greedy_mesh_basechunk(
     chunk: &BaseChunk,
     chunk_map: &ChunkMap,
     chunks: &Query<&BaseChunk>,
+) -> Mesh {
+    mesh_basechunk_inner(chunk, chunk_map, chunks, false)
+}
+
+/// Mesh para COLISIÓN: solo voxeles colisionables (ignora el follaje). El collider
+/// se construye de aquí, así pasto y arbustos se pueden atravesar.
+pub fn greedy_mesh_basechunk_collider(
+    chunk: &BaseChunk,
+    chunk_map: &ChunkMap,
+    chunks: &Query<&BaseChunk>,
+) -> Mesh {
+    mesh_basechunk_inner(chunk, chunk_map, chunks, true)
+}
+
+/// Greedy meshing con verificación de vecinos. `collidable_only` decide si el
+/// follaje cuenta (render) o se ignora (collider).
+fn mesh_basechunk_inner(
+    chunk: &BaseChunk,
+    chunk_map: &ChunkMap,
+    chunks: &Query<&BaseChunk>,
+    collidable_only: bool,
 ) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -187,7 +220,8 @@ pub fn greedy_mesh_basechunk(
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
-            let mask_pos = generate_slice_mask(chunk, chunk_map, chunks, axis, d, 1);
+            let mask_pos =
+                generate_slice_mask(chunk, chunk_map, chunks, axis, d, 1, collidable_only);
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
@@ -202,7 +236,8 @@ pub fn greedy_mesh_basechunk(
             );
 
             // Dirección negativa
-            let mask_neg = generate_slice_mask(chunk, chunk_map, chunks, axis, d, -1);
+            let mask_neg =
+                generate_slice_mask(chunk, chunk_map, chunks, axis, d, -1, collidable_only);
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
@@ -235,6 +270,7 @@ fn generate_slice_mask(
     axis: usize,
     d: usize,
     direction: i32,
+    collidable_only: bool,
 ) -> Vec<Option<VoxelType>> {
     let u = (axis + 1) % 3;
     let v = (axis + 2) % 3;
@@ -252,7 +288,7 @@ fn generate_slice_mask(
             let y = pos[1];
             let z = pos[2];
 
-            if !chunk.is_solid(x, y, z) {
+            if !voxel_present(chunk.voxel_types[x][y][z], collidable_only) {
                 continue;
             }
 
@@ -269,13 +305,23 @@ fn generate_slice_mask(
                 || neighbor_z >= BASE_CHUNK_SIZE as i32
             {
                 // Fuera del chunk - verificar chunk vecino
-                is_face_visible_cross_chunk(chunk, chunk_map, chunks, x, y, z, axis, direction)
+                is_face_visible_cross_chunk(
+                    chunk,
+                    chunk_map,
+                    chunks,
+                    x,
+                    y,
+                    z,
+                    axis,
+                    direction,
+                    collidable_only,
+                )
             } else {
                 // Dentro del chunk
-                !chunk.is_solid(
-                    neighbor_x as usize,
-                    neighbor_y as usize,
-                    neighbor_z as usize,
+                !voxel_present(
+                    chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
+                        [neighbor_z as usize],
+                    collidable_only,
                 )
             };
 
@@ -493,6 +539,7 @@ fn is_face_visible_cross_chunk(
     z: usize,
     axis: usize,
     direction: i32,
+    collidable_only: bool,
 ) -> bool {
     let mut neighbor_chunk_offset = IVec3::ZERO;
     neighbor_chunk_offset[axis as usize] = direction;
@@ -524,7 +571,10 @@ fn is_face_visible_cross_chunk(
                 z
             };
 
-            return !neighbor_chunk.is_solid(local_x, local_y, local_z);
+            return !voxel_present(
+                neighbor_chunk.voxel_types[local_x][local_y][local_z],
+                collidable_only,
+            );
         }
     }
 

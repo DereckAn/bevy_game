@@ -436,7 +436,7 @@ pub fn complete_chunk_generation_system(
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
 ) {
-    use crate::voxel::greedy_mesh_basechunk;
+    use crate::voxel::{greedy_mesh_basechunk, greedy_mesh_basechunk_collider};
 
     // Posición del jugador en chunks: para integrar primero los huecos cercanos.
     let player_chunk = player_query
@@ -471,42 +471,36 @@ pub fn complete_chunk_generation_system(
         };
 
         if let Some((chunk_pos, base_chunk)) = future::block_on(future::poll_once(&mut task.task)) {
-            // Regenerar mesh CON verificación de vecinos para eliminar gaps
+            // Mesh de RENDER (con verificación de vecinos para eliminar gaps).
             let mesh = greedy_mesh_basechunk(&base_chunk, &chunk_map, &base_chunks);
-
-            // Verificar si el mesh tiene vértices (no está vacío)
             let has_vertices = mesh.count_vertices() > 0;
 
-            // Solo agregar collider si el mesh tiene geometría
-            if has_vertices {
-                // Construir el collider PRIMERO (toma &mesh prestado), luego MOVER elmesh
-                // a Assets sin clonar su buffer de vértices.
-                let collider = create_terrain_collider(&mesh);
-                commands
-                    .entity(entity)
-                    .insert((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
-                        Transform::default(),
-                        base_chunk,
-                        ChunkLOD::Ultra,
-                        RigidBody::Fixed,
-                        collider,
-                    ))
-                    .remove::<ChunkGenerationTask>();
+            // Collider: si el chunk tiene follaje (atravesable) se construye de un
+            // mesh aparte que lo excluye; si no, el mesh de render sirve igual y
+            // evitamos re-mallar.
+            let collider = if !has_vertices {
+                None
+            } else if chunk_has_foliage(&base_chunk) {
+                let collider_mesh =
+                    greedy_mesh_basechunk_collider(&base_chunk, &chunk_map, &base_chunks);
+                (collider_mesh.count_vertices() > 0)
+                    .then(|| create_terrain_collider(&collider_mesh))
             } else {
-                // Chunk vacío (solo aire), no agregar collider
-                commands
-                    .entity(entity)
-                    .insert((
-                        Mesh3d(meshes.add(mesh)),
-                        MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
-                        Transform::default(),
-                        base_chunk,
-                        ChunkLOD::Ultra,
-                    ))
-                    .remove::<ChunkGenerationTask>();
+                Some(create_terrain_collider(&mesh))
+            };
+
+            let mut ec = commands.entity(entity);
+            ec.insert((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
+                Transform::default(),
+                base_chunk,
+                ChunkLOD::Ultra,
+            ));
+            if let Some(collider) = collider {
+                ec.insert((RigidBody::Fixed, collider));
             }
+            ec.remove::<ChunkGenerationTask>();
 
             load_queue.total_loaded += 1;
             completed_this_frame += 1;
@@ -548,6 +542,17 @@ pub fn unload_chunks_system(
             commands.entity(entity).despawn();
         }
     }
+}
+
+/// ¿El chunk contiene algún voxel de follaje (atravesable)? Si no, el mesh de
+/// render sirve también como collider y nos ahorramos re-mallar.
+fn chunk_has_foliage(chunk: &BaseChunk) -> bool {
+    chunk
+        .voxel_types
+        .iter()
+        .flatten()
+        .flatten()
+        .any(|v| *v == crate::voxel::VoxelType::Foliage)
 }
 
 /// ¿El chunk está enteramente por ENCIMA del terreno (puro aire)?

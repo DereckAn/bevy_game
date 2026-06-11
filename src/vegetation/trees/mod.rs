@@ -3,6 +3,7 @@
 //! `*_template`, declárala abajo, y añádela al `match` de `place_trees` (y al
 //! `TreeKind`) en `placement.rs`.
 
+mod bush;
 mod oak;
 mod pine;
 mod placement;

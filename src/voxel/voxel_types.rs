@@ -45,6 +45,9 @@ pub enum VoxelType {
 
     /// Hojas -  Follajes de los arboles
     Leaves = 7,
+
+    /// Follaje atravesable (pasto/arbustos): se ve pero NO colisiona.
+    Foliage = 8,
 }
 
 // ============================================================================
@@ -163,13 +166,22 @@ impl VoxelType {
             },
 
             VoxelType::Leaves => VoxelProperties {
-                hardness: 0.2,                      // Muy suave
+                hardness: 0.2,                     // Muy suave
                 color: Color::srgb(0.2, 0.8, 0.2), // Verde hojas
                 is_solid: true,                    // Tiene colisión
                 drops_self: true,                  // Dropea nada o sticks
                 name: "Leaves",
                 density: 0.1,
-            }
+            },
+
+            VoxelType::Foliage => VoxelProperties {
+                hardness: 0.1,                        // se rompe al instante
+                color: Color::srgb(0.20, 0.55, 0.15), // verde planta
+                is_solid: true,                       // ocupa la celda (se renderiza)
+                drops_self: false,
+                name: "Foliage",
+                density: 0.1,
+            },
         }
     }
 
@@ -179,6 +191,14 @@ impl VoxelType {
     #[inline]
     pub fn is_solid(&self) -> bool {
         !matches!(self, VoxelType::Air)
+    }
+
+    /// ¿Bloquea el movimiento? El follaje (pasto/arbustos) se ve pero se
+    /// atraviesa, así que el colisionador del chunk lo ignora: es sólido para el
+    /// render, no para la física.
+    #[inline]
+    pub fn is_collidable(&self) -> bool {
+        self.is_solid() && !matches!(self, VoxelType::Foliage)
     }
 
     /// Verifica si este voxel es aire.
@@ -200,11 +220,11 @@ impl VoxelType {
             5 => VoxelType::Grass,
             6 => VoxelType::Sand,
             7 => VoxelType::Leaves,
+            8 => VoxelType::Foliage,
             _ => VoxelType::Air,
         }
     }
 
-    
     /// Elige el tipo de voxel según su PROFUNDIDAD bajo la superficie.
     ///
     /// Capas tipo Minecraft, independientes de la altura absoluta: la

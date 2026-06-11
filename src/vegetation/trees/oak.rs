@@ -1,7 +1,7 @@
 //! Roble (oak): tronco grueso que se BIFURCA recursivamente en ramas, con una
 //! copa ancha y redondeada formada por mechones de hojas en las puntas.
 
-use super::voxelize::{TreeVoxel, add_leaf_blob, next_rand, voxelize_tapered};
+use super::voxelize::{add_leaf_blob, next_rand, voxelize_tapered, TreeVoxel};
 use bevy::prelude::*;
 
 /// Dirección pseudo-aleatoria con componentes en [-1, 1], para desviar las hijas.
