@@ -99,10 +99,14 @@ impl BaseChunk {
             self.voxel_types[x][y][z] = *voxel_type;
         }
 
-        // Paso 3: decoración determinista — estampar árboles sobre el terreno.
-        place_trees(self, &mut terrain_gen.biome_gen, seed);
+        // Paso 3: decoración determinista — estampar árboles/arbustos.
+        if crate::vegetation::config::ENABLE_TREES || crate::vegetation::config::ENABLE_BUSHES {
+            place_trees(self, &mut terrain_gen.biome_gen, seed);
+        }
 
         // Paso 4: pasto denso (follaje atravesable) sobre las columnas de pasto.
-        crate::vegetation::grass::place_grass(self, seed);
+        if crate::vegetation::config::ENABLE_GRASS {
+            crate::vegetation::grass::place_grass(self, seed);
+        }
     }
 }

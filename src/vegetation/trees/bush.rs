@@ -17,7 +17,7 @@ pub fn bush_template(radius: i32) -> Vec<TreeVoxel> {
                 if dx * dx + dy * dy + dz * dz <= r * r {
                     voxels.push(TreeVoxel {
                         offset: IVec3::new(dx, dy, dz),
-                        voxel_type: VoxelType::Foliage,
+                        voxel_type: VoxelType::Bush,
                     });
                 }
             }

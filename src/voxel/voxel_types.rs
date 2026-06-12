@@ -3,7 +3,14 @@
 //! Define los diferentes materiales que pueden existir en el mundo,
 //! sus propiedades físicas, y cómo se comportan.
 
+use crate::vegetation::config;
 use bevy::prelude::*;
+
+/// Helper: convierte un color de config `[r,g,b]` (sRGB) en `Color`.
+#[inline]
+fn rgb(c: [f32; 3]) -> Color {
+    Color::srgb(c[0], c[1], c[2])
+}
 
 // ============================================================================
 // VOXEL TYPE ENUM
@@ -46,8 +53,11 @@ pub enum VoxelType {
     /// Hojas -  Follajes de los arboles
     Leaves = 7,
 
-    /// Follaje atravesable (pasto/arbustos): se ve pero NO colisiona.
+    /// Follaje atravesable (pasto): se ve pero NO colisiona.
     Foliage = 8,
+
+    /// Arbusto atravesable: como el follaje pero verde más oscuro (se distingue).
+    Bush = 9,
 }
 
 // ============================================================================
@@ -130,8 +140,8 @@ impl VoxelType {
             },
 
             VoxelType::Wood => VoxelProperties {
-                hardness: 2.0,                      // Requiere hacha (más eficiente)
-                color: Color::srgb(0.4, 0.25, 0.1), // Marrón madera
+                hardness: 2.0, // Requiere hacha (más eficiente)
+                color: rgb(config::WOOD_COLOR),
                 is_solid: true,
                 drops_self: true,
                 name: "Wood",
@@ -166,20 +176,29 @@ impl VoxelType {
             },
 
             VoxelType::Leaves => VoxelProperties {
-                hardness: 0.2,                     // Muy suave
-                color: Color::srgb(0.2, 0.8, 0.2), // Verde hojas
-                is_solid: true,                    // Tiene colisión
-                drops_self: true,                  // Dropea nada o sticks
+                hardness: 0.2, // Muy suave
+                color: rgb(config::LEAVES_COLOR),
+                is_solid: true,   // Tiene colisión
+                drops_self: true, // Dropea nada o sticks
                 name: "Leaves",
                 density: 0.1,
             },
 
             VoxelType::Foliage => VoxelProperties {
-                hardness: 0.1,                        // se rompe al instante
-                color: Color::srgb(0.20, 0.55, 0.15), // verde planta
-                is_solid: true,                       // ocupa la celda (se renderiza)
+                hardness: 0.1, // se rompe al instante
+                color: rgb(config::GRASS_COLOR),
+                is_solid: true, // ocupa la celda (se renderiza)
                 drops_self: false,
                 name: "Foliage",
+                density: 0.1,
+            },
+
+            VoxelType::Bush => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::BUSH_COLOR),
+                is_solid: true, // se renderiza
+                drops_self: false,
+                name: "Bush",
                 density: 0.1,
             },
         }
@@ -198,7 +217,7 @@ impl VoxelType {
     /// render, no para la física.
     #[inline]
     pub fn is_collidable(&self) -> bool {
-        self.is_solid() && !matches!(self, VoxelType::Foliage)
+        self.is_solid() && !matches!(self, VoxelType::Foliage | VoxelType::Bush)
     }
 
     /// Verifica si este voxel es aire.
@@ -221,6 +240,7 @@ impl VoxelType {
             6 => VoxelType::Sand,
             7 => VoxelType::Leaves,
             8 => VoxelType::Foliage,
+            9 => VoxelType::Bush,
             _ => VoxelType::Air,
         }
     }

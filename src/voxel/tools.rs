@@ -118,8 +118,8 @@ impl ToolType {
             // Aire no da drops
             (_, VoxelType::Air) => (0, 0),
 
-            // Follaje (pasto/arbustos): no dropea nada
-            (_, VoxelType::Foliage) => (0, 0),
+            // Follaje y arbustos: no dropean nada
+            (_, VoxelType::Foliage | VoxelType::Bush) => (0, 0),
 
             // Manos desnudas (muy poco eficiente)
             (ToolType::None, VoxelType::Stone) => (0, 1),

@@ -57,10 +57,21 @@ fn slope_at(column_top: &[i32], x: usize, z: usize) -> f32 {
     ((dx * dx + dz * dz).sqrt() / SLOPE_REF).clamp(0.0, 1.0)
 }
 
-/// Genera mesh optimizado usando greedy meshing (versión simple sin vecinos)
-///
-/// Usado durante inicialización cuando no todos los chunks están cargados.
+/// Mesh simple (sin vecinos), para RENDER inicial. Usado al arrancar cuando no
+/// todos los chunks están cargados.
 pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
+    mesh_simple_inner(chunk, false)
+}
+
+/// Mesh simple SOLO-COLISIONABLE (sin vecinos, ignora el follaje). Se usa para
+/// construir el collider en el hilo de fondo: no necesita chunks vecinos, así que
+/// puede correr dentro de la tarea async de generación. Las caras extra en los
+/// bordes del chunk son inofensivas para la colisión.
+pub fn greedy_mesh_basechunk_collider_simple(chunk: &BaseChunk) -> Mesh {
+    mesh_simple_inner(chunk, true)
+}
+
+fn mesh_simple_inner(chunk: &BaseChunk, collidable_only: bool) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -72,7 +83,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
-            let mask_pos = generate_slice_mask_simple(chunk, axis, d, 1);
+            let mask_pos = generate_slice_mask_simple(chunk, axis, d, 1, collidable_only);
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
@@ -87,7 +98,7 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
             );
 
             // Dirección negativa
-            let mask_neg = generate_slice_mask_simple(chunk, axis, d, -1);
+            let mask_neg = generate_slice_mask_simple(chunk, axis, d, -1, collidable_only);
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
@@ -118,6 +129,7 @@ fn generate_slice_mask_simple(
     axis: usize,
     d: usize,
     direction: i32, // +1 o -1
+    collidable_only: bool,
 ) -> Vec<Option<VoxelType>> {
     let u = (axis + 1) % 3;
     let v = (axis + 2) % 3;
@@ -135,8 +147,8 @@ fn generate_slice_mask_simple(
             let y = pos[1];
             let z = pos[2];
 
-            // Verificar si este voxel es sólido
-            if !chunk.is_solid(x, y, z) {
+            // ¿Presente para esta malla? (render = sólido; collider = colisionable)
+            if !voxel_present(chunk.voxel_types[x][y][z], collidable_only) {
                 continue;
             }
 
@@ -154,10 +166,10 @@ fn generate_slice_mask_simple(
             {
                 true // Borde del chunk
             } else {
-                !chunk.is_solid(
-                    neighbor_x as usize,
-                    neighbor_y as usize,
-                    neighbor_z as usize,
+                !voxel_present(
+                    chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
+                        [neighbor_z as usize],
+                    collidable_only,
                 )
             };
 
@@ -189,16 +201,6 @@ pub fn greedy_mesh_basechunk(
     chunks: &Query<&BaseChunk>,
 ) -> Mesh {
     mesh_basechunk_inner(chunk, chunk_map, chunks, false)
-}
-
-/// Mesh para COLISIÓN: solo voxeles colisionables (ignora el follaje). El collider
-/// se construye de aquí, así pasto y arbustos se pueden atravesar.
-pub fn greedy_mesh_basechunk_collider(
-    chunk: &BaseChunk,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&BaseChunk>,
-) -> Mesh {
-    mesh_basechunk_inner(chunk, chunk_map, chunks, true)
 }
 
 /// Greedy meshing con verificación de vecinos. `collidable_only` decide si el

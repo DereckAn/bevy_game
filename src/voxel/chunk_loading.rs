@@ -5,7 +5,7 @@
 
 use crate::{
     core::{BASE_CHUNK_SIZE, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed},
-    physics::{RigidBody, create_terrain_collider},
+    physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
         self, BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator,
@@ -173,7 +173,10 @@ pub struct EmptyChunk;
 /// Componente para chunks que están siendo generados asíncronamente
 #[derive(Component)]
 pub struct ChunkGenerationTask {
-    pub task: Task<(IVec3, BaseChunk)>,
+    /// La tarea async devuelve el chunk Y su collider ya construido (en el hilo de
+    /// fondo): el mallado de colisión + el trimesh de Rapier salen del hilo
+    /// principal. `None` si el chunk no tiene geometría colisionable.
+    pub task: Task<(IVec3, BaseChunk, Option<Collider>)>,
     /// Posición del chunk, para ordenar la integración por cercanía al jugador
     /// SIN tener que pollear la tarea primero.
     pub chunk_pos: IVec3,
@@ -374,13 +377,17 @@ pub fn load_chunks_system(
                     let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
 
                     let task = thread_pool.spawn(async move {
-                        // El mallado se hace con vecinos en complete_chunk_generation_system
+                        // El mallado de RENDER (con vecinos) se hace en
+                        // complete_chunk_generation_system. Aquí, en el hilo de fondo,
+                        // construimos el COLLIDER con un mesh simple solo-colisionable
+                        // (sin vecinos) → saca el trabajo caro del hilo principal.
                         let mut base_chunk = BaseChunk::new(chunk_pos, seed);
 
                         if let Some(diffs) = &chunk_diffs {
                             base_chunk.apply_diffs(diffs);
                         }
-                        (chunk_pos, base_chunk)
+                        let collider = build_chunk_collider(&base_chunk);
+                        (chunk_pos, base_chunk, collider)
                     });
 
                     commands
@@ -436,7 +443,7 @@ pub fn complete_chunk_generation_system(
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
 ) {
-    use crate::voxel::{greedy_mesh_basechunk, greedy_mesh_basechunk_collider};
+    use crate::voxel::greedy_mesh_basechunk;
 
     // Posición del jugador en chunks: para integrar primero los huecos cercanos.
     let player_chunk = player_query
@@ -470,24 +477,12 @@ pub fn complete_chunk_generation_system(
             continue;
         };
 
-        if let Some((chunk_pos, base_chunk)) = future::block_on(future::poll_once(&mut task.task)) {
-            // Mesh de RENDER (con verificación de vecinos para eliminar gaps).
+        if let Some((_chunk_pos, base_chunk, collider)) =
+            future::block_on(future::poll_once(&mut task.task))
+        {
+            // Solo el mesh de RENDER (con vecinos) se hace aquí; el collider ya
+            // vino construido desde el hilo de fondo.
             let mesh = greedy_mesh_basechunk(&base_chunk, &chunk_map, &base_chunks);
-            let has_vertices = mesh.count_vertices() > 0;
-
-            // Collider: si el chunk tiene follaje (atravesable) se construye de un
-            // mesh aparte que lo excluye; si no, el mesh de render sirve igual y
-            // evitamos re-mallar.
-            let collider = if !has_vertices {
-                None
-            } else if chunk_has_foliage(&base_chunk) {
-                let collider_mesh =
-                    greedy_mesh_basechunk_collider(&base_chunk, &chunk_map, &base_chunks);
-                (collider_mesh.count_vertices() > 0)
-                    .then(|| create_terrain_collider(&collider_mesh))
-            } else {
-                Some(create_terrain_collider(&mesh))
-            };
 
             let mut ec = commands.entity(entity);
             ec.insert((
@@ -544,15 +539,12 @@ pub fn unload_chunks_system(
     }
 }
 
-/// ¿El chunk contiene algún voxel de follaje (atravesable)? Si no, el mesh de
-/// render sirve también como collider y nos ahorramos re-mallar.
-fn chunk_has_foliage(chunk: &BaseChunk) -> bool {
-    chunk
-        .voxel_types
-        .iter()
-        .flatten()
-        .flatten()
-        .any(|v| *v == crate::voxel::VoxelType::Foliage)
+/// Construye el collider de un chunk a partir de un mesh simple SOLO-COLISIONABLE
+/// (sin vecinos, ignora el follaje). Pensado para correr en el hilo de fondo.
+/// `None` si el chunk no tiene geometría colisionable.
+fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
+    let mesh = crate::voxel::greedy_mesh_basechunk_collider_simple(chunk);
+    (mesh.count_vertices() > 0).then(|| create_terrain_collider(&mesh))
 }
 
 /// ¿El chunk está enteramente por ENCIMA del terreno (puro aire)?
@@ -688,7 +680,8 @@ pub fn convert_lod_to_real_system(
                     if let Some(diffs) = chunk_diffs {
                         base_chunk.apply_diffs(&diffs);
                     }
-                    (chunk_pos, base_chunk)
+                    let collider = build_chunk_collider(&base_chunk);
+                    (chunk_pos, base_chunk, collider)
                 });
 
                 // Despawnear el LOD chunk y crear tarea de generación

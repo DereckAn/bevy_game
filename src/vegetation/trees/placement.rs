@@ -87,6 +87,9 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
 
     if h2 % 6 == 0 {
         // pino (igual que antes)
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
         let trunk_height = 40 + ((h2 >> 8) % 20) as i32; // 40..=59
         Some(TreeInstance {
             world_x,
@@ -98,6 +101,9 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
         })
     } else if h2 % 6 == 1 {
         // roble
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
         let trunk_height = 28 + ((h2 >> 8) % 14) as i32; // 28..=41
         Some(TreeInstance {
             world_x,
@@ -109,6 +115,9 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
         })
     } else if h2 % 6 == 2 {
         // arbusto (follaje atravesable)
+        if !crate::vegetation::config::ENABLE_BUSHES {
+            return None;
+        }
         let canopy_radius = 1 + ((h2 >> 8) % 2) as i32; // 1..=2
         Some(TreeInstance {
             world_x,
@@ -119,7 +128,10 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
             rng_seed: h2,
         })
     } else {
-        // arbusto pequeño
+        // árbol pequeño
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
         let trunk_height = 4 + ((h >> 28) & 0x3) as i32;
         let canopy_radius = 2 + ((h >> 30) & 0x1) as i32;
         Some(TreeInstance {
