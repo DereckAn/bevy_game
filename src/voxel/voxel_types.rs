@@ -58,6 +58,12 @@ pub enum VoxelType {
 
     /// Arbusto atravesable: como el follaje pero verde más oscuro (se distingue).
     Bush = 9,
+
+    /// Acículas de pino: como las hojas, pero color propio (verde oscuro).
+    PineNeedles = 10,
+
+    /// Hojas de árbol pequeño: como las hojas, pero color propio (verde claro).
+    SmallLeaves = 11,
 }
 
 // ============================================================================
@@ -201,6 +207,24 @@ impl VoxelType {
                 name: "Bush",
                 density: 0.1,
             },
+
+            VoxelType::PineNeedles => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::PINE_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "PineNeedles",
+                density: 0.1,
+            },
+
+            VoxelType::SmallLeaves => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::SMALL_LEAVES_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "SmallLeaves",
+                density: 0.1,
+            },
         }
     }
 
@@ -241,6 +265,8 @@ impl VoxelType {
             7 => VoxelType::Leaves,
             8 => VoxelType::Foliage,
             9 => VoxelType::Bush,
+            10 => VoxelType::PineNeedles,
+            11 => VoxelType::SmallLeaves,
             _ => VoxelType::Air,
         }
     }

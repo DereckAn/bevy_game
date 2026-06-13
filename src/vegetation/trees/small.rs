@@ -27,7 +27,7 @@ pub fn tree_template(trunk_height: i32, canopy_radius: i32) -> Vec<TreeVoxel> {
                 if dx * dx + dy * dy + dz * dz <= r * r {
                     voxels.push(TreeVoxel {
                         offset: IVec3::new(dx, center_y + dy, dz),
-                        voxel_type: VoxelType::Leaves,
+                        voxel_type: VoxelType::SmallLeaves,
                     });
                 }
             }

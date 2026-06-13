@@ -4,6 +4,7 @@
 use super::voxelize::{
     add_leaf_blob, next_rand, voxelize_segment, voxelize_tapered, Segment, TreeVoxel,
 };
+use crate::voxel::VoxelType;
 use bevy::prelude::*;
 use std::f32::consts::{PI, TAU};
 
@@ -58,7 +59,7 @@ pub fn pine_template(rng_seed: u32, trunk_height: i32) -> Vec<TreeVoxel> {
     // 4. Hojas DESPUÉS de la madera. Al estampar (solo sobre aire), la madera gana
     //    los solapes (tronco/ramas visibles) y las hojas rellenan alrededor.
     for (center, radius) in leaf_centers {
-        add_leaf_blob(center, radius, &mut voxels);
+        add_leaf_blob(center, radius, VoxelType::PineNeedles, &mut voxels);
     }
 
     voxels

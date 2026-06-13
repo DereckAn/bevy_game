@@ -118,7 +118,7 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
         if !crate::vegetation::config::ENABLE_BUSHES {
             return None;
         }
-        let canopy_radius = 1 + ((h2 >> 8) % 2) as i32; // 1..=2
+        let canopy_radius = 3 + ((h2 >> 8) % 3) as i32; // 3..=5
         Some(TreeInstance {
             world_x,
             world_z,

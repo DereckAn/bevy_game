@@ -2,6 +2,7 @@
 //! copa ancha y redondeada formada por mechones de hojas en las puntas.
 
 use super::voxelize::{add_leaf_blob, next_rand, voxelize_tapered, TreeVoxel};
+use crate::voxel::VoxelType;
 use bevy::prelude::*;
 
 /// Dirección pseudo-aleatoria con componentes en [-1, 1], para desviar las hijas.
@@ -29,7 +30,7 @@ fn grow(
     voxelize_tapered(start, end, thickness, thickness * 0.7, out);
 
     if depth == 0 {
-        add_leaf_blob(end, 2.5, out); // punta → mechón de copa
+        add_leaf_blob(end, 2.5, VoxelType::Leaves, out); // punta → mechón de copa
         return;
     }
 

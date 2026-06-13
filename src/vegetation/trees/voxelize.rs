@@ -129,9 +129,10 @@ pub fn next_rand(state: &mut u32) -> u32 {
     x
 }
 
-/// Esfera de Leaves de radio `radius` centrada en `center` (voxels, float).
-/// Como la copa esférica, pero con centro fraccionario (puntas de rama).
-pub fn add_leaf_blob(center: Vec3, radius: f32, out: &mut Vec<TreeVoxel>) {
+/// Esfera de follaje de radio `radius` centrada en `center` (voxels, float).
+/// Como la copa esférica, pero con centro fraccionario (puntas de rama). El
+/// `leaf_type` deja que cada especie use su propio material (pino/roble/pequeño).
+pub fn add_leaf_blob(center: Vec3, radius: f32, leaf_type: VoxelType, out: &mut Vec<TreeVoxel>) {
     let r = radius.ceil() as i32;
     let (cx, cy, cz) = (
         center.x.round() as i32,
@@ -145,7 +146,7 @@ pub fn add_leaf_blob(center: Vec3, radius: f32, out: &mut Vec<TreeVoxel>) {
                 if (dx * dx + dy * dy + dz * dz) as f32 <= r_sq {
                     out.push(TreeVoxel {
                         offset: IVec3::new(cx + dx, cy + dy, cz + dz),
-                        voxel_type: VoxelType::Leaves,
+                        voxel_type: leaf_type,
                     });
                 }
             }
