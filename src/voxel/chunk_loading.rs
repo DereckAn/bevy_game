@@ -412,7 +412,7 @@ pub fn load_chunks_system(
                         // Insertar componentes para renderizado (SIN colisión)
                         commands.entity(chunk_entity).insert((
                             Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(chunk_materials.lod_handle(lod_level)),
+                            MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                             Transform::default(),
                             lod_chunk,
                             ChunkLOD::from_distance(distance_chunks as f32),
@@ -754,7 +754,7 @@ pub fn convert_real_to_lod_system(
                     let new_entity = commands
                         .spawn((
                             Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(chunk_materials.lod_handle(lod_level)),
+                            MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                             Transform::default(),
                             lod_chunk,
                         ))

@@ -4,7 +4,7 @@
 
 use crate::{
     core::VOXEL_SIZE,
-    voxel::{TerrainGenerator, VoxelType},
+    voxel::{TerrainGenerator, VoxelType, voxel_color},
 };
 use bevy::{
     mesh::{Indices, PrimitiveTopology},
@@ -107,7 +107,7 @@ impl LodChunk {
 }
 
 // Genera un mesh para renderizar el chunk LOD
-// Incluye cara suyperiro y caras laterales para verse bien desde cualquier angulo
+// Incluye cara superior y caras laterales para verse bien desde cualquier angulo
 pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
     let grid_size = lod_chunk.lod_level.grid_size();
     let step_size = 32 / grid_size;
@@ -115,6 +115,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     // Offset base del chunk en el mundo
@@ -131,15 +132,31 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
             let pos_x = chunk_offset_x + x as f32 * voxel_step;
             let pos_z = chunk_offset_z + z as f32 * voxel_step;
 
+            // Color del terreno para esta celda, muestreado en su centro en
+            // COORDENADAS MUNDIALES: es el mismo campo de ruido que usan los
+            // chunks reales, así el color del LOD encaja con el terreno cercano.
+            let base = voxel_color(
+                lod_chunk.surface_types[index],
+                pos_x + voxel_step * 0.5,
+                height,
+                pos_z + voxel_step * 0.5,
+                0.0,
+            );
+            // Sombreado por cara igual que el greedy mesher: cima a brillo pleno,
+            // lados al 75% para dar volumen.
+            let side_color = [base[0] * 0.75, base[1] * 0.75, base[2] * 0.75, base[3]];
+
             // Cara superior
             add_top_face(
                 &mut positions,
                 &mut normals,
+                &mut colors,
                 &mut indices,
                 pos_x,
                 height,
                 pos_z,
                 voxel_step,
+                base,
             );
 
             // --- CARAS LATERALES ---
@@ -155,6 +172,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                 add_side_face(
                     &mut positions,
                     &mut normals,
+                    &mut colors,
                     &mut indices,
                     pos_x,
                     neighbor_height,
@@ -162,6 +180,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                     pos_z,
                     pos_z + voxel_step,
                     [-1.0, 0.0, 0.0], // Normal apuntando a -X
+                    side_color,
                 );
             }
 
@@ -175,6 +194,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                 add_side_face(
                     &mut positions,
                     &mut normals,
+                    &mut colors,
                     &mut indices,
                     pos_x + voxel_step,
                     neighbor_height,
@@ -182,6 +202,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                     pos_z,
                     pos_z + voxel_step,
                     [1.0, 0.0, 0.0], // Normal apuntando a +X
+                    side_color,
                 );
             }
 
@@ -195,6 +216,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                 add_side_face(
                     &mut positions,
                     &mut normals,
+                    &mut colors,
                     &mut indices,
                     pos_x,
                     neighbor_height,
@@ -202,6 +224,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                     pos_z,
                     pos_z,
                     [0.0, 0.0, -1.0], // Normal apuntando a -Z
+                    side_color,
                 );
             }
 
@@ -215,6 +238,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                 add_side_face(
                     &mut positions,
                     &mut normals,
+                    &mut colors,
                     &mut indices,
                     pos_x,
                     neighbor_height,
@@ -222,6 +246,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
                     pos_z + voxel_step,
                     pos_z + voxel_step,
                     [0.0, 0.0, 1.0], // Normal apuntando a +Z
+                    side_color,
                 );
             }
         }
@@ -231,6 +256,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     mesh.insert_indices(Indices::U32(indices));
     mesh
 }
@@ -239,11 +265,13 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
 fn add_top_face(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
     indices: &mut Vec<u32>,
     x: f32,
     y: f32,
     z: f32,
     size: f32,
+    color: [f32; 4],
 ) {
     let base_idx = positions.len() as u32;
 
@@ -255,6 +283,7 @@ fn add_top_face(
 
     // Normal apuntando hacia arriba
     normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
+    colors.extend_from_slice(&[color; 4]);
 
     // 2 triángulos (winding CCW visto desde +Y, para backface culling)
     indices.extend_from_slice(&[
@@ -270,6 +299,7 @@ fn add_top_face(
 fn add_side_face(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
     indices: &mut Vec<u32>,
     x: f32,
     y_bottom: f32,
@@ -277,6 +307,7 @@ fn add_side_face(
     z_start: f32,
     z_end: f32,
     normal: [f32; 3],
+    color: [f32; 4],
 ) {
     let base_idx = positions.len() as u32;
 
@@ -288,6 +319,7 @@ fn add_side_face(
 
     // Normal de la cara
     normals.extend_from_slice(&[normal; 4]);
+    colors.extend_from_slice(&[color; 4]);
 
     // 2 triángulos. El orden de vértices produce winding frontal hacia el eje
     // negativo; para caras que miran al eje positivo hay que invertirlo
