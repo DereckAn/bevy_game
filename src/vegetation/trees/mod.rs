@@ -11,6 +11,6 @@ mod small;
 mod voxelize;
 
 // API pública del módulo (los paths `crate::vegetation::trees::*` siguen válidos).
-// `tree_in_cell` / `TreeInstance` / `TreeKind` se re-exportarán cuando los use el
-// sistema LOD; por ahora solo lo que consumen el terreno y el loader.
-pub use placement::{place_trees, tree_ceiling_for_chunk};
+pub use placement::{
+    MAX_CANOPY_RADIUS, TREE_CELL_SIZE, TreeKind, place_trees, tree_ceiling_for_chunk, tree_in_cell,
+};

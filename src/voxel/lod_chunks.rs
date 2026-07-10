@@ -108,7 +108,7 @@ impl LodChunk {
 
 // Genera un mesh para renderizar el chunk LOD
 // Incluye cara superior y caras laterales para verse bien desde cualquier angulo
-pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
+pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32) -> Mesh {
     let grid_size = lod_chunk.lod_level.grid_size();
     let step_size = 32 / grid_size;
     let voxel_step = step_size as f32 * VOXEL_SIZE;
@@ -252,6 +252,20 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk) -> Mesh {
         }
     }
 
+    // Impostores de arboles distantes. Solo pinos y solo en los
+    // niveles LOD mas cercanos (Medium y Low). Diujar arboles en todo el alcance
+    // LOD (~200 chunks) dispararia el conteo; minimal (128) va sin arboles.
+    if matches!(lod_chunk.lod_level, LodLevel::Medium | LodLevel::Low) {
+        add_tree_impostors(
+            lod_chunk,
+            seed,
+            &mut positions,
+            &mut normals,
+            &mut colors,
+            &mut indices,
+        );
+    }
+
     // Construir el mesh
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
@@ -342,5 +356,275 @@ fn add_side_face(
             base_idx + 2,
             base_idx + 3,
         ]);
+    }
+}
+
+/// Lados del cono de la copa del impostor. 6 es suficiente a distancia LOD.
+const IMPOSTOR_SIDES: usize = 6;
+
+/// Color RGBA lineal de un tipo de voxel (igual que la rama no-pasto de `voxel_color`).
+fn linear_rgba(voxel_type: VoxelType) -> [f32; 4] {
+    let l = voxel_type.properties().color.to_linear();
+    [l.red, l.green, l.blue, 1.0]
+}
+
+/// Punto `i` de un anillo horizontal de `sides` lados, radio `radius`, centrado en `center`.
+fn ring_point(center: Vec3, radius: f32, i: usize, sides: usize) -> Vec3 {
+    let a = std::f32::consts::TAU * i as f32 / sides as f32;
+    Vec3::new(
+        center.x + radius * a.cos(),
+        center.y,
+        center.z + radius * a.sin(),
+    )
+}
+
+/// Añade un triángulo con normal plana, garantizando que su cara FRONTAL mire
+/// hacia afuera (lejos de `interior`). Así no importa el orden de los vértices:
+/// el winding se corrige para que el backface culling no lo oculte.
+fn add_tri_outward(
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    interior: Vec3,
+    color: [f32; 4],
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    let centroid = (a + b + c) / 3.0;
+    let outward = (centroid - interior).normalize_or_zero();
+    let mut n = (b - a).cross(c - a).normalize_or_zero();
+
+    // Si la normal apunta hacia adentro, invertir winding y normal.
+    let (v0, v1, v2) = if n.dot(outward) >= 0.0 {
+        (a, b, c)
+    } else {
+        n = -n;
+        (a, c, b)
+    };
+
+    let base = positions.len() as u32;
+    positions.extend_from_slice(&[[v0.x, v0.y, v0.z], [v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z]]);
+    normals.extend_from_slice(&[[n.x, n.y, n.z]; 3]);
+    colors.extend_from_slice(&[color; 3]);
+    indices.extend_from_slice(&[base, base + 1, base + 2]);
+}
+
+/// Añade un impostor de pino barato (tronco tipo prisma + copa cónica) a los
+/// buffers del mesh, en `base` (nivel del suelo) y altura `height_m` metros.
+/// Unos pocos triángulos por árbol, sin detalle por voxel. Usa los mismos tipos
+/// de voxel que el pino real → el color combina al convertirse LOD → Real.
+fn add_pine_impostor(
+    base: Vec3,
+    height_m: f32,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    let trunk_color = linear_rgba(VoxelType::Wood);
+    let canopy_color = linear_rgba(VoxelType::PineNeedles);
+
+    // --- Tronco: prisma cuadrado delgado en el tercio inferior ---
+    let trunk_h = height_m * 0.35;
+    let trunk_r = (height_m * 0.03).max(0.05);
+    add_trunk_prism(
+        base,
+        trunk_r,
+        trunk_h,
+        trunk_color,
+        positions,
+        normals,
+        colors,
+        indices,
+    );
+
+    // --- Copa: cono verde que domina la silueta ---
+    let canopy_base = base + Vec3::Y * (height_m * 0.25);
+    let apex = base + Vec3::Y * height_m;
+    let canopy_r = height_m * 0.18;
+    for i in 0..IMPOSTOR_SIDES {
+        let p0 = ring_point(canopy_base, canopy_r, i, IMPOSTOR_SIDES);
+        let p1 = ring_point(
+            canopy_base,
+            canopy_r,
+            (i + 1) % IMPOSTOR_SIDES,
+            IMPOSTOR_SIDES,
+        );
+        add_tri_outward(
+            p0,
+            p1,
+            apex,
+            canopy_base,
+            canopy_color,
+            positions,
+            normals,
+            colors,
+            indices,
+        );
+    }
+}
+
+/// Añade un impostor de roble: tronco tipo prisma + copa redonda ancha
+/// (bipirámide de N lados, más ancha que alta). Mismos tipos de voxel que el
+/// roble real (madera + hojas) → el color combina al convertirse LOD → Real.
+fn add_oak_impostor(
+    base: Vec3,
+    height_m: f32,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    let trunk_color = linear_rgba(VoxelType::Wood);
+    let canopy_color = linear_rgba(VoxelType::Leaves);
+
+    // Tronco más corto y grueso que el del pino.
+    let trunk_h = height_m * 0.4;
+    let trunk_r = (height_m * 0.04).max(0.06);
+    add_trunk_prism(
+        base,
+        trunk_r,
+        trunk_h,
+        trunk_color,
+        positions,
+        normals,
+        colors,
+        indices,
+    );
+
+    // Copa: bola ancha (bipirámide) — más ancha que alta, como un roble.
+    let center = base + Vec3::Y * (height_m * 0.68);
+    let rh = height_m * 0.34; // radio horizontal
+    let rv = height_m * 0.30; // radio vertical
+    let top = center + Vec3::Y * rv;
+    let bottom = center - Vec3::Y * rv;
+    for i in 0..IMPOSTOR_SIDES {
+        let p0 = ring_point(center, rh, i, IMPOSTOR_SIDES);
+        let p1 = ring_point(center, rh, (i + 1) % IMPOSTOR_SIDES, IMPOSTOR_SIDES);
+        add_tri_outward(
+            p0,
+            p1,
+            top,
+            center,
+            canopy_color,
+            positions,
+            normals,
+            colors,
+            indices,
+        );
+        add_tri_outward(
+            p1,
+            p0,
+            bottom,
+            center,
+            canopy_color,
+            positions,
+            normals,
+            colors,
+            indices,
+        );
+    }
+}
+
+/// Tronco: prisma cuadrado vertical (4 caras) desde `base`, radio `r`, alto `h`.
+fn add_trunk_prism(
+    base: Vec3,
+    r: f32,
+    h: f32,
+    color: [f32; 4],
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    let axis = base + Vec3::Y * h * 0.5;
+    for i in 0..4 {
+        let b0 = ring_point(base, r, i, 4);
+        let b1 = ring_point(base, r, (i + 1) % 4, 4);
+        let t0 = b0 + Vec3::Y * h;
+        let t1 = b1 + Vec3::Y * h;
+        add_tri_outward(b0, b1, t1, axis, color, positions, normals, colors, indices);
+        add_tri_outward(b0, t1, t0, axis, color, positions, normals, colors, indices);
+    }
+}
+
+/// Coloca impostores de pino en la huella de este chunk LOD, con la MISMA lógica
+/// determinista que `place_trees` (mismo rango de celdas y misma base de altura),
+/// así los conos coinciden con los pinos voxel al convertirse LOD → Real (sin pop).
+/// Solo pinos: los arbustos y árboles pequeños son invisibles a distancia.
+fn add_tree_impostors(
+    lod_chunk: &LodChunk,
+    seed: i32,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    use crate::vegetation::trees::{MAX_CANOPY_RADIUS, TREE_CELL_SIZE, TreeKind, tree_in_cell};
+
+    let n: i32 = 32; // BASE_CHUNK_SIZE en voxels
+    let origin = lod_chunk.position * n;
+
+    // Rango de celdas que alcanzan este chunk (expandido por la copa), idéntico a place_trees.
+    let r = MAX_CANOPY_RADIUS;
+    let cell_x_min = (origin.x - r).div_euclid(TREE_CELL_SIZE);
+    let cell_x_max = (origin.x + n - 1 + r).div_euclid(TREE_CELL_SIZE);
+    let cell_z_min = (origin.z - r).div_euclid(TREE_CELL_SIZE);
+    let cell_z_max = (origin.z + n - 1 + r).div_euclid(TREE_CELL_SIZE);
+
+    let mut terrain_gen = TerrainGenerator::new(seed);
+
+    for cell_x in cell_x_min..=cell_x_max {
+        for cell_z in cell_z_min..=cell_z_max {
+            let Some(tree) = tree_in_cell(cell_x, cell_z, seed) else {
+                continue;
+            };
+
+            if !matches!(tree.kind, TreeKind::Pine | TreeKind::Oak) {
+                continue;
+            }
+
+            let world_x_m = tree.world_x as f32 * VOXEL_SIZE;
+            let world_z_m = tree.world_z as f32 * VOXEL_SIZE;
+            let surface_m = terrain_gen.biome_gen.generate_height(world_x_m, world_z_m);
+            let surface_voxel_y = (surface_m / VOXEL_SIZE).floor() as i32;
+
+            // Misma base que place_trees (surface_voxel_y + 1): el cono cae donde
+            // arrancará el tronco real.
+            let base = Vec3::new(
+                world_x_m,
+                (surface_voxel_y + 1) as f32 * VOXEL_SIZE,
+                world_z_m,
+            );
+            let height_m = tree.height() as f32 * VOXEL_SIZE;
+
+            match tree.kind {
+                TreeKind::Oak => {
+                    add_oak_impostor(base, height_m, positions, normals, colors, indices)
+                }
+                _ => add_pine_impostor(base, height_m, positions, normals, colors, indices),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pine_impostor_emits_triangles() {
+        let (mut p, mut n, mut c, mut i) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        add_pine_impostor(Vec3::ZERO, 5.0, &mut p, &mut n, &mut c, &mut i);
+        assert!(!i.is_empty());
+    }
+
+    #[test]
+    fn pine_impostor_buffers_are_aligned() {
+        let (mut p, mut n, mut c, mut i) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        add_pine_impostor(Vec3::ZERO, 5.0, &mut p, &mut n, &mut c, &mut i);
+        assert!(n.len() == p.len() && c.len() == p.len());
     }
 }

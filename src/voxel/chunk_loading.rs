@@ -405,7 +405,7 @@ pub fn load_chunks_system(
                     let mut terrain_gen = TerrainGenerator::new(seed); // Mismo seed del mundo
                     lod_chunk.generate_surface(&mut terrain_gen);
 
-                    let mesh = mesh_lod_chunk(&lod_chunk);
+                    let mesh = mesh_lod_chunk(&lod_chunk, seed);
 
                     // Solo renderizar si el mesh tiene vértices
                     if mesh.count_vertices() > 0 {
@@ -743,7 +743,7 @@ pub fn convert_real_to_lod_system(
                 let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
                 let mut terrain_gen = TerrainGenerator::new(world_seed.0);
                 lod_chunk.generate_surface(&mut terrain_gen);
-                let mesh = mesh_lod_chunk(&lod_chunk);
+                let mesh = mesh_lod_chunk(&lod_chunk, world_seed.0);
 
                 // Solo crear si el mesh tiene vértices
                 if mesh.count_vertices() > 0 {
