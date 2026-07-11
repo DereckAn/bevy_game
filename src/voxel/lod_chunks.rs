@@ -4,7 +4,7 @@
 
 use crate::{
     core::VOXEL_SIZE,
-    voxel::{TerrainGenerator, VoxelType, voxel_color},
+    voxel::{voxel_color, TerrainGenerator, VoxelType},
 };
 use bevy::{
     mesh::{Indices, PrimitiveTopology},
@@ -359,8 +359,8 @@ fn add_side_face(
     }
 }
 
-/// Lados del cono de la copa del impostor. 6 es suficiente a distancia LOD.
-const IMPOSTOR_SIDES: usize = 6;
+/// Lados del cono/bola de la copa del impostor. 8 se ve suave a distancia LOD.
+const IMPOSTOR_SIDES: usize = 8;
 
 /// Color RGBA lineal de un tipo de voxel (igual que la rama no-pasto de `voxel_color`).
 fn linear_rgba(voxel_type: VoxelType) -> [f32; 4] {
@@ -404,15 +404,98 @@ fn add_tri_outward(
         (a, c, b)
     };
 
+    // Volumen barato: caras que miran hacia arriba más claras; lados y bajo, más
+    // oscuros. Da relieve al impostor sin luces reales.
+    let shade = 0.6 + 0.4 * (n.y * 0.5 + 0.5);
+    let shaded = [
+        color[0] * shade,
+        color[1] * shade,
+        color[2] * shade,
+        color[3],
+    ];
+
     let base = positions.len() as u32;
     positions.extend_from_slice(&[[v0.x, v0.y, v0.z], [v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z]]);
     normals.extend_from_slice(&[[n.x, n.y, n.z]; 3]);
-    colors.extend_from_slice(&[color; 3]);
+    colors.extend_from_slice(&[shaded; 3]);
     indices.extend_from_slice(&[base, base + 1, base + 2]);
 }
 
-/// Añade un impostor de pino barato (tronco tipo prisma + copa cónica) a los
-/// buffers del mesh, en `base` (nivel del suelo) y altura `height_m` metros.
+/// Cono: abanico de triángulos desde un anillo de `IMPOSTOR_SIDES` lados hacia `apex`.
+fn add_cone(
+    ring_center: Vec3,
+    radius: f32,
+    apex: Vec3,
+    color: [f32; 4],
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    for i in 0..IMPOSTOR_SIDES {
+        let p0 = ring_point(ring_center, radius, i, IMPOSTOR_SIDES);
+        let p1 = ring_point(
+            ring_center,
+            radius,
+            (i + 1) % IMPOSTOR_SIDES,
+            IMPOSTOR_SIDES,
+        );
+        add_tri_outward(
+            p0,
+            p1,
+            apex,
+            ring_center,
+            color,
+            positions,
+            normals,
+            colors,
+            indices,
+        );
+    }
+}
+
+/// Caja de 6 caras centrada en `center` con semiejes `half`. `add_tri_outward`
+/// corrige el winding, así las 6 caras miran hacia afuera.
+fn add_box(
+    center: Vec3,
+    half: Vec3,
+    color: [f32; 4],
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    colors: &mut Vec<[f32; 4]>,
+    indices: &mut Vec<u32>,
+) {
+    let (hx, hy, hz) = (half.x, half.y, half.z);
+    let v = [
+        center + Vec3::new(-hx, -hy, -hz),
+        center + Vec3::new(hx, -hy, -hz),
+        center + Vec3::new(hx, -hy, hz),
+        center + Vec3::new(-hx, -hy, hz),
+        center + Vec3::new(-hx, hy, -hz),
+        center + Vec3::new(hx, hy, -hz),
+        center + Vec3::new(hx, hy, hz),
+        center + Vec3::new(-hx, hy, hz),
+    ];
+    let faces = [
+        [0, 1, 2, 3], // abajo
+        [4, 5, 6, 7], // arriba
+        [0, 1, 5, 4], // -Z
+        [2, 3, 7, 6], // +Z
+        [1, 2, 6, 5], // +X
+        [3, 0, 4, 7], // -X
+    ];
+    for f in faces {
+        add_tri_outward(
+            v[f[0]], v[f[1]], v[f[2]], center, color, positions, normals, colors, indices,
+        );
+        add_tri_outward(
+            v[f[0]], v[f[2]], v[f[3]], center, color, positions, normals, colors, indices,
+        );
+    }
+}
+
+/// Añade un impostor de pino barato (tronco tipo prisma + 3 conos apilados) a
+/// los buffers del mesh, en `base` (nivel del suelo) y altura `height_m` metros.
 /// Unos pocos triángulos por árbol, sin detalle por voxel. Usa los mismos tipos
 /// de voxel que el pino real → el color combina al convertirse LOD → Real.
 fn add_pine_impostor(
@@ -440,23 +523,16 @@ fn add_pine_impostor(
         indices,
     );
 
-    // --- Copa: cono verde que domina la silueta ---
-    let canopy_base = base + Vec3::Y * (height_m * 0.25);
-    let apex = base + Vec3::Y * height_m;
-    let canopy_r = height_m * 0.18;
-    for i in 0..IMPOSTOR_SIDES {
-        let p0 = ring_point(canopy_base, canopy_r, i, IMPOSTOR_SIDES);
-        let p1 = ring_point(
-            canopy_base,
-            canopy_r,
-            (i + 1) % IMPOSTOR_SIDES,
-            IMPOSTOR_SIDES,
-        );
-        add_tri_outward(
-            p0,
-            p1,
+    // --- Copa: 3 conos apilados (base ancha → punta) = silueta de conífera ---
+    // (base_frac, radio_frac, apex_frac) como fracción de la altura.
+    let tiers = [(0.25, 0.22, 0.58), (0.48, 0.17, 0.80), (0.70, 0.11, 1.00)];
+    for (base_frac, r_frac, apex_frac) in tiers {
+        let ring = base + Vec3::Y * (height_m * base_frac);
+        let apex = base + Vec3::Y * (height_m * apex_frac);
+        add_cone(
+            ring,
+            height_m * r_frac,
             apex,
-            canopy_base,
             canopy_color,
             positions,
             normals,
@@ -466,9 +542,9 @@ fn add_pine_impostor(
     }
 }
 
-/// Añade un impostor de roble: tronco tipo prisma + copa redonda ancha
-/// (bipirámide de N lados, más ancha que alta). Mismos tipos de voxel que el
-/// roble real (madera + hojas) → el color combina al convertirse LOD → Real.
+/// Añade un impostor de roble: tronco tipo prisma + copa en caja achatada.
+/// Mismos tipos de voxel que el roble real (madera + hojas) → el color combina
+/// al convertirse LOD → Real.
 fn add_oak_impostor(
     base: Vec3,
     height_m: f32,
@@ -494,38 +570,19 @@ fn add_oak_impostor(
         indices,
     );
 
-    // Copa: bola ancha (bipirámide) — más ancha que alta, como un roble.
-    let center = base + Vec3::Y * (height_m * 0.68);
-    let rh = height_m * 0.34; // radio horizontal
-    let rv = height_m * 0.30; // radio vertical
-    let top = center + Vec3::Y * rv;
-    let bottom = center - Vec3::Y * rv;
-    for i in 0..IMPOSTOR_SIDES {
-        let p0 = ring_point(center, rh, i, IMPOSTOR_SIDES);
-        let p1 = ring_point(center, rh, (i + 1) % IMPOSTOR_SIDES, IMPOSTOR_SIDES);
-        add_tri_outward(
-            p0,
-            p1,
-            top,
-            center,
-            canopy_color,
-            positions,
-            normals,
-            colors,
-            indices,
-        );
-        add_tri_outward(
-            p1,
-            p0,
-            bottom,
-            center,
-            canopy_color,
-            positions,
-            normals,
-            colors,
-            indices,
-        );
-    }
+    // Copa: caja achatada (cubo) en vez del diamante alto: más pequeña y menos
+    // puntiaguda. Más ancha que alta, como una frondosa.
+    let center = base + Vec3::Y * (height_m * 0.58);
+    let half = Vec3::new(height_m * 0.22, height_m * 0.20, height_m * 0.22);
+    add_box(
+        center,
+        half,
+        canopy_color,
+        positions,
+        normals,
+        colors,
+        indices,
+    );
 }
 
 /// Tronco: prisma cuadrado vertical (4 caras) desde `base`, radio `r`, alto `h`.
@@ -562,7 +619,7 @@ fn add_tree_impostors(
     colors: &mut Vec<[f32; 4]>,
     indices: &mut Vec<u32>,
 ) {
-    use crate::vegetation::trees::{MAX_CANOPY_RADIUS, TREE_CELL_SIZE, TreeKind, tree_in_cell};
+    use crate::vegetation::trees::{tree_in_cell, TreeKind, MAX_CANOPY_RADIUS, TREE_CELL_SIZE};
 
     let n: i32 = 32; // BASE_CHUNK_SIZE en voxels
     let origin = lod_chunk.position * n;

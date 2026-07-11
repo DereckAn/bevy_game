@@ -241,7 +241,7 @@ pub fn update_chunk_load_queue(
 
     // Rango vertical reducido: desde -1 hasta +3 chunks (mejor rendimiento)
     let y_min = -1;
-    let y_max = 3;
+    let y_max = 4;
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
     // El triple bucle visita cada (cx,cy,cz) exactamente una vez, así que no hay
