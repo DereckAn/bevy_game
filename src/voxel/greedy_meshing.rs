@@ -375,11 +375,13 @@ fn greedy_mesh_slice(
                 0.0
             };
 
-            // Las caras SUPERIORES de pasto (eje Y, dirección +1) NO se fusionan:
-            // así cada voxel de pasto recibe su propio color de la paleta. Todo lo
-            // demás se fusiona normal (mantiene el ahorro del greedy meshing).
+            // No fusionar cuando el color varía por voxel: caras SUPERIORES de pasto
+            // (eje Y, +1) y TODA la madera (roble/pino), que toma un tono aleatorio
+            // de su paleta por voxel. Un quad fusionado tendría un solo color y
+            // borraría esa variación. El resto se fusiona normal (ahorro greedy).
             let is_grass_top = voxel_type == VoxelType::Grass && axis == 1 && direction == 1;
-            let (width, height) = if is_grass_top {
+            let is_wood = matches!(voxel_type, VoxelType::Wood | VoxelType::PineWood);
+            let (width, height) = if is_grass_top || is_wood {
                 processed[idx] = true;
                 (1, 1)
             } else {
@@ -497,9 +499,18 @@ fn add_greedy_quad(
     // de color plano. El pasto usa la fórmula HSL (ruido + altura + pendiente); el
     // resto, el color real del material. El material del chunk es blanco, así que
     // el color renderizado = vertex color.
-    let center_x = (v0[0] + v2[0]) * 0.5;
-    let center_y = (v0[1] + v2[1]) * 0.5;
-    let center_z = (v0[2] + v2[2]) * 0.5;
+    // Muestrear el color en el CENTRO DE LA CELDA sólida, no en el plano de la
+    // cara: se retrocede medio voxel a lo largo de la normal (−dirección en el
+    // eje). Así las 6 caras de un mismo voxel muestrean el mismo punto → un único
+    // color por voxel (sin costuras de color entre caras).
+    let half = VOXEL_SIZE * 0.5;
+    let mut center = [
+        (v0[0] + v2[0]) * 0.5,
+        (v0[1] + v2[1]) * 0.5,
+        (v0[2] + v2[2]) * 0.5,
+    ];
+    center[axis] -= direction as f32 * half;
+    let [center_x, center_y, center_z] = center;
 
     // Sombreado por orientación de cara (AO barato): la cima a brillo pleno, los
     // lados más oscuros y la base la más oscura. Da volumen aun sin sombras reales.
