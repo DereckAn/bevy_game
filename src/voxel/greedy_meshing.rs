@@ -375,13 +375,12 @@ fn greedy_mesh_slice(
                 0.0
             };
 
-            // No fusionar cuando el color varía por voxel: caras SUPERIORES de pasto
-            // (eje Y, +1) y TODA la madera (roble/pino), que toma un tono aleatorio
-            // de su paleta por voxel. Un quad fusionado tendría un solo color y
-            // borraría esa variación. El resto se fusiona normal (ahorro greedy).
+            // Las caras SUPERIORES de pasto (eje Y, +1) NO se fusionan: cada voxel
+            // recibe su propio tono baked en el vertex color. La madera SÍ se
+            // fusiona: su color base es uniforme por quad y la variación de tono la
+            // aplica el shader de paleta por fragmento (ver palette_extension.wgsl).
             let is_grass_top = voxel_type == VoxelType::Grass && axis == 1 && direction == 1;
-            let is_wood = matches!(voxel_type, VoxelType::Wood | VoxelType::PineWood);
-            let (width, height) = if is_grass_top || is_wood {
+            let (width, height) = if is_grass_top {
                 processed[idx] = true;
                 (1, 1)
             } else {

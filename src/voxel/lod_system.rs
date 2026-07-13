@@ -66,7 +66,7 @@ pub fn update_chunk_lod_system(
     mut chunk_query: Query<(
         &BaseChunk,
         &mut ChunkLOD,
-        &mut MeshMaterial3d<StandardMaterial>,
+        &mut MeshMaterial3d<crate::voxel::ChunkMaterial>,
     )>,
     chunk_materials: Res<crate::voxel::ChunkMaterials>,
 ) {

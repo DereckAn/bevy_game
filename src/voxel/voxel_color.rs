@@ -12,7 +12,7 @@
 //! LINEAL (el shader PBR los interpreta así).
 
 use crate::core::constants::VOXEL_SIZE;
-use crate::voxel::palette::{palette_of, step_multiplier, Palette};
+use crate::voxel::palette::palette_of;
 use crate::voxel::VoxelType;
 use bevy::prelude::*;
 use std::sync::LazyLock;
@@ -135,49 +135,14 @@ fn grass_color(world_x: f32, world_y: f32, world_z: f32, slope: f32) -> [f32; 4]
     ]
 }
 
-// ============================================================================
-// PALETA TONAL DE MADERA (tints & shades desde un color base)
-// ============================================================================
-
-/// Precomputa los tonos de una paleta a RGB LINEAL (una sola vez por material):
-/// así la conversión sRGB→lineal NO se paga por voxel, solo la elección de tono.
-fn build_palette_linear(palette: &Palette) -> Vec<[f32; 3]> {
-    (0..palette.steps)
-        .map(|i| {
-            let m = step_multiplier(i, palette);
-            let l = Color::srgb(
-                palette.base[0] * m,
-                palette.base[1] * m,
-                palette.base[2] * m,
-            )
-            .to_linear();
-            [l.red, l.green, l.blue]
-        })
-        .collect()
-}
-
-/// Tonos lineales precomputados para cada tipo de madera (derivados del registro).
-static OAK_WOOD_PALETTE: LazyLock<Vec<[f32; 3]>> =
-    LazyLock::new(|| build_palette_linear(&palette_of(VoxelType::Wood).unwrap()));
-static PINE_WOOD_PALETTE: LazyLock<Vec<[f32; 3]>> =
-    LazyLock::new(|| build_palette_linear(&palette_of(VoxelType::PineWood).unwrap()));
-
-/// Pinta un voxel de paleta eligiendo uno de sus tonos según un valor
-/// pseudo-aleatorio estable de la posición: cada árbol (x,z distintos) y cada
-/// banda del tronco (y distinto) cae en un tono. El mesher muestrea en el centro
-/// de la celda, así que las 6 caras de un voxel comparten tono.
-fn palette_color(world_x: f32, world_y: f32, world_z: f32, palette: &[[f32; 3]]) -> [f32; 4] {
-    let vx = (world_x / VOXEL_SIZE).round() as i32;
-    let vy = (world_y / VOXEL_SIZE).round() as i32;
-    let vz = (world_z / VOXEL_SIZE).round() as i32;
-    let idx = (hash01(vx.wrapping_add(vy.wrapping_mul(31)), vz) * palette.len() as f32) as usize;
-    let c = palette[idx.min(palette.len() - 1)];
-    [c[0], c[1], c[2], 1.0]
-}
-
-/// Color (RGB lineal) de un vértice según el tipo de voxel: el pasto interpola
-/// entre dos verdes (ruido + altura + pendiente); la madera elige un tono de su
-/// paleta; el resto usa el color real de su material. `slope` solo afecta al pasto.
+/// Color (RGB lineal) de un vértice según el tipo de voxel. El **alpha marca el
+/// material para el shader**: `1.0` = material de paleta (el shader aplica la
+/// variación de tono por voxel), `0.0` = color final plano (usar tal cual).
+///
+/// - Pasto: interpola dos verdes (ruido + altura + pendiente), ya baked → alpha 0.
+/// - Paleta (madera, y futuros): color base plano y uniforme por quad (así el
+///   greedy meshing fusiona); el tono lo pone el shader → alpha 1.
+/// - Resto: color real del material → alpha 0.
 pub fn voxel_color(
     voxel_type: VoxelType,
     world_x: f32,
@@ -185,13 +150,15 @@ pub fn voxel_color(
     world_z: f32,
     slope: f32,
 ) -> [f32; 4] {
-    match voxel_type {
-        VoxelType::Grass => grass_color(world_x, world_y, world_z, slope),
-        VoxelType::Wood => palette_color(world_x, world_y, world_z, &OAK_WOOD_PALETTE),
-        VoxelType::PineWood => palette_color(world_x, world_y, world_z, &PINE_WOOD_PALETTE),
-        _ => {
-            let l = voxel_type.properties().color.to_linear();
-            [l.red, l.green, l.blue, 1.0]
-        }
+    if voxel_type == VoxelType::Grass {
+        let mut c = grass_color(world_x, world_y, world_z, slope);
+        c[3] = 0.0; // plano: color ya baked, el shader no lo toca
+        return c;
     }
+    if let Some(p) = palette_of(voxel_type) {
+        let l = Color::srgb(p.base[0], p.base[1], p.base[2]).to_linear();
+        return [l.red, l.green, l.blue, 1.0]; // paleta: el shader varía el tono
+    }
+    let l = voxel_type.properties().color.to_linear();
+    [l.red, l.green, l.blue, 0.0]
 }

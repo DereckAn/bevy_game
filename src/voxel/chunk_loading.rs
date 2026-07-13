@@ -8,8 +8,8 @@ use crate::{
     physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        self, BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator,
-        VoxelDiffs, mesh_lod_chunk,
+        self, BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, PaletteExtension,
+        SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -90,44 +90,52 @@ impl ChunkType {
 #[derive(Resource)]
 pub struct ChunkMaterials {
     /// Por nivel de `ChunkLOD` (chunks reales): Ultra, High, Medium, Low, Minimal
-    real: [Handle<StandardMaterial>; 5],
+    real: [Handle<ChunkMaterial>; 5],
     /// Por nivel de `LodLevel` (chunks LOD): Medium, Low, Minimal
     lod: [Handle<StandardMaterial>; 3],
 }
 
 impl FromWorld for ChunkMaterials {
     fn from_world(world: &mut World) -> Self {
-        let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
-
-        // Blanco: el color real del suelo viene de los vertex colors del mesh
-        // (verde variado). 5 handles iguales para que `real_handle` siga indexando
-        // por ChunkLOD aunque `update_chunk_lod_system` los intercambie.
-        let real = [(); 5].map(|_| {
-            materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                ..default()
+        // Base blanca: el color real del suelo viene de los vertex colors; la
+        // extensión de paleta aplica la variación de tono por voxel. 5 handles
+        // iguales para que `real_handle` siga indexando por ChunkLOD aunque
+        // `update_chunk_lod_system` los intercambie.
+        let real = {
+            let mut materials = world.resource_mut::<Assets<ChunkMaterial>>();
+            [(); 5].map(|_| {
+                materials.add(ChunkMaterial {
+                    base: StandardMaterial {
+                        base_color: Color::WHITE,
+                        ..default()
+                    },
+                    extension: PaletteExtension::default(),
+                })
             })
-        });
+        };
 
         // Colores de debug por nivel LOD (naranja → rojo según distancia)
-        let lod = [
-            Color::srgb(1.0, 0.6, 0.0), // Medium (32-64 chunks)
-            Color::srgb(1.0, 0.3, 0.0), // Low (64-128)
-            Color::srgb(0.8, 0.0, 0.0), // Minimal (128+)
-        ]
-        .map(|color| {
-            materials.add(StandardMaterial {
-                base_color: color,
-                ..default()
+        let lod = {
+            let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+            [
+                Color::srgb(1.0, 0.6, 0.0), // Medium (32-64 chunks)
+                Color::srgb(1.0, 0.3, 0.0), // Low (64-128)
+                Color::srgb(0.8, 0.0, 0.0), // Minimal (128+)
+            ]
+            .map(|color| {
+                materials.add(StandardMaterial {
+                    base_color: color,
+                    ..default()
+                })
             })
-        });
+        };
 
         Self { real, lod }
     }
 }
 
 impl ChunkMaterials {
-    pub fn real_handle(&self, lod: ChunkLOD) -> Handle<StandardMaterial> {
+    pub fn real_handle(&self, lod: ChunkLOD) -> Handle<ChunkMaterial> {
         let idx = match lod {
             ChunkLOD::Ultra => 0,
             ChunkLOD::High => 1,

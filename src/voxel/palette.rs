@@ -46,8 +46,12 @@ pub fn palette_of(voxel_type: VoxelType) -> Option<Palette> {
 ///
 /// Mapea `i` a un valor con signo en [-1, 1] (centro = base): el lado negativo
 /// interpola hacia `dark_mul`, el positivo hacia `light_mul`. Con `steps` impar
-/// el tono central es exactamente el color base (×1.0). Esta regla la replica el
-/// shader en WGSL, así CPU y GPU generan la MISMA paleta.
+/// el tono central es exactamente el color base (×1.0).
+///
+/// Es la ESPECIFICACIÓN de la fórmula: el shader la replica en WGSL
+/// (`palette_extension.wgsl::step_multiplier`) para pintar en GPU. No se usa en el
+/// render por CPU; se conserva testeada como fuente de verdad de esa paridad.
+#[allow(dead_code)]
 pub fn step_multiplier(i: u8, palette: &Palette) -> f32 {
     if palette.steps <= 1 {
         return 1.0;
