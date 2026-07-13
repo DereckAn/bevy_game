@@ -12,7 +12,7 @@
 //! LINEAL (el shader PBR los interpreta así).
 
 use crate::core::constants::VOXEL_SIZE;
-use crate::vegetation::config;
+use crate::voxel::palette::{palette_of, step_multiplier, Palette};
 use crate::voxel::VoxelType;
 use bevy::prelude::*;
 use std::sync::LazyLock;
@@ -139,48 +139,45 @@ fn grass_color(world_x: f32, world_y: f32, world_z: f32, slope: f32) -> [f32; 4]
 // PALETA TONAL DE MADERA (tints & shades desde un color base)
 // ============================================================================
 
-/// Genera una paleta tonal de 5 colores a partir de un color base sRGB: dos
-/// tonos oscuros, el normal, y dos claros. Escala el brillo del base por cada
-/// multiplicador (mantiene el tono, solo varía la luminosidad); `DARK_MUL` y
-/// `LIGHT_MUL` fijan los extremos y los intermedios caen a mitad de camino del
-/// base. Devuelve RGB LINEAL, listo para pintar.
-fn tonal_palette(base_srgb: [f32; 3]) -> [[f32; 3]; 5] {
-    let to_lin = |m: f32| {
-        let l = Color::srgb(base_srgb[0] * m, base_srgb[1] * m, base_srgb[2] * m).to_linear();
-        [l.red, l.green, l.blue]
-    };
-    let muls = [
-        config::DARK_MUL,                // más oscuro
-        (config::DARK_MUL + 1.0) * 0.5,  // oscuro
-        1.0,                             // normal (color base)
-        (config::LIGHT_MUL + 1.0) * 0.5, // claro
-        config::LIGHT_MUL,               // más claro
-    ];
-    muls.map(to_lin)
+/// Precomputa los tonos de una paleta a RGB LINEAL (una sola vez por material):
+/// así la conversión sRGB→lineal NO se paga por voxel, solo la elección de tono.
+fn build_palette_linear(palette: &Palette) -> Vec<[f32; 3]> {
+    (0..palette.steps)
+        .map(|i| {
+            let m = step_multiplier(i, palette);
+            let l = Color::srgb(
+                palette.base[0] * m,
+                palette.base[1] * m,
+                palette.base[2] * m,
+            )
+            .to_linear();
+            [l.red, l.green, l.blue]
+        })
+        .collect()
 }
 
-/// Paletas precomputadas (una sola vez) para cada tipo de madera.
-static OAK_WOOD_PALETTE: LazyLock<[[f32; 3]; 5]> =
-    LazyLock::new(|| tonal_palette(config::WOOD_COLOR));
-static PINE_WOOD_PALETTE: LazyLock<[[f32; 3]; 5]> =
-    LazyLock::new(|| tonal_palette(config::PINE_WOOD_COLOR));
+/// Tonos lineales precomputados para cada tipo de madera (derivados del registro).
+static OAK_WOOD_PALETTE: LazyLock<Vec<[f32; 3]>> =
+    LazyLock::new(|| build_palette_linear(&palette_of(VoxelType::Wood).unwrap()));
+static PINE_WOOD_PALETTE: LazyLock<Vec<[f32; 3]>> =
+    LazyLock::new(|| build_palette_linear(&palette_of(VoxelType::PineWood).unwrap()));
 
-/// Pinta un voxel de madera eligiendo uno de los 5 tonos de la paleta según un
-/// valor pseudo-aleatorio estable de la posición: cada árbol (x,z distintos) y
-/// cada banda del tronco (y distinto) cae en un tono. El greedy meshing promedia
-/// por quad, así que el efecto es por-quad (bandas del tronco), no por voxel.
-fn wood_color(world_x: f32, world_y: f32, world_z: f32, palette: &[[f32; 3]; 5]) -> [f32; 4] {
+/// Pinta un voxel de paleta eligiendo uno de sus tonos según un valor
+/// pseudo-aleatorio estable de la posición: cada árbol (x,z distintos) y cada
+/// banda del tronco (y distinto) cae en un tono. El mesher muestrea en el centro
+/// de la celda, así que las 6 caras de un voxel comparten tono.
+fn palette_color(world_x: f32, world_y: f32, world_z: f32, palette: &[[f32; 3]]) -> [f32; 4] {
     let vx = (world_x / VOXEL_SIZE).round() as i32;
     let vy = (world_y / VOXEL_SIZE).round() as i32;
     let vz = (world_z / VOXEL_SIZE).round() as i32;
-    let idx = (hash01(vx.wrapping_add(vy.wrapping_mul(31)), vz) * 5.0) as usize;
-    let c = palette[idx.min(4)];
+    let idx = (hash01(vx.wrapping_add(vy.wrapping_mul(31)), vz) * palette.len() as f32) as usize;
+    let c = palette[idx.min(palette.len() - 1)];
     [c[0], c[1], c[2], 1.0]
 }
 
 /// Color (RGB lineal) de un vértice según el tipo de voxel: el pasto interpola
-/// entre dos verdes (ruido + altura + pendiente); la madera interpola su paleta
-/// tonal; el resto usa el color real de su material. `slope` solo afecta al pasto.
+/// entre dos verdes (ruido + altura + pendiente); la madera elige un tono de su
+/// paleta; el resto usa el color real de su material. `slope` solo afecta al pasto.
 pub fn voxel_color(
     voxel_type: VoxelType,
     world_x: f32,
@@ -190,8 +187,8 @@ pub fn voxel_color(
 ) -> [f32; 4] {
     match voxel_type {
         VoxelType::Grass => grass_color(world_x, world_y, world_z, slope),
-        VoxelType::Wood => wood_color(world_x, world_y, world_z, &OAK_WOOD_PALETTE),
-        VoxelType::PineWood => wood_color(world_x, world_y, world_z, &PINE_WOOD_PALETTE),
+        VoxelType::Wood => palette_color(world_x, world_y, world_z, &OAK_WOOD_PALETTE),
+        VoxelType::PineWood => palette_color(world_x, world_y, world_z, &PINE_WOOD_PALETTE),
         _ => {
             let l = voxel_type.properties().color.to_linear();
             [l.red, l.green, l.blue, 1.0]

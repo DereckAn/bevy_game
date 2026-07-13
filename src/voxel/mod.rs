@@ -19,6 +19,7 @@ pub mod frustum_culling;
 pub mod greedy_meshing;
 pub mod lod_chunks;
 pub mod lod_system;
+pub mod palette;
 pub mod spatial_hash;
 pub mod tools;
 pub mod voxel_color;
