@@ -12,7 +12,6 @@
 //! LINEAL (el shader PBR los interpreta así).
 
 use crate::core::constants::VOXEL_SIZE;
-use crate::voxel::palette::palette_of;
 use crate::voxel::VoxelType;
 use bevy::prelude::*;
 use std::sync::LazyLock;
@@ -135,14 +134,14 @@ fn grass_color(world_x: f32, world_y: f32, world_z: f32, slope: f32) -> [f32; 4]
     ]
 }
 
-/// Color (RGB lineal) de un vértice según el tipo de voxel. El **alpha marca el
-/// material para el shader**: `1.0` = material de paleta (el shader aplica la
-/// variación de tono por voxel), `0.0` = color final plano (usar tal cual).
+/// Color (RGB lineal) de un vértice. El **alpha lleva el discriminante de
+/// `VoxelType`** (`id/255`): el shader lo usa para leer el rango tonal de ese
+/// material en el uniform `spreads` y aplicar la variación por fragmento (o
+/// dejar el color plano si ese material no tiene paleta).
 ///
-/// - Pasto: interpola dos verdes (ruido + altura + pendiente), ya baked → alpha 0.
-/// - Paleta (madera, y futuros): color base plano y uniforme por quad (así el
-///   greedy meshing fusiona); el tono lo pone el shader → alpha 1.
-/// - Resto: color real del material → alpha 0.
+/// El color base es plano y uniforme por quad (así el greedy meshing fusiona);
+/// coincide con el color del material en `properties`. El pasto es la excepción:
+/// su color ya va baked (ruido + altura + pendiente) y su `spreads` es plano.
 pub fn voxel_color(
     voxel_type: VoxelType,
     world_x: f32,
@@ -150,15 +149,11 @@ pub fn voxel_color(
     world_z: f32,
     slope: f32,
 ) -> [f32; 4] {
+    let id = voxel_type as u8 as f32 / 255.0;
     if voxel_type == VoxelType::Grass {
-        let mut c = grass_color(world_x, world_y, world_z, slope);
-        c[3] = 0.0; // plano: color ya baked, el shader no lo toca
-        return c;
-    }
-    if let Some(p) = palette_of(voxel_type) {
-        let l = Color::srgb(p.base[0], p.base[1], p.base[2]).to_linear();
-        return [l.red, l.green, l.blue, 1.0]; // paleta: el shader varía el tono
+        let c = grass_color(world_x, world_y, world_z, slope);
+        return [c[0], c[1], c[2], id];
     }
     let l = voxel_type.properties().color.to_linear();
-    [l.red, l.green, l.blue, 0.0]
+    [l.red, l.green, l.blue, id]
 }

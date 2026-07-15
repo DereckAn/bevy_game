@@ -24,22 +24,32 @@ pub struct Palette {
 }
 
 /// Paleta de un material, o `None` si usa un color plano (sin variación tonal).
+///
+/// El rango tonal (`dark_mul`/`light_mul`/`steps`) es POR MATERIAL. Estos valores
+/// se suben a la GPU (`ChunkMaterials` → uniform `spreads`, indexado por el
+/// discriminante de `VoxelType`) y el shader los aplica por fragmento.
 pub fn palette_of(voxel_type: VoxelType) -> Option<Palette> {
-    match voxel_type {
-        VoxelType::Wood => Some(Palette {
-            base: config::WOOD_COLOR,
-            dark_mul: config::DARK_MUL,
-            light_mul: config::LIGHT_MUL,
-            steps: 5,
-        }),
-        VoxelType::PineWood => Some(Palette {
-            base: config::PINE_WOOD_COLOR,
-            dark_mul: config::DARK_MUL,
-            light_mul: config::LIGHT_MUL,
-            steps: 5,
-        }),
-        _ => None,
-    }
+    // `(dark_mul, light_mul, steps)` por material: rocas y madera varían más;
+    // hojas y suelo, más sutil. `base` debe coincidir con el color plano del
+    // material en `VoxelType::properties`.
+    let (base, dark_mul, light_mul, steps) = match voxel_type {
+        VoxelType::Wood => (config::WOOD_COLOR, 0.70, 1.25, 5),
+        VoxelType::PineWood => (config::PINE_WOOD_COLOR, 0.70, 1.25, 5),
+        VoxelType::Stone => ([0.5, 0.5, 0.5], 0.60, 1.35, 6),
+        VoxelType::Leaves => (config::LEAVES_COLOR, 0.80, 1.15, 4),
+        VoxelType::PineNeedles => (config::PINE_COLOR, 0.80, 1.15, 4),
+        VoxelType::SmallLeaves => (config::SMALL_LEAVES_COLOR, 0.80, 1.15, 4),
+        VoxelType::Bush => (config::BUSH_COLOR, 0.80, 1.20, 4),
+        VoxelType::Dirt => ([0.55, 0.35, 0.2], 0.80, 1.20, 4),
+        VoxelType::Sand => ([0.9, 0.85, 0.6], 0.88, 1.10, 4),
+        _ => return None,
+    };
+    Some(Palette {
+        base,
+        dark_mul,
+        light_mul,
+        steps,
+    })
 }
 
 /// Multiplicador de brillo del tono `i` de una paleta de `steps` tonos.

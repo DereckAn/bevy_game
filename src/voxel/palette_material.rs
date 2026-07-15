@@ -15,11 +15,11 @@ const SHADER_PATH: &str = "shaders/palette_extension.wgsl";
 /// Material de los chunks reales.
 pub type ChunkMaterial = ExtendedMaterial<StandardMaterial, PaletteExtension>;
 
-/// Extensión de paleta. **Sin bindings** a propósito: solo intercambia el
-/// fragment shader. Los parámetros de paleta están hardcodeados en el WGSL (ver
-/// `palette_extension.wgsl`) porque el `StandardMaterial` bindless de Bevy 0.17
-/// no admite añadir un uniform de extensión en el grupo 2. La fase 2 (paleta por
-/// material) los moverá a un buffer/material propio.
+/// Extensión de paleta. **Sin bindings**: solo intercambia el fragment shader.
+/// El rango tonal por material vive en el WGSL (`SPREADS`), no en un uniform,
+/// porque el `StandardMaterial` bindless de Bevy 0.17 descarta los bindings de
+/// extensión en el grupo 2. El vertex alpha lleva el discriminante de `VoxelType`
+/// y el shader indexa `SPREADS` con él.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
 pub struct PaletteExtension {}
 

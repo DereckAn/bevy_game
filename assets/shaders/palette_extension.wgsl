@@ -1,13 +1,12 @@
 // Extensión de StandardMaterial: aplica una paleta tonal por voxel en el
-// fragment shader. El color base llega en el vertex color (uniforme por quad, así
-// el greedy meshing puede fusionar). El vertex ALPHA marca el material: >= 0.5 =
-// material de paleta (variar tono), < 0.5 = plano (dejar el color tal cual).
+// fragment shader. El color base llega en el vertex color RGB (uniforme por quad,
+// así el greedy meshing puede fusionar) y el vertex ALPHA lleva el discriminante
+// de VoxelType (id/255), que indexa el rango tonal del material en `spreads`.
 //
-// Para los voxels de paleta se deriva la CELDA sólida desde la posición mundial
-// del fragment (retrocediendo medio voxel por la normal), se hashea a un índice
-// de tono y se escala el brillo del color base. `hash01` y `step_multiplier`
-// replican EXACTAMENTE las de `src/voxel/palette.rs` para que el resultado sea
-// idéntico voxel a voxel.
+// Para cada fragment se deriva la CELDA sólida desde la posición mundial
+// (retrocediendo medio voxel por la normal), se hashea a un índice de tono y se
+// escala el brillo del color base. `hash01` y `step_multiplier` replican las de
+// `src/voxel/palette.rs` para que el resultado sea idéntico voxel a voxel.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -15,15 +14,31 @@
     forward_io::{VertexOutput, FragmentOutput},
 }
 
-// Parámetros de paleta. Hoy son constantes (fase 1): hardcodeadas aquí para
-// evitar un binding de uniform, que choca con el StandardMaterial *bindless* de
-// Bevy 0.17. Deben coincidir con `core::constants::VOXEL_SIZE` y
-// `vegetation::config::{DARK_MUL, LIGHT_MUL}`. La fase 2 (paleta por material)
-// las moverá a un buffer.
-const VOXEL_SIZE: f32 = 0.1;
-const DARK_MUL: f32 = 0.7;
-const LIGHT_MUL: f32 = 1.25;
-const PALETTE_STEPS: u32 = 5u;
+const VOXEL_SIZE: f32 = 0.1; // = core::constants::VOXEL_SIZE
+
+// Rango tonal por material, indexado por el discriminante de VoxelType (llega en
+// el vertex alpha). Cada entrada: (dark_mul, light_mul, steps, 0); steps < 1 =
+// material plano. Hardcodeado aquí (no un uniform) porque el StandardMaterial
+// bindless de Bevy 0.17 descarta bindings de extensión en el grupo 2.
+// ESPEJO de `src/voxel/palette.rs::palette_of` — mantener en sync.
+var<private> SPREADS: array<vec4<f32>, 16> = array<vec4<f32>, 16>(
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 0  Air
+    vec4<f32>(0.80, 1.20, 4.0, 0.0), // 1  Dirt
+    vec4<f32>(0.60, 1.35, 6.0, 0.0), // 2  Stone
+    vec4<f32>(0.70, 1.25, 5.0, 0.0), // 3  Wood
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 4  Metal
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 5  Grass (color baked en CPU)
+    vec4<f32>(0.88, 1.10, 4.0, 0.0), // 6  Sand
+    vec4<f32>(0.80, 1.15, 4.0, 0.0), // 7  Leaves
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 8  Foliage
+    vec4<f32>(0.80, 1.20, 4.0, 0.0), // 9  Bush
+    vec4<f32>(0.80, 1.15, 4.0, 0.0), // 10 PineNeedles
+    vec4<f32>(0.80, 1.15, 4.0, 0.0), // 11 SmallLeaves
+    vec4<f32>(0.70, 1.25, 5.0, 0.0), // 12 PineWood
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 13
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 14
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 15
+);
 
 fn hash01(x: i32, z: i32) -> f32 {
     var h: u32 = u32(x) * 0x9e3779b9u;
@@ -50,19 +65,19 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 
 #ifdef VERTEX_COLORS
-    let flag = in.color.a;
-#else
-    let flag = 0.0;
-#endif
-
-    if (flag >= 0.5) {
+    // El vertex alpha lleva el discriminante de VoxelType (id/255).
+    let id = min(u32(round(in.color.a * 255.0)), 15u);
+    let spread = SPREADS[id]; // (dark_mul, light_mul, steps, 0)
+    let steps = u32(spread.z);
+    if (steps >= 1u) {
         // Centro de la celda sólida: retrocede medio voxel por la normal, trunca.
         let cell = floor((in.world_position.xyz - in.world_normal * (VOXEL_SIZE * 0.5)) / VOXEL_SIZE);
         let h = hash01(i32(cell.x) + i32(cell.y) * 31, i32(cell.z));
-        let idx = min(u32(h * f32(PALETTE_STEPS)), PALETTE_STEPS - 1u);
-        let mul = step_multiplier(idx, PALETTE_STEPS, DARK_MUL, LIGHT_MUL);
+        let idx = min(u32(h * f32(steps)), steps - 1u);
+        let mul = step_multiplier(idx, steps, spread.x, spread.y);
         pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * mul, pbr_input.material.base_color.a);
     }
+#endif
 
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
