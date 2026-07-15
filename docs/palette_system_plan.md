@@ -29,21 +29,37 @@ restored for every material — and color variation becomes free (per-fragment).
   renders as a gradient, not N blocks. Distinct per-voxel colors need either one
   quad per color change (no-merge) or a shader/texture. Hence 4b.
 
-## Target architecture
+## Target architecture (as built)
 
-- **Palette as data.** One registry: `palette_of(VoxelType) -> Palette`, where
-  `Palette = { base_color, dark_mul, light_mul, steps, coherence }`. Replaces the
-  scattered `config.rs` constants and the `_PALETTE` `LazyLock`s. Uploaded to the
-  GPU as a storage/uniform buffer.
-- **Material identity per vertex.** A custom mesh attribute (a `u32` palette/
-  material id) written during meshing, instead of baking `ATTRIBUTE_COLOR`.
-- **`ExtendedMaterial<StandardMaterial, PaletteExt>`.** Keep PBR lighting; the
-  extension's fragment shader computes
-  `base_color = palette[matId][ hash(worldPos) % steps ]`, then applies the
-  face-orientation shading (current `face_shade` AO) from the normal. WGSL
-  reimplements the existing `hash01`.
-- **Greedy meshing simplifies.** Remove the wood/grass no-merge special cases and
-  per-quad color sampling. Merge by `VoxelType` only.
+- **`ExtendedMaterial<StandardMaterial, PaletteExtension>`** ([palette_material.rs](../src/voxel/palette_material.rs)).
+  Keeps PBR lighting; the extension only swaps in a fragment shader
+  ([palette_extension.wgsl](../assets/shaders/palette_extension.wgsl)).
+- **Base color rides the vertex color (RGB), Rust-driven.** `voxel_color` writes
+  each material's flat base (from `config.rs`/`properties`), uniform per quad so
+  greedy meshing still merges. The **vertex alpha carries the `VoxelType`
+  discriminant** (`id/255`) — the material tag the shader needs.
+- **Per-material tonal range lives in the shader**, in a `var<private> SPREADS`
+  table indexed by that id: `(dark_mul, light_mul, steps)`, `steps < 1` = flat.
+  The fragment derives the voxel cell from world position, hashes to a tone, and
+  scales the base. `hash01`/`step_multiplier` mirror [palette.rs](../src/voxel/palette.rs).
+- **Greedy meshing merges by `VoxelType`** again (wood no-merge removed); only
+  grass tops stay unmerged (CPU-baked noise).
+
+### Why the spreads are in the shader, not a uniform (bindless limitation)
+
+The clean design was a `spreads` uniform filled from the Rust registry. It does
+**not work**: Bevy 0.17's `StandardMaterial` is `#[bindless]`, and an extension's
+group-2 binding is dropped from the pipeline layout (wgpu validation error
+`binding 100 not available`) — even though `force_non_bindless` *should* apply.
+So the per-material spreads are hardcoded in the WGSL `SPREADS` table (mirror of
+`palette_of`, kept in sync by hand). Base colors stay Rust-driven; only the
+*variation amounts* live in WGSL. Fully removing that split would require
+replacing `ExtendedMaterial` with a from-scratch non-bindless `Material` — a big
+job, deferred until the two-place sync actually hurts.
+
+### Where to change colors
+- **Base color of a material** → Rust (`config.rs` constants, or `properties`).
+- **How much it varies** (`dark/light/steps`) → WGSL `SPREADS` (+ `palette.rs` mirror).
 
 ## Phased plan
 
@@ -62,22 +78,33 @@ everything else falls back to its flat color. Re-enable wood merging.
 - **Verify:** trunks show per-fragment palette variation **and** trunk triangle
   count drops vs current (profiler / mesh stats). Run the app, look at a forest.
 
-### Phase 2 — Migrate all materials to the palette shader
-Give rocks / leaves / etc. palette entries (coherent noise for large surfaces,
-finer for detail). Remove `ATTRIBUTE_COLOR`; grass's noise moves into WGSL.
-Delete every no-merge special case.
-- **Verify:** full-scene triangle count meaningfully lower than today; visual
-  parity or better; FPS up.
+### Phase 2 — More materials + per-material spread (DONE)
+Added palette entries for Stone, Leaves, PineNeedles, SmallLeaves, Bush, Dirt,
+Sand (`palette_of`). Per-material `(dark, light, steps)` in the WGSL `SPREADS`
+table. **Kept `ATTRIBUTE_COLOR`** (deliberately): it's cheap, merge-compatible,
+and carries base+id — removing it would need a per-vertex material-id + the
+bindless buffer for no real gain. **Grass stays CPU** (its color needs terrain
+slope, not cheaply available per-fragment); its top-face no-merge remains the one
+open optimization.
 
-### Phase 3 — Reconcile the side systems
-- LOD impostors (`lod_chunks.rs` uses its own `linear_rgba`).
-- Destruction re-meshing (stateless shader — should just work).
-- Drop-item materials (`rapier_integration.rs` — the `materials` array is already
-  too short and panics for `VoxelType as usize >= 10`; fix here).
-- Transparency (`Foliage` / `Bush`).
-Decide per-system: use the shader or keep flat.
-- **Verify:** break a trunk, walk to LOD distance, cross a chunk border — no
-  color pops or panics.
+### Phase 3 — Reconcile the side systems (DONE)
+- **LOD impostors** — `linear_rgba` now carries the id in alpha, so impostor
+  trunks/canopies get the palette from the shader.
+- **Destruction re-meshing** — no change; rebuilds via the same `voxel_color`
+  path and keeps the `ChunkMaterial` handle. Stateless shader just works.
+- **Drop items** — fixed the latent OOB panic: `DropAssets.materials` now sized
+  to all `VoxelType` variants (`VOXEL_TYPE_COUNT`). Drops stay flat
+  `StandardMaterial` (tiny cubes, no shader).
+- **Foliage / Bush** — render opaque; Bush varies via its palette entry, Foliage
+  stays flat. Nothing to reconcile.
+- **Verify:** break a pine (trunk + needles drop — was the panic), walk to LOD
+  distance, cross a chunk border — no color pops or panics.
+
+## Open / deferred
+- Grass top-face no-merge → shader (needs slope per-fragment). Biggest remaining
+  triangle win.
+- WGSL `SPREADS` ↔ `palette.rs` two-place sync. Removing it = custom non-bindless
+  `Material` rewrite. Deferred.
 
 ## Key interactions to watch
 - LOD trees have a separate color path.
