@@ -11,10 +11,8 @@
 //! - 'dynamic_chunks': Chunks base de 32³ con generacion de terreno
 
 pub mod biomes;
-pub mod chunk_cache;
 pub mod chunk_loading;
 pub mod destruction;
-pub mod downsampling;
 pub mod dynamic_chunks;
 pub mod frustum_culling;
 pub mod greedy_meshing;
@@ -28,7 +26,6 @@ pub mod voxel_types;
 pub use biomes::*;
 pub use chunk_loading::*;
 pub use destruction::*;
-pub use downsampling::*;
 pub use dynamic_chunks::BaseChunk;
 pub use frustum_culling::*;
 pub use greedy_meshing::*;

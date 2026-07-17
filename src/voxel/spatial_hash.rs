@@ -21,7 +21,7 @@ pub struct SpatialHashGrid {
     /// Tamaño de cada celda del grid (en chunks)
     cell_size: i32,
 
-    /// HashMap: cell_key (IVec2) -> Vec<IVec3> (chunks en esa celda)
+    /// HashMap: cell_key (IVec2) -> `Vec<IVec3>` (chunks en esa celda)
     /// La key es la posición de la celda, el valor es la lista de chunks
     cells: HashMap<IVec2, Vec<IVec3>>,
 
@@ -127,24 +127,16 @@ impl SpatialHashGrid {
     }
 
     /// Obtiene el número total de chunks en el grid
+    // Usado por los tests; `is_empty` se mantiene como par convencional de `len`.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.total_chunks
     }
 
     /// Verifica si el grid está vacío
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.total_chunks == 0
-    }
-
-    /// Obtiene el número de celdas activas (con al menos un chunk)
-    pub fn active_cells(&self) -> usize {
-        self.cells.len()
-    }
-
-    /// Limpia todas las celdas vacías para liberar memoria
-    /// Útil para ejecutar periódicamente
-    pub fn cleanup_empty_cells(&mut self) {
-        self.cells.retain(|_, chunks| !chunks.is_empty());
     }
 
     /// Limpia completamente el grid

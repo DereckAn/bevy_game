@@ -8,7 +8,7 @@ use crate::{
     physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        self, BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator,
+        BaseChunk, ChunkLOD, ChunkMap, LodChunk, LodLevel, SpatialHashGrid, TerrainGenerator,
         VoxelDiffs, mesh_lod_chunk,
     },
 };

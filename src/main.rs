@@ -123,23 +123,6 @@ fn setup(
     world_seed: Res<WorldSeed>,
 ) {
     // ========================================================================
-    // INICIALIZAR CACHÉ DE CHUNKS (DESHABILITADO TEMPORALMENTE)
-    // ========================================================================
-
-    // Caché deshabilitado para mejor rendimiento inicial
-    // if let Err(e) = init_cache_dir() {
-    //     warn!("Failed to initialize cache directory: {}", e);
-    // } else {
-    //     match get_cache_stats() {
-    //         Ok(stats) => {
-    //             info!("Cache initialized: {} chunks cached ({:.2} MB)",
-    //                 stats.chunk_count, stats.total_size_mb());
-    //         }
-    //         Err(e) => warn!("Failed to get cache stats: {}", e),
-    //     }
-    // }
-
-    // ========================================================================
     // GENERACIÓN DE TERRENO INICIAL
     // ========================================================================
 

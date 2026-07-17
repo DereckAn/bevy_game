@@ -34,12 +34,11 @@ Dev profile uses opt-level=1 for fast compilation; dependencies compile at opt-l
 
 **Destruction**: `destruction.rs` raycasts from camera, breaks voxels based on tool effectiveness, re-meshes dirty chunks.
 
-### Disabled Systems (code present but not active)
+### Removed Systems
 
-- **Frustum culling** (`frustum_culling.rs`) — Has visibility bugs, chunks disappear incorrectly
-- **Disk cache** (`chunk_cache.rs`) — Too slow for real-time
-- **LOD downsampling** (`downsampling.rs`) — Overflow panic bug
-- These produce many unused-code warnings, which is expected
+The disk cache (`chunk_cache.rs`) and LOD downsampling (`downsampling.rs`) were deleted as dead code (see git history). Frustum culling (`frustum_culling.rs`) is active and registered in `main.rs`.
+
+Remaining unused items are annotated with `#[allow(dead_code)]` plus a one-line rationale — they are placeholders for planned features (tool durability/types, voxel material properties, game settings, extra menu actions), not accidental dead code.
 
 ### Performance Context
 
