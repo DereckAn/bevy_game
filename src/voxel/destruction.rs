@@ -5,7 +5,7 @@
 use super::{
     greedy_meshing::greedy_mesh_basechunk,
     tools::{Tool, ToolType},
-    BaseChunk, VoxelType,
+    BaseChunk, VoxelType, VOXEL_TYPE_COUNT,
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::{
@@ -381,8 +381,11 @@ pub fn update_voxel_breaking_system(
                         .unwrap_or(ToolType::None);
                     let destruction_pattern = tool_type.get_destruction_pattern();
 
-                    // Destruir multiples voxels segun el patron
-                    let mut total_drops = 0;
+                    // Destruir multiples voxels segun el patron. Un voxel roto =
+                    // un item: contamos por tipo y soltamos un único drop por
+                    // tipo con la cantidad exacta (evita cientos de cuerpos
+                    // físicos cuando el patrón es grande).
+                    let mut drop_counts = [0u32; VOXEL_TYPE_COUNT];
                     for offset in destruction_pattern {
                         let target_x = (breaking.local_pos.x + offset.x) as usize;
                         let target_y = (breaking.local_pos.y + offset.y) as usize;
@@ -413,38 +416,43 @@ pub fn update_voxel_breaking_system(
                                         VoxelType::Air,
                                     );
 
-                                // Calcular drops para este voxel
-                                let drops = tool_type.calculate_drops(voxel_type);
-                                total_drops += drops;
-
-                                // Spawnar drops fisicos usando Rapier
-                                if drops > 0 {
-                                    spawn_rapier_voxel_drop(
-                                        &mut commands,
-                                        &drop_assets,
-                                        voxel_type,
-                                        drops,
-                                        Vec3::new(
-                                            (breaking.chunk_pos.x * BASE_CHUNK_SIZE as i32
-                                                + target_x as i32)
-                                                as f32
-                                                * VOXEL_SIZE,
-                                            (breaking.chunk_pos.y * BASE_CHUNK_SIZE as i32
-                                                + target_y as i32)
-                                                as f32
-                                                * VOXEL_SIZE,
-                                            (breaking.chunk_pos.z * BASE_CHUNK_SIZE as i32
-                                                + target_z as i32)
-                                                as f32
-                                                * VOXEL_SIZE,
-                                        ),
-                                        time.elapsed_secs(),
-                                    );
+                                // Follaje/arbustos no sueltan nada.
+                                if !matches!(voxel_type, VoxelType::Foliage | VoxelType::Bush) {
+                                    drop_counts[voxel_type as usize] += 1;
                                 }
                             }
                         }
                     }
-                    info!("Destruido cráter con {} drops totales", total_drops);
+
+                    // Un drop por tipo, en el centro del cráter, con la cantidad
+                    // exacta de voxels rotos de ese tipo.
+                    let center = Vec3::new(
+                        (breaking.chunk_pos.x * BASE_CHUNK_SIZE as i32 + breaking.local_pos.x)
+                            as f32
+                            * VOXEL_SIZE,
+                        (breaking.chunk_pos.y * BASE_CHUNK_SIZE as i32 + breaking.local_pos.y)
+                            as f32
+                            * VOXEL_SIZE,
+                        (breaking.chunk_pos.z * BASE_CHUNK_SIZE as i32 + breaking.local_pos.z)
+                            as f32
+                            * VOXEL_SIZE,
+                    );
+                    let mut total_drops = 0;
+                    for (id, &count) in drop_counts.iter().enumerate() {
+                        if count == 0 {
+                            continue;
+                        }
+                        total_drops += count;
+                        spawn_rapier_voxel_drop(
+                            &mut commands,
+                            &drop_assets,
+                            VoxelType::from_u8(id as u8),
+                            count,
+                            center,
+                            time.elapsed_secs(),
+                        );
+                    }
+                    info!("Roto cráter: {} voxels", total_drops);
                     Some(VoxelType::Air) // Retorna algo para que compile
                 } else {
                     None
