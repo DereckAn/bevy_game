@@ -21,7 +21,7 @@ const TREE_PROBABILITY: f32 = 0.45;
 
 /// Alcance horizontal máximo de un árbol (voxels): debe ser >= lo que sobresale
 /// el más ancho (ramas + hojas del pino). Lo usan el escaneo de celdas y el loader.
-const MAX_CANOPY_RADIUS: i32 = 8;
+pub const MAX_CANOPY_RADIUS: i32 = 8;
 
 /// Tipo de árbol: arbusto pequeño (esfera) o pino grande (cónico, con ramas).
 #[derive(Clone, Copy, PartialEq)]
