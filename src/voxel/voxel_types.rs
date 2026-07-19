@@ -16,6 +16,10 @@ fn rgb(c: [f32; 3]) -> Color {
 // VOXEL TYPE ENUM
 // ============================================================================
 
+/// Número de variantes de `VoxelType` (Air=0 .. PineWood=12). Dimensiona tablas
+/// indexadas por `VoxelType as usize` (materiales de drops, inventario).
+pub const VOXEL_TYPE_COUNT: usize = 13;
+
 /// Tipo de voxel que representa diferentes materiales del mundo.
 ///
 /// Cada tipo tiene propiedades únicas como dureza, color, y drops.

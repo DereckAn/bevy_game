@@ -28,6 +28,8 @@ impl Plugin for PhysicsPlugin {
             // .add_plugins(RapierDebugRenderPlugin::default()) // Para debug visual
             // Assets compartidos de los drops (mesh + materiales), creados una vez
             .init_resource::<DropAssets>()
+            // Inventario del jugador (lo escribe la recolección, lo lee el HUD)
+            .init_resource::<crate::core::Inventory>()
             // Agregar sistemas de drops
             .add_systems(
                 Update,

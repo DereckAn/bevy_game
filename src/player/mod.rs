@@ -46,6 +46,7 @@ impl Plugin for PlayerPlugin {
                     player_look,
                     player_movement,
                     cursor_grab_on_click,
+                    switch_tool,
                     highlight_aimed_voxel,
                 )
                     .run_if(in_state(GameState::InGame)),
