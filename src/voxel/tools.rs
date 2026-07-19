@@ -14,6 +14,8 @@ use rand::Rng;
 /// Tipo de herramienta que el jugador puede usar.
 ///
 /// Cada herramienta tienen efeciencia diferente contra diferentes materiales.
+// Pickaxe/Axe/Hoe aún no se equipan en gameplay; forman parte del set de herramientas planeado.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolType {
     Pickaxe,
@@ -30,6 +32,8 @@ pub enum ToolType {
 #[derive(Clone, Debug)]
 pub struct ToolProperties {
     /// Nombre de la herramienta.
+    // Aún no se muestra en UI; reservado para el HUD de herramientas.
+    #[allow(dead_code)]
     pub name: &'static str,
 
     /// Durabilidad maxima de la herramienta.
@@ -265,11 +269,14 @@ impl Tool {
     }
 
     /// Verifica si la herramienta esta rota.
+    // Consultas de durabilidad para el HUD; el sistema de durabilidad aún no está conectado.
+    #[allow(dead_code)]
     pub fn is_broken(&self) -> bool {
         self.tool_type != ToolType::None && self.current_durability == 0
     }
 
     /// Obtiene el porcentaje de durabilidad restante (0.0 - 1.0)
+    #[allow(dead_code)]
     pub fn get_durability_percentage(&self) -> f32 {
         if self.tool_type == ToolType::None {
             return 1.0; // Manos nunca se rompen

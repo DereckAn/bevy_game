@@ -11,6 +11,8 @@ use bevy::prelude::*;
 pub struct MainMenuUI;
 
 /// Actions que pueden realizar los botones del menu
+// Credits/Quit aún no tienen botón que los emita; reservados para el menú completo.
+#[allow(dead_code)]
 #[derive(Component, Clone, Copy, Debug)]
 pub enum MenuAction {
     Play,

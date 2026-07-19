@@ -29,34 +29,6 @@ impl ChunkLOD {
             _ => ChunkLOD::Minimal,
         }
     }
-
-    // Factor de downsampling (cuánto se reduce la resolución)
-    pub fn downsample_factor(&self) -> usize {
-        match self {
-            ChunkLOD::Ultra => 1,   // 32³ completo
-            ChunkLOD::High => 1,    // 32³ completo
-            ChunkLOD::Medium => 2,  // 16³ (2x downsampling)
-            ChunkLOD::Low => 4,     // 8³ (4x downsampling)
-            ChunkLOD::Minimal => 8, // 4³ (8x downsampling)
-        }
-    }
-
-    // Indica si este LOD requiere downsampling
-    pub fn needs_downsampling(&self) -> bool {
-        matches!(self, ChunkLOD::Medium | ChunkLOD::Low | ChunkLOD::Minimal)
-    }
-
-    /// Color de debug para visualizar LOD
-    /// Verde (cerca) → Amarillo → Naranja → Rojo (lejos)
-    pub fn debug_color(&self) -> Color {
-        match self {
-            ChunkLOD::Ultra => Color::srgb(0.2, 0.8, 0.2), // Verde brillante (cerca)
-            ChunkLOD::High => Color::srgb(0.6, 0.8, 0.2),  // Verde-amarillo
-            ChunkLOD::Medium => Color::srgb(0.9, 0.7, 0.1), // Amarillo-naranja
-            ChunkLOD::Low => Color::srgb(0.9, 0.4, 0.1),   // Naranja
-            ChunkLOD::Minimal => Color::srgb(0.9, 0.1, 0.1), // Rojo (lejos)
-        }
-    }
 }
 
 /// Sistema que actualiza LOD, color basado en posicion del jugador

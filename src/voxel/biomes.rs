@@ -110,13 +110,4 @@ impl TerrainGenerator {
             biome_gen: BiomeGenerator::new(seed),
         }
     }
-
-    /// Calcula la densidad en un punto 3D
-    pub fn get_density(&mut self, world_x: f32, world_y: f32, world_z: f32) -> f32 {
-        // Obtener altura del terreno en esta posición XZ
-        let terrain_height = self.biome_gen.generate_height(world_x, world_z);
-
-        // Densidad básica: positivo bajo tierra, negativo en aire
-        terrain_height - world_y
-    }
 }

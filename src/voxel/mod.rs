@@ -11,7 +11,6 @@
 //! - 'dynamic_chunks': Chunks base de 32³ con generacion de terreno
 
 pub mod biomes;
-pub mod chunk_cache;
 pub mod chunk_loading;
 pub mod destruction;
 pub mod dynamic_chunks;

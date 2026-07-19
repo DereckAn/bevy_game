@@ -94,12 +94,17 @@ pub struct VoxelProperties {
     pub color: Color,
 
     /// Si el voxel es sólido (tiene colisión)
+    // Los siguientes campos son parte del modelo de material para el sistema de
+    // colisión/drops/UI, aún no consumidos por completo.
+    #[allow(dead_code)]
     pub is_solid: bool,
 
     /// Si dropea el mismo material al destruirse
+    #[allow(dead_code)]
     pub drops_self: bool,
 
     /// Nombre legible del material
+    #[allow(dead_code)]
     pub name: &'static str,
 
     /// Densidad del voxel
@@ -257,6 +262,8 @@ impl VoxelType {
     }
 
     /// Verifica si este voxel es aire.
+    // Contraparte de conversión segura de `#[repr(u8)]`, para serialización/red (aún no conectado).
+    #[allow(dead_code)]
     #[inline]
     pub fn is_air(&self) -> bool {
         matches!(self, VoxelType::Air)
@@ -264,6 +271,7 @@ impl VoxelType {
 
     /// Convierte un u8 a VoxelType de forma segura.
     /// Valores fuera de rango retornan Air.
+    #[allow(dead_code)]
     #[inline]
     pub fn from_u8(value: u8) -> Self {
         match value {

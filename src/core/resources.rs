@@ -1,5 +1,8 @@
 use bevy::prelude::*;
 
+// Recurso de configuración insertado al arranque; los sistemas de cámara/movimiento
+// aún no leen estos campos (pendiente de conectar el menú de ajustes).
+#[allow(dead_code)]
 #[derive(Resource, Default)]
 pub struct GameSettings {
     pub mouse_sensitivity: f32,
