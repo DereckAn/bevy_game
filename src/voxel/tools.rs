@@ -29,9 +29,7 @@ pub enum ToolType {
 
 #[derive(Clone, Debug)]
 pub struct ToolProperties {
-    /// Nombre de la herramienta.
-    // Aún no se muestra en UI; reservado para el HUD de herramientas.
-    #[allow(dead_code)]
+    /// Nombre de la herramienta (mostrado en el HUD).
     pub name: &'static str,
 
     /// Durabilidad maxima de la herramienta.
