@@ -1,12 +1,11 @@
 //! Rapier Physics Integration for Voxel Drops
 
-use crate::{core::constants::VOXEL_SIZE, voxel::VoxelType};
+use crate::{
+    core::{constants::VOXEL_SIZE, Inventory},
+    voxel::{VoxelType, VOXEL_TYPE_COUNT},
+};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
-
-/// Número de variantes de `VoxelType` (Air=0 .. PineWood=12). Dimensiona la
-/// tabla de materiales de drops; debe cubrir todos los discriminantes.
-const VOXEL_TYPE_COUNT: usize = 13;
 
 /// Assets compartidos por todos los voxel drops.
 ///
@@ -136,6 +135,7 @@ pub fn spawn_rapier_voxel_drop(
 /// System to collect drops when player approaches
 pub fn collect_rapier_drops_system(
     mut commands: Commands,
+    mut inventory: ResMut<Inventory>,
     player_query: Query<
         &Transform,
         (
@@ -162,9 +162,12 @@ pub fn collect_rapier_drops_system(
             .distance(drop_transform.translation);
 
         if distance <= 2.0 {
-            info!("Collected {:?} x{}", drop.voxel_type, drop.quantity);
+            inventory.add(drop.voxel_type, drop.quantity);
+            info!(
+                "Collected {:?} x{} (total: {})",
+                drop.voxel_type, drop.quantity, inventory.0[drop.voxel_type as usize]
+            );
             commands.entity(entity).despawn();
-            // TODO: Add to player inventory
         }
     }
 }

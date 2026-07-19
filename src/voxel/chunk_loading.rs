@@ -8,7 +8,7 @@ use crate::{
     physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        self, BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, PaletteExtension,
+        BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, PaletteExtension,
         SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
     },
 };
@@ -144,15 +144,6 @@ impl ChunkMaterials {
             ChunkLOD::Minimal => 4,
         };
         self.real[idx].clone()
-    }
-
-    pub fn lod_handle(&self, level: LodLevel) -> Handle<StandardMaterial> {
-        let idx = match level {
-            LodLevel::Medium => 0,
-            LodLevel::Low => 1,
-            LodLevel::Minimal => 2,
-        };
-        self.lod[idx].clone()
     }
 }
 

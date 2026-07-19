@@ -28,12 +28,6 @@ pub const WOOD_COLOR: [f32; 3] = [0.451, 0.220, 0.020];
 // Tronco y ramas de pino (madera más oscura).
 pub const PINE_WOOD_COLOR: [f32; 3] = [1.15, 0.56, 0.05];
 
-/// Paleta tonal de la madera: multiplicadores de brillo del color base para el
-/// extremo oscuro (sombra) y el claro (luz). El pintado interpola entre ambos por
-/// voxel/quad, así cada árbol y cada banda del tronco varía sin cambiar el tono.
-pub const DARK_MUL: f32 = 0.7;
-pub const LIGHT_MUL: f32 = 1.25;
-
 /// Copas de los robles (hojas genéricas).
 pub const LEAVES_COLOR: [f32; 3] = [0.2, 0.8, 0.2];
 

@@ -5,7 +5,6 @@
 
 use crate::voxel::voxel_types::VoxelType;
 use bevy::prelude::*;
-use rand::Rng;
 
 // ============================================================================
 // TOOL TYPE ENUM
@@ -14,8 +13,6 @@ use rand::Rng;
 /// Tipo de herramienta que el jugador puede usar.
 ///
 /// Cada herramienta tienen efeciencia diferente contra diferentes materiales.
-// Pickaxe/Axe/Hoe aún no se equipan en gameplay; forman parte del set de herramientas planeado.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolType {
     Pickaxe,
@@ -32,7 +29,7 @@ pub enum ToolType {
 #[derive(Clone, Debug)]
 pub struct ToolProperties {
     /// Nombre de la herramienta.
-    // Aún no se muestra en UI; reservado para el HUD de herramientas.
+    // El HUD usa iconos, no el nombre; reservado para tooltips/menús.
     #[allow(dead_code)]
     pub name: &'static str,
 
@@ -112,120 +109,28 @@ impl ToolType {
         }
     }
 
-    /// Calcula cuántos voxels se obtienen al destruir con esta herramienta
-    ///
-    /// Retorna un rango aleatorio basado en la herramienta y tipo de voxel
-    pub fn calculate_drops(&self, voxel_type: VoxelType) -> u32 {
-        let mut rng = rand::thread_rng();
-
-        let (min, max) = match (self, voxel_type) {
-            // Aire no da drops
-            (_, VoxelType::Air) => (0, 0),
-
-            // Follaje y arbustos: no dropean nada
-            (_, VoxelType::Foliage | VoxelType::Bush) => (0, 0),
-
-            // Manos desnudas (muy poco eficiente)
-            (ToolType::None, VoxelType::Stone) => (0, 1),
-            (ToolType::None, VoxelType::Metal) => (0, 0),
-            (ToolType::None, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (2, 3),
-            (ToolType::None, VoxelType::Wood | VoxelType::PineWood) => (1, 2),
-            (
-                ToolType::None,
-                VoxelType::Leaves | VoxelType::PineNeedles | VoxelType::SmallLeaves,
-            ) => (0, 1),
-
-            // Pala (buena para tierra/arena)
-            (ToolType::Shovel, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (8, 15),
-            (ToolType::Shovel, VoxelType::Stone) => (2, 4),
-            (ToolType::Shovel, VoxelType::Wood | VoxelType::PineWood) => (3, 5),
-            (ToolType::Shovel, VoxelType::Metal) => (0, 1),
-            (
-                ToolType::Shovel,
-                VoxelType::Leaves | VoxelType::PineNeedles | VoxelType::SmallLeaves,
-            ) => (1, 3),
-
-            // Pico (bueno para piedra/metal)
-            (ToolType::Pickaxe, VoxelType::Stone) => (8, 15),
-            (ToolType::Pickaxe, VoxelType::Metal) => (3, 8),
-            (ToolType::Pickaxe, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (5, 8),
-            (ToolType::Pickaxe, VoxelType::Wood | VoxelType::PineWood) => (4, 6),
-            (
-                ToolType::Pickaxe,
-                VoxelType::Leaves | VoxelType::PineNeedles | VoxelType::SmallLeaves,
-            ) => (1, 3),
-
-            // Hacha (excelente para madera)
-            (ToolType::Axe, VoxelType::Wood | VoxelType::PineWood) => (10, 30),
-            (ToolType::Axe, VoxelType::Dirt | VoxelType::Grass | VoxelType::Sand) => (6, 10),
-            (ToolType::Axe, VoxelType::Stone) => (3, 6),
-            (ToolType::Axe, VoxelType::Metal) => (1, 3),
-            (
-                ToolType::Axe,
-                VoxelType::Leaves | VoxelType::PineNeedles | VoxelType::SmallLeaves,
-            ) => (1, 3),
-
-            // Azada (herramienta especial, por ahora como pala)
-            (ToolType::Hoe, voxel) => {
-                // Reutilizar lógica de pala
-                return ToolType::Shovel.calculate_drops(voxel);
-            }
-        };
-
-        if min >= max {
-            min
-        } else {
-            rng.gen_range(min..=max)
-        }
-    }
-
     /// Obtiene el patrón de destrucción para esta herramienta
     ///
-    /// Retorna una lista de posiciones relativas que se destruirán
+    /// Retorna una lista de posiciones relativas que se destruirán.
+    ///
+    /// Esfera de radio `BREAK_RADIUS` (igual para todas las herramientas): todos
+    /// los offsets cuya distancia al centro cabe en el radio. Sube el radio para
+    /// romper cráteres más grandes.
     pub fn get_destruction_pattern(&self) -> Vec<IVec3> {
-        match self {
-            // Manos: solo 1 voxel
-            ToolType::None => vec![IVec3::ZERO],
+        /// Radio de la esfera de destrucción, en voxels.
+        const BREAK_RADIUS: i32 = 2;
 
-            // Pala: cráter horizontal (excavación)
-            ToolType::Shovel => vec![
-                IVec3::new(0, 0, 0),  // Centro
-                IVec3::new(1, 0, 0),  // Derecha
-                IVec3::new(-1, 0, 0), // Izquierda
-                IVec3::new(0, 0, 1),  // Adelante
-                IVec3::new(0, 0, -1), // Atrás
-                IVec3::new(0, -1, 0), // Abajo (simula excavación)
-            ],
-
-            // Pico: cráter cónico (picotazo)
-            ToolType::Pickaxe => vec![
-                IVec3::new(0, 0, 0),  // Centro
-                IVec3::new(1, 0, 0),  // Derecha
-                IVec3::new(-1, 0, 0), // Izquierda
-                IVec3::new(0, 1, 0),  // Arriba
-                IVec3::new(0, -1, 0), // Abajo
-                IVec3::new(0, 0, 1),  // Adelante
-                IVec3::new(0, 0, -1), // Atrás
-            ],
-
-            // Hacha: cráter vertical (cortar tronco)
-            ToolType::Axe => vec![
-                IVec3::new(0, 0, 0),   // Centro
-                IVec3::new(0, 1, 0),   // Arriba
-                IVec3::new(0, -1, 0),  // Abajo
-                IVec3::new(1, 0, 0),   // Derecha
-                IVec3::new(-1, 0, 0),  // Izquierda
-                IVec3::new(0, 2, 0),   // Más arriba
-                IVec3::new(0, -2, 0),  // Más abajo
-                IVec3::new(1, 1, 0),   // Diagonal
-                IVec3::new(-1, 1, 0),  // Diagonal
-                IVec3::new(1, -1, 0),  // Diagonal
-                IVec3::new(-1, -1, 0), // Diagonal
-            ],
-
-            // Azada: como pala por ahora
-            ToolType::Hoe => ToolType::Shovel.get_destruction_pattern(),
+        let mut pattern = Vec::new();
+        for x in -BREAK_RADIUS..=BREAK_RADIUS {
+            for y in -BREAK_RADIUS..=BREAK_RADIUS {
+                for z in -BREAK_RADIUS..=BREAK_RADIUS {
+                    if x * x + y * y + z * z <= BREAK_RADIUS * BREAK_RADIUS {
+                        pattern.push(IVec3::new(x, y, z));
+                    }
+                }
+            }
         }
+        pattern
     }
 }
 
@@ -288,5 +193,18 @@ impl Tool {
         }
 
         self.current_durability as f32 / max as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn destruction_pattern_is_a_sphere() {
+        let pattern = ToolType::Pickaxe.get_destruction_pattern();
+        assert!(pattern.contains(&IVec3::ZERO)); // centro
+        assert!(pattern.contains(&IVec3::new(2, 0, 0))); // borde sobre eje (dist²=4)
+        assert!(!pattern.contains(&IVec3::new(2, 2, 2))); // esquina (dist²=12) fuera
     }
 }
