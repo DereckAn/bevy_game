@@ -54,6 +54,7 @@ fn main() {
             // del juego lo bloquea/libera en player/input.rs
             ..default()
         })) // Añade plugins básicos (ventana, input, render, etc.)
+        .add_plugins(MaterialPlugin::<crate::voxel::ChunkMaterial>::default()) // Material de chunks con paleta
         .add_plugins(PhysicsPlugin) // Añade nuestro plugin de física (Rapier)
         .add_plugins(UIPlugin) // Anade el plugin de ui 
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)

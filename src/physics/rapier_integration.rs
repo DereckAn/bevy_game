@@ -4,16 +4,21 @@ use crate::{core::constants::VOXEL_SIZE, voxel::VoxelType};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+/// Número de variantes de `VoxelType` (Air=0 .. PineWood=12). Dimensiona la
+/// tabla de materiales de drops; debe cubrir todos los discriminantes.
+const VOXEL_TYPE_COUNT: usize = 13;
+
 /// Assets compartidos por todos los voxel drops.
 ///
 /// El cubo es idéntico para cada drop y el material solo depende del tipo de
-/// voxel (7 tipos). Crearlos una vez y clonar los handles evita asignar un
-/// `Mesh` + `StandardMaterial` nuevos por cada drop spawneado.
+/// voxel. Crearlos una vez y clonar los handles evita asignar un `Mesh` +
+/// `StandardMaterial` nuevos por cada drop spawneado. Los drops son cubos planos
+/// (sin paleta): usan `StandardMaterial`, no el shader de chunks.
 #[derive(Resource)]
 pub struct DropAssets {
     mesh: Handle<Mesh>,
-    /// Indexado por `VoxelType as usize` (Air, Dirt, Stone, Wood, Metal, Grass, Sand, Leaves, Foliage, Bush)
-    materials: [Handle<StandardMaterial>; 10],
+    /// Indexado por `VoxelType as usize` (una entrada por variante).
+    materials: [Handle<StandardMaterial>; VOXEL_TYPE_COUNT],
 }
 
 impl FromWorld for DropAssets {
@@ -25,28 +30,15 @@ impl FromWorld for DropAssets {
         ));
 
         let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
-        let mut make = |vt: VoxelType| {
+        // Una entrada por discriminante (0..COUNT), en orden del enum.
+        let materials = std::array::from_fn(|id| {
             materials.add(StandardMaterial {
-                base_color: vt.properties().color,
+                base_color: VoxelType::from_u8(id as u8).properties().color,
                 metallic: 0.1,
                 perceptual_roughness: 0.8,
                 ..default()
             })
-        };
-
-        // Orden = valores del enum (repr u8): Air=0 .. Sand=6
-        let materials = [
-            make(VoxelType::Air),
-            make(VoxelType::Dirt),
-            make(VoxelType::Stone),
-            make(VoxelType::Wood),
-            make(VoxelType::Metal),
-            make(VoxelType::Grass),
-            make(VoxelType::Sand),
-            make(VoxelType::Leaves),
-            make(VoxelType::Foliage),
-            make(VoxelType::Bush),
-        ];
+        });
 
         Self { mesh, materials }
     }
