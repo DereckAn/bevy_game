@@ -362,10 +362,12 @@ fn add_side_face(
 /// Lados del cono/bola de la copa del impostor. 8 se ve suave a distancia LOD.
 const IMPOSTOR_SIDES: usize = 8;
 
-/// Color RGBA lineal de un tipo de voxel (igual que la rama no-pasto de `voxel_color`).
+/// Color RGBA lineal de un tipo de voxel (igual que la rama no-pasto de
+/// `voxel_color`): el alpha lleva el discriminante de `VoxelType` para que el
+/// shader de paleta aplique la variación tonal (troncos/copas de los impostores).
 fn linear_rgba(voxel_type: VoxelType) -> [f32; 4] {
     let l = voxel_type.properties().color.to_linear();
-    [l.red, l.green, l.blue, 1.0]
+    [l.red, l.green, l.blue, voxel_type as u8 as f32 / 255.0]
 }
 
 /// Punto `i` de un anillo horizontal de `sides` lados, radio `radius`, centrado en `center`.

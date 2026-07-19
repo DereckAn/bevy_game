@@ -62,6 +62,14 @@ pub fn pine_template(rng_seed: u32, trunk_height: i32) -> Vec<TreeVoxel> {
         add_leaf_blob(center, radius, VoxelType::PineNeedles, &mut voxels);
     }
 
+    // El tronco/ramas se rasterizan como `Wood` (helper compartido con el roble);
+    // reetiquétalos a `PineWood` para que tomen su propia paleta al pintar.
+    for v in &mut voxels {
+        if v.voxel_type == VoxelType::Wood {
+            v.voxel_type = VoxelType::PineWood;
+        }
+    }
+
     voxels
 }
 
@@ -75,6 +83,6 @@ mod tests {
         let voxels = pine_template(12345, 20);
         assert!(voxels
             .iter()
-            .any(|v| v.voxel_type == VoxelType::Wood && v.offset.y >= 18));
+            .any(|v| v.voxel_type == VoxelType::PineWood && v.offset.y >= 18));
     }
 }

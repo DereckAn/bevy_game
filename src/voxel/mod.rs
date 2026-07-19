@@ -18,6 +18,12 @@ pub mod frustum_culling;
 pub mod greedy_meshing;
 pub mod lod_chunks;
 pub mod lod_system;
+// Espejo en Rust de la tabla `SPREADS` del shader de paleta (los valores por
+// material). Documentación/spec testeada; el render usa el WGSL, no esto — de ahí
+// el allow.
+#[allow(dead_code)]
+pub mod palette;
+pub mod palette_material;
 pub mod spatial_hash;
 pub mod tools;
 pub mod voxel_color;
@@ -31,6 +37,7 @@ pub use frustum_culling::*;
 pub use greedy_meshing::*;
 pub use lod_chunks::*;
 pub use lod_system::*;
+pub use palette_material::*;
 pub use spatial_hash::*;
 pub use tools::*;
 pub use voxel_color::*;

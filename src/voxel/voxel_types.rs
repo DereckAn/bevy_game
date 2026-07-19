@@ -64,6 +64,9 @@ pub enum VoxelType {
 
     /// Hojas de árbol pequeño: como las hojas, pero color propio (verde claro).
     SmallLeaves = 11,
+
+    /// Madera de pino: como `Wood`, pero con su propia paleta tonal (más oscura).
+    PineWood = 12,
 }
 
 // ============================================================================
@@ -230,6 +233,15 @@ impl VoxelType {
                 name: "SmallLeaves",
                 density: 0.1,
             },
+
+            VoxelType::PineWood => VoxelProperties {
+                hardness: 2.0,
+                color: rgb(config::PINE_WOOD_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "PineWood",
+                density: 1.5,
+            },
         }
     }
 
@@ -275,6 +287,7 @@ impl VoxelType {
             9 => VoxelType::Bush,
             10 => VoxelType::PineNeedles,
             11 => VoxelType::SmallLeaves,
+            12 => VoxelType::PineWood,
             _ => VoxelType::Air,
         }
     }

@@ -134,9 +134,14 @@ fn grass_color(world_x: f32, world_y: f32, world_z: f32, slope: f32) -> [f32; 4]
     ]
 }
 
-/// Color (RGB lineal) de un vértice según el tipo de voxel: el pasto interpola
-/// entre dos verdes (ruido + altura + pendiente); el resto usa el color real de
-/// su material. `slope` solo afecta al pasto.
+/// Color (RGB lineal) de un vértice. El **alpha lleva el discriminante de
+/// `VoxelType`** (`id/255`): el shader lo usa para leer el rango tonal de ese
+/// material en el uniform `spreads` y aplicar la variación por fragmento (o
+/// dejar el color plano si ese material no tiene paleta).
+///
+/// El color base es plano y uniforme por quad (así el greedy meshing fusiona);
+/// coincide con el color del material en `properties`. El pasto es la excepción:
+/// su color ya va baked (ruido + altura + pendiente) y su `spreads` es plano.
 pub fn voxel_color(
     voxel_type: VoxelType,
     world_x: f32,
@@ -144,10 +149,11 @@ pub fn voxel_color(
     world_z: f32,
     slope: f32,
 ) -> [f32; 4] {
+    let id = voxel_type as u8 as f32 / 255.0;
     if voxel_type == VoxelType::Grass {
-        grass_color(world_x, world_y, world_z, slope)
-    } else {
-        let l = voxel_type.properties().color.to_linear();
-        [l.red, l.green, l.blue, 1.0]
+        let c = grass_color(world_x, world_y, world_z, slope);
+        return [c[0], c[1], c[2], id];
     }
+    let l = voxel_type.properties().color.to_linear();
+    [l.red, l.green, l.blue, id]
 }
