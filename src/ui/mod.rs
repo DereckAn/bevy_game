@@ -31,11 +31,14 @@ impl Plugin for UIPlugin {
             .add_systems(OnEnter(Paused), pause::setup_pause_menu)
             .add_systems(OnExit(Paused), pause::cleanup_pause_menu)
             .add_systems(Update, pause::pause_button_system.run_if(in_state(Paused)))
-            // ----- HUD (inventario + herramienta) -----
+            // ----- HUD (barra de herramientas + inventario) -----
             // Visible solo en juego: se crea al entrar y se elimina al salir
             // (salir a pausa/menú también dispara OnExit(InGame)).
-            .add_systems(OnEnter(InGame), hud::setup_hud)
+            .add_systems(OnEnter(InGame), hud::setup_toolbar)
             .add_systems(OnExit(InGame), hud::cleanup_hud)
-            .add_systems(Update, hud::update_hud.run_if(in_state(InGame)));
+            .add_systems(
+                Update,
+                (hud::update_toolbar_highlight, hud::toggle_inventory).run_if(in_state(InGame)),
+            );
     }
 }
