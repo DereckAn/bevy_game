@@ -12,6 +12,7 @@ mod debug;
 mod ui;
 mod physics; // Declara el módulo 'physics' (busca src/physics/mod.rs)
 mod player; // Declara el módulo 'player' (busca src/player/mod.rs)
+mod sky; // Declara el módulo 'sky' (busca src/sky/mod.rs)
 mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el módulo 'debug' (busca src/debug/mod.rs)
 mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 
@@ -25,6 +26,7 @@ use core::{GameSettings, WorldSeed}; // Importa recursos globales desde nuestro 
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
+use sky::SkyPlugin; // Importa SkyPlugin (atmósfera, día/noche, nubes)
 use voxel::{
     BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, SpatialHashGrid,
     complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
@@ -58,6 +60,7 @@ fn main() {
         .add_plugins(PhysicsPlugin) // Añade nuestro plugin de física (Rapier)
         .add_plugins(UIPlugin) // Anade el plugin de ui 
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
+        .add_plugins(SkyPlugin) // Añade el cielo (atmósfera, ciclo día/noche, nubes)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
         .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque
@@ -211,20 +214,5 @@ fn setup(
         ));
     }
 
-    // ========================================================================
-    // ILUMINACIÓN
-    // ========================================================================
-
-    // Luz direccional (simula el sol)
-    commands.spawn((
-        // Crea entidad de luz
-        DirectionalLight {
-            // Componente de luz direccional
-            illuminance: 15000.0,  // Intensidad de la luz en lux
-            shadows_enabled: true, // Habilitar sombras
-            ..default()            // Valores por defecto para el resto
-        },
-        Transform::from_xyz(4.0, 10.0, 4.0) // Posición de la luz en (4, 10, 4)
-            .looking_at(Vec3::ZERO, Vec3::Y), // Apunta hacia el origen (0,0,0), con Y como "arriba"
-    ));
+    // La iluminación (sol + ciclo día/noche) la gestiona ahora `SkyPlugin`.
 }
