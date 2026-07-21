@@ -22,7 +22,7 @@ mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 use std::collections::HashMap;
 use ui::UIPlugin;
 use bevy::prelude::*;
-use core::{GameSettings, WorldSeed}; // Importa recursos globales desde nuestro módulo core
+use core::{GameSettings, WorldSeed, WorldKind}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
@@ -64,6 +64,7 @@ fn main() {
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
         .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque
+        .insert_resource(WorldKind::default()) // Mundo por defecto: Normal (lo fija el menú)
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })

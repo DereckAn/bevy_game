@@ -44,3 +44,18 @@ impl WorldSeed {
         Self(rand::random::<i32>())
     }
 }
+/// Qué mundo/bioma se está generando.
+///
+/// Fijo al elegir en el menú; no cambia durante la partida. Hoy es global:
+/// todo el mundo comparte un kind. Cuando lleguen los biomas en mosaico, el
+/// valor vendrá de un `biome_at(x, z)` por columna en vez de este recurso,
+/// pero las funciones de generación ya reciben `WorldKind` → sin reescritura.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum WorldKind {
+    /// Mundo por defecto: pasto, tierra, robles/pinos.
+    #[default]
+    Normal,
+
+    /// Desierto: arena, dunas, cactus.
+    Desert,
+}

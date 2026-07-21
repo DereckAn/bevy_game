@@ -1,6 +1,6 @@
 //! Sistema de menu pricipal
 
-use crate::core::GameState;
+use crate::core::{GameState, WorldKind};
 use bevy::prelude::*;
 
 /// Componente marcador para entidades del menu pricipal
@@ -15,7 +15,7 @@ pub struct MainMenuUI;
 #[allow(dead_code)]
 #[derive(Component, Clone, Copy, Debug)]
 pub enum MenuAction {
-    Play,
+    Play(WorldKind),
     Settings,
     Credits,
     Quit,
@@ -76,7 +76,8 @@ pub fn setup_main_menu(mut commands: Commands) {
                     BorderColor::all(Color::srgb(0.0, 1.0, 0.8)),
                 ))
                 .with_children(|parent| {
-                    create_menu_button(parent, "PLAY", MenuAction::Play);
+                    create_menu_button(parent, "PLAY", MenuAction::Play(WorldKind::Normal));
+                    create_menu_button(parent, "DESERT", MenuAction::Play(WorldKind::Desert));
                     create_menu_button(parent, "SETTINGS", MenuAction::Settings);
                 });
         });
@@ -137,6 +138,7 @@ pub fn menu_button_system(
         (Changed<Interaction>, With<Button>),
     >,
     mut next_state: ResMut<NextState<GameState>>,
+    mut world_kind: ResMut<WorldKind>,
 ) {
     for (interaction, mut color, menu_action) in &mut interaction_query {
         match *interaction {
@@ -145,8 +147,9 @@ pub fn menu_button_system(
                 info!("Botón presionado: {:?}", menu_action);
 
                 match menu_action {
-                    MenuAction::Play => {
+                    MenuAction::Play(kind) => {
                         info!("Iniciando juego ... ");
+                        *world_kind = *kind;
                         next_state.set(GameState::InGame);
                     }
                     MenuAction::Settings => {
