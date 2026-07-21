@@ -96,8 +96,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // --- Luna: opuesta al sol, así que sale al anochecer sin lógica extra. ---
     let moon_dir = normalize(-sun);
     let md = dot(dir, moon_dir);
-    let moon_core = smoothstep(0.9955, 0.9975, md);          // disco (grande)
-    let moon_glow = smoothstep(0.94, 0.9955, md) * 0.35;     // halo suave
+    let moon_core = smoothstep(0.9990, 0.9994, md);
+    let moon_glow = smoothstep(0.985, 0.9990, md) * 0.25;
     let moon_a = clamp(moon_core + moon_glow, 0.0, 1.0) * horizon;
     let moon_rgb = vec3<f32>(2.6, 2.55, 2.4);                // HDR → brilla con bloom
 

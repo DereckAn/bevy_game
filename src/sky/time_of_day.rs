@@ -32,8 +32,8 @@ pub struct TimeOfDay {
 impl Default for TimeOfDay {
     fn default() -> Self {
         Self {
-            fraction: 0.32,         // media mañana: la partida abre de día
-            day_length_secs: 600.0, // 10 min por ciclo
+            fraction: 0.32,          // media mañana: la partida abre de día
+            day_length_secs: 1800.0, // 30 min por ciclo
             running: true,
         }
     }
@@ -113,7 +113,8 @@ pub fn update_day_night(
 
     // Cálido cerca del horizonte, blanco con el sol alto.
     let warmth = (sun_dir.y * 3.0).clamp(0.0, 1.0);
-    light.color = Color::srgb(1.0, lerp(0.55, 1.0, warmth), lerp(0.32, 1.0, warmth));
+    // Cálido en el horizonte → blanco cálido de día (no blanco puro).
+    light.color = Color::srgb(1.0, lerp(0.55, 0.95, warmth), lerp(0.32, 0.85, warmth));
 
     // Suelo mínimo de luz ambiental para que la noche no sea negra total.
     ambient.brightness = lerp(60.0, 550.0, day);
