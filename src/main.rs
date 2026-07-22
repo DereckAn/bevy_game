@@ -21,7 +21,7 @@ mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 // ============================================================================
 use std::collections::HashMap;
 use ui::UIPlugin;
-use bevy::prelude::*;
+use bevy::{ecs::world, prelude::*};
 use core::{GameSettings, WorldSeed, WorldKind}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
@@ -126,6 +126,7 @@ fn setup(
     chunk_materials: Res<ChunkMaterials>, // Materiales compartidos de chunks
     mut chunk_map: ResMut<ChunkMap>,
     world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
 ) {
     // ========================================================================
     // GENERACIÓN DE TERRENO INICIAL
@@ -146,7 +147,7 @@ fn setup(
             if cx * cx + cz * cz <= initial_radius * initial_radius {
                 // Generar chunks en múltiples niveles verticales
                 for cy in y_min..=y_max {
-                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz), world_seed.0);
+                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz), world_seed.0, *world_kind);
                     temp_chunks.insert(base_chunk.position, base_chunk);
                 }
             }
@@ -202,7 +203,7 @@ fn setup(
         let height = 1.9; // 190 cm
 
         // Apoyar la base de la caja sobre el terreno: centro = suelo + media altura
-        let mut terrain_gen = TerrainGenerator::new(world_seed.0);
+        let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
         let ground_y = terrain_gen.biome_gen.generate_height(ref_x, ref_z);
 
         commands.spawn((

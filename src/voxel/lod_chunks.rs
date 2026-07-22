@@ -3,7 +3,7 @@
 //!
 
 use crate::{
-    core::VOXEL_SIZE,
+    core::{VOXEL_SIZE, WorldKind},
     voxel::{voxel_color, TerrainGenerator, VoxelType},
 };
 use bevy::{
@@ -108,7 +108,7 @@ impl LodChunk {
 
 // Genera un mesh para renderizar el chunk LOD
 // Incluye cara superior y caras laterales para verse bien desde cualquier angulo
-pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32) -> Mesh {
+pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32, kind: WorldKind) -> Mesh {
     let grid_size = lod_chunk.lod_level.grid_size();
     let step_size = 32 / grid_size;
     let voxel_step = step_size as f32 * VOXEL_SIZE;
@@ -259,6 +259,7 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32) -> Mesh {
         add_tree_impostors(
             lod_chunk,
             seed,
+            kind,
             &mut positions,
             &mut normals,
             &mut colors,
@@ -616,6 +617,7 @@ fn add_trunk_prism(
 fn add_tree_impostors(
     lod_chunk: &LodChunk,
     seed: i32,
+    kind: WorldKind,
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
@@ -633,7 +635,7 @@ fn add_tree_impostors(
     let cell_z_min = (origin.z - r).div_euclid(TREE_CELL_SIZE);
     let cell_z_max = (origin.z + n - 1 + r).div_euclid(TREE_CELL_SIZE);
 
-    let mut terrain_gen = TerrainGenerator::new(seed);
+    let mut terrain_gen = TerrainGenerator::new(seed, kind);
 
     for cell_x in cell_x_min..=cell_x_max {
         for cell_z in cell_z_min..=cell_z_max {

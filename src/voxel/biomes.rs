@@ -1,6 +1,7 @@
 //! Sistema de biomas para generación de terreno variado
 //! Incluye montañas, llanuras, valles, colinas, etc.
 
+use crate::core::WorldKind;
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 
 // ============================================================================
@@ -22,6 +23,18 @@ const MAX_AMPLITUDE: f32 = 4.0;
 /// Intensidad del detalle extra de montaña, en metros.
 const MOUNTAIN_DETAIL: f32 = 1.5;
 
+// -- Desierto: dunas mas altasy onduladas que las llanras normales --
+/// Altura base del valle en desierto (las dunas no bana tanto)
+const DESERT_VALLEY_BASE: f32 = 0.0;
+/// Altura base de las crestas de duna/montaña en desierto (más altas que las normales)
+const DESERT_MOUNTAIN_BASE: f32 = 10.0;
+/// Amplitud minima: incluso las zonas bajas ondulan (dunas).
+const DESERT_MIN_AMPLITUDE: f32 = 2.0;
+/// Amplitud maxima: dunas grandes
+const DESERT_MAX_AMPLITUDE: f32 = 7.0;
+/// Detalle de cresta mas marcado
+const DESERT_MOUNTAIN_DETAIL: f32 = 2.5;
+
 /// Interpolación lineal.
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -41,10 +54,12 @@ pub struct BiomeGenerator {
     terrain_noise: FastNoiseLite,
     /// Detalle adicional para montañas (entra gradualmente con la altura)
     mountain_detail_noise: FastNoiseLite,
+    /// bioma que se esta generando (elige los parametros de relieve).
+    kind: WorldKind,
 }
 
 impl BiomeGenerator {
-    pub fn new(seed: i32) -> Self {
+    pub fn new(seed: i32, kind: WorldKind) -> Self {
         // Ruido para determinar tipo de bioma / continentalidad
         let mut biome_noise = FastNoiseLite::new();
         biome_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
@@ -70,6 +85,7 @@ impl BiomeGenerator {
             biome_noise,
             terrain_noise,
             mountain_detail_noise,
+            kind,
         }
     }
 
@@ -79,12 +95,30 @@ impl BiomeGenerator {
     /// derivamos base y amplitud interpoladas, por lo que el terreno pasa de
     /// llano a montañoso gradualmente y nunca de golpe.
     pub fn generate_height(&mut self, world_x: f32, world_z: f32) -> f32 {
+        // Parámetros de relieve según el bioma.
+        let (valley_base, mountain_base, min_amp, max_amp, mountain_detail) = match self.kind {
+            WorldKind::Normal => (
+                VALLEY_BASE,
+                MOUNTAIN_BASE,
+                MIN_AMPLITUDE,
+                MAX_AMPLITUDE,
+                MOUNTAIN_DETAIL,
+            ),
+            WorldKind::Desert => (
+                DESERT_VALLEY_BASE,
+                DESERT_MOUNTAIN_BASE,
+                DESERT_MIN_AMPLITUDE,
+                DESERT_MAX_AMPLITUDE,
+                DESERT_MOUNTAIN_DETAIL,
+            ),
+        };
+
         let continent = self.biome_noise.get_noise_2d(world_x, world_z);
         let t = ((continent + 1.0) * 0.5).clamp(0.0, 1.0); // [0, 1]
         let s = t * t * (3.0 - 2.0 * t); // smoothstep para suavizar aún más
 
-        let base = lerp(VALLEY_BASE, MOUNTAIN_BASE, s);
-        let amplitude = lerp(MIN_AMPLITUDE, MAX_AMPLITUDE, s);
+        let base = lerp(valley_base, mountain_base, s);
+        let amplitude = lerp(min_amp, max_amp, s);
 
         let detail = self.terrain_noise.get_noise_2d(world_x, world_z);
         let mut height = base + detail * amplitude;
@@ -92,7 +126,7 @@ impl BiomeGenerator {
         // El detalle de montaña entra con peso suave (sin escalón en el umbral)
         let mountain_weight = smoothstep(0.45, 0.9, t);
         height += self.mountain_detail_noise.get_noise_2d(world_x, world_z)
-            * MOUNTAIN_DETAIL
+            * mountain_detail
             * mountain_weight;
 
         height
@@ -105,9 +139,9 @@ pub struct TerrainGenerator {
 }
 
 impl TerrainGenerator {
-    pub fn new(seed: i32) -> Self {
+    pub fn new(seed: i32, kind: WorldKind) -> Self {
         Self {
-            biome_gen: BiomeGenerator::new(seed),
+            biome_gen: BiomeGenerator::new(seed, kind),
         }
     }
 }
