@@ -21,7 +21,7 @@ mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 // ============================================================================
 use std::collections::HashMap;
 use ui::UIPlugin;
-use bevy::{ecs::world, prelude::*};
+use bevy::prelude::*;
 use core::{GameSettings, WorldSeed, WorldKind}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
@@ -135,6 +135,8 @@ fn setup(
     // Generar solo el área mínima bajo el spawn (radio de 2 chunks) para que el
     // jugador tenga suelo al caer; el loader async rellena el resto sin congelar
     // el arranque. (#10: antes radio 5 ≈ 390 chunks síncronos al pulsar Play.)
+    info!("Generando terreno para bioma: {:?}", *world_kind);
+
     let initial_radius = 2;
     let y_min = -1; // Chunks bajo tierra
     let y_max = 3; // Chunks en el aire (para montañas)

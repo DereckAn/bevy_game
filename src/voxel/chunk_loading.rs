@@ -13,9 +13,8 @@ use crate::{
     },
 };
 use bevy::{
-    ecs::world, prelude::*, tasks::{AsyncComputeTaskPool, Task},
+    prelude::*, tasks::{AsyncComputeTaskPool, Task},
 };
-use bevy_inspector_egui::egui::Key::K;
 use futures_lite::future;
 use std::collections::{HashSet, VecDeque};
 
