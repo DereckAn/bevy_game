@@ -2,7 +2,7 @@
 //! Chunks base de 32³ con generacion de terreno optimizada
 //! Incluye sistema de biomas con montañas, valles, llanuras, etc.
 
-use crate::core::{BASE_CHUNK_SIZE, VOXEL_SIZE, WorldKind};
+use crate::core::{WorldKind, BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::vegetation::trees::place_trees;
 use crate::voxel::{TerrainGenerator, VoxelType};
 use bevy::prelude::*;
@@ -87,7 +87,7 @@ impl BaseChunk {
                 let terrain_height = heightmap_ref[x + z * grid];
                 let depth = terrain_height - world_y;
 
-                VoxelType::from_depth(depth, depth)
+                VoxelType::from_depth(depth, depth, kind)
             })
             .collect();
 

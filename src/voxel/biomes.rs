@@ -131,6 +131,11 @@ impl BiomeGenerator {
 
         height
     }
+
+    /// Bioma que este generador está produciendo.
+    pub fn kind(&self) -> WorldKind {
+        self.kind
+    }
 }
 
 /// Generador de terreno con múltiples capas de ruido

@@ -3,7 +3,7 @@
 //!
 
 use crate::{
-    core::{VOXEL_SIZE, WorldKind},
+    core::{WorldKind, VOXEL_SIZE},
     voxel::{voxel_color, TerrainGenerator, VoxelType},
 };
 use bevy::{
@@ -100,7 +100,8 @@ impl LodChunk {
 
                 // Determinar el tipo de voxel en la superficie
                 // La superficie siempre es pasto (profundidad 0), igual que BaseChunk
-                self.surface_types[index] = VoxelType::from_depth(1.0, 0.0);
+                self.surface_types[index] =
+                    VoxelType::from_depth(1.0, 0.0, terrain_gen.biome_gen.kind());
             }
         }
     }

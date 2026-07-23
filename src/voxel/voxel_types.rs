@@ -3,6 +3,7 @@
 //! Define los diferentes materiales que pueden existir en el mundo,
 //! sus propiedades físicas, y cómo se comportan.
 
+use crate::core::WorldKind;
 use crate::vegetation::config;
 use bevy::prelude::*;
 
@@ -306,15 +307,27 @@ impl VoxelType {
     /// # Parámetros
     /// - `density`: densidad del voxel (`<= 0` = aire)
     /// - `depth_below_surface`: metros bajo la superficie del terreno
-    pub fn from_depth(density: f32, depth_below_surface: f32) -> Self {
+    pub fn from_depth(density: f32, depth_below_surface: f32, kind: WorldKind) -> Self {
         if density <= 0.0 {
-            VoxelType::Air
-        } else if depth_below_surface < 0.1 {
-            VoxelType::Grass // Capa superior (~1 voxel)
-        } else if depth_below_surface < 0.5 {
-            VoxelType::Dirt // Tierra bajo el pasto (~4 voxels)
-        } else {
-            VoxelType::Stone // Roca en profundidad
+            return VoxelType::Air;
+        }
+        match kind {
+            WorldKind::Normal => {
+                if depth_below_surface < 0.1 {
+                    VoxelType::Grass // Capa superior (~1 voxel)
+                } else if depth_below_surface < 0.5 {
+                    VoxelType::Dirt // Tierra bajo el pasto (~4 voxels)
+                } else {
+                    VoxelType::Stone // Roca en profundidad
+                }
+            }
+            WorldKind::Desert => {
+                if depth_below_surface < 1.0 {
+                    VoxelType::Sand // Arena en superficie (~10 voxels)
+                } else {
+                    VoxelType::Stone // Roca bajo la arena
+                }
+            }
         }
     }
 }
@@ -355,21 +368,41 @@ mod tests {
 
     #[test]
     fn test_from_depth_surface_is_grass() {
-        assert_eq!(VoxelType::from_depth(1.0, 0.0), VoxelType::Grass);
+        assert_eq!(
+            VoxelType::from_depth(1.0, 0.0, WorldKind::Normal),
+            VoxelType::Grass
+        );
     }
 
     #[test]
     fn test_from_depth_just_below_surface_is_dirt() {
-        assert_eq!(VoxelType::from_depth(1.0, 0.3), VoxelType::Dirt);
+        assert_eq!(
+            VoxelType::from_depth(1.0, 0.3, WorldKind::Normal),
+            VoxelType::Dirt
+        );
     }
 
     #[test]
     fn test_from_depth_deep_is_stone() {
-        assert_eq!(VoxelType::from_depth(1.0, 1.0), VoxelType::Stone);
+        assert_eq!(
+            VoxelType::from_depth(1.0, 1.0, WorldKind::Normal),
+            VoxelType::Stone
+        );
     }
 
     #[test]
     fn test_from_depth_air_when_no_density() {
-        assert_eq!(VoxelType::from_depth(-1.0, 0.0), VoxelType::Air);
+        assert_eq!(
+            VoxelType::from_depth(-1.0, 0.0, WorldKind::Normal),
+            VoxelType::Air
+        );
+    }
+
+    #[test]
+    fn test_from_depth_desert_surface_is_sand() {
+        assert_eq!(
+            VoxelType::from_depth(1.0, 0.0, WorldKind::Desert),
+            VoxelType::Sand
+        );
     }
 }
