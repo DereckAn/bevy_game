@@ -40,6 +40,7 @@ pub fn palette_of(voxel_type: VoxelType) -> Option<Palette> {
         VoxelType::PineNeedles => (config::PINE_COLOR, 0.80, 1.15, 4),
         VoxelType::SmallLeaves => (config::SMALL_LEAVES_COLOR, 0.80, 1.15, 4),
         VoxelType::Bush => (config::BUSH_COLOR, 0.80, 1.20, 4),
+        VoxelType::Cactus => (config::CACTUS_COLOR, 0.80, 1.20, 4),
         VoxelType::Dirt => ([0.55, 0.35, 0.2], 0.80, 1.20, 4),
         VoxelType::Sand => ([0.9, 0.85, 0.6], 0.88, 1.10, 4),
         _ => return None,

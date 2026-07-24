@@ -106,7 +106,7 @@ impl BaseChunk {
 
         // Paso 4: pasto denso (follaje atravesable) sobre las columnas de pasto.
         if crate::vegetation::config::ENABLE_GRASS {
-            crate::vegetation::grass::place_grass(self, seed);
+            crate::vegetation::grass::place_grass(self, seed, kind);
         }
     }
 }

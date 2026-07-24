@@ -6,10 +6,12 @@
 //! mismos árboles → consistentes a través de bordes y regeneraciones.
 
 use super::bush::bush_template;
+use super::cactus::cactus_template;
 use super::oak::oak_template;
 use super::pine::pine_template;
 use super::small::tree_template;
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
+use crate::core::WorldKind;
 use crate::voxel::{BaseChunk, BiomeGenerator, VoxelType};
 use bevy::prelude::*;
 
@@ -30,6 +32,7 @@ pub enum TreeKind {
     Pine,
     Oak,
     Bush,
+    Cactus,
 }
 
 /// Un árbol candidato: su columna (x,z) en VOXELS de mundo y su forma.
@@ -50,6 +53,7 @@ impl TreeInstance {
             TreeKind::Pine => self.trunk_height + 2, // mechón en la punta
             TreeKind::Oak => self.trunk_height + self.trunk_height / 2,
             TreeKind::Bush => self.canopy_radius, // cúpula de radio = altura
+            TreeKind::Cactus => self.trunk_height + 3, // cuerpo + brazos que suben
         }
     }
 }
@@ -68,7 +72,7 @@ fn hash_cell(cell_x: i32, cell_z: i32, seed: i32) -> u32 {
 /// Devuelve `Some(TreeInstance)` (posición con jitter dentro de la celda + forma)
 /// o `None`. Función PURA de `(cell, seed)`: cualquier chunk que pregunte por la
 /// misma celda obtiene el mismo resultado → árboles consistentes en los bordes.
-pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance> {
+pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Option<TreeInstance> {
     let h = hash_cell(cell_x, cell_z, seed);
 
     // Bits 0–11 → probabilidad. Si no pasa, no hay árbol en esta celda.
@@ -84,6 +88,40 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32) -> Option<TreeInstance>
 
     // Segundo hash con "sal" → bits independientes para tipo y forma del pino.
     let h2 = hash_cell(cell_x, cell_z, seed ^ 0x5f37_59df);
+
+    // Desierto: solo cactus y arbustos, y más dispersos (conserva ~1/4 de las
+    // celdas que ya pasaron la probabilidad base).
+    if kind == WorldKind::Desert {
+        if (h2 >> 4) & 0x3 != 0 {
+            return None;
+        }
+        if h2 % 3 == 0 {
+            if !crate::vegetation::config::ENABLE_BUSHES {
+                return None;
+            }
+            let canopy_radius = 3 + ((h2 >> 8) % 3) as i32; // 3..=5
+            return Some(TreeInstance {
+                world_x,
+                world_z,
+                kind: TreeKind::Bush,
+                trunk_height: 0,
+                canopy_radius,
+                rng_seed: h2,
+            });
+        }
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
+        let trunk_height = 8 + ((h2 >> 8) % 7) as i32; // 8..=14
+        return Some(TreeInstance {
+            world_x,
+            world_z,
+            kind: TreeKind::Cactus,
+            trunk_height,
+            canopy_radius: 0,
+            rng_seed: h2,
+        });
+    }
 
     if h2 % 6 == 0 {
         // pino (igual que antes)
@@ -165,9 +203,10 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
     let cell_z_min = (origin.z - r).div_euclid(TREE_CELL_SIZE);
     let cell_z_max = (origin.z + n - 1 + r).div_euclid(TREE_CELL_SIZE);
 
+    let kind = biome.kind();
     for cell_x in cell_x_min..=cell_x_max {
         for cell_z in cell_z_min..=cell_z_max {
-            let Some(tree) = tree_in_cell(cell_x, cell_z, seed) else {
+            let Some(tree) = tree_in_cell(cell_x, cell_z, seed, kind) else {
                 continue;
             };
 
@@ -185,6 +224,7 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                 TreeKind::Pine => pine_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::Oak => oak_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::Bush => bush_template(tree.canopy_radius),
+                TreeKind::Cactus => cactus_template(tree.rng_seed, tree.trunk_height),
             };
             for tv in template {
                 let world = base + tv.offset;
@@ -228,10 +268,11 @@ pub fn tree_ceiling_for_chunk(
     let cell_z_min = (origin.z - r).div_euclid(TREE_CELL_SIZE);
     let cell_z_max = (origin.z + n - 1 + r).div_euclid(TREE_CELL_SIZE);
 
+    let kind = biome.kind();
     let mut ceiling: Option<i32> = None;
     for cell_x in cell_x_min..=cell_x_max {
         for cell_z in cell_z_min..=cell_z_max {
-            let Some(tree) = tree_in_cell(cell_x, cell_z, seed) else {
+            let Some(tree) = tree_in_cell(cell_x, cell_z, seed, kind) else {
                 continue;
             };
             let wx_m = tree.world_x as f32 * VOXEL_SIZE;

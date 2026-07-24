@@ -4,6 +4,7 @@
 //! `TreeKind`) en `placement.rs`.
 
 mod bush;
+mod cactus;
 mod oak;
 mod pine;
 mod placement;
@@ -12,5 +13,5 @@ mod voxelize;
 
 // API pública del módulo (los paths `crate::vegetation::trees::*` siguen válidos).
 pub use placement::{
-    MAX_CANOPY_RADIUS, TREE_CELL_SIZE, TreeKind, place_trees, tree_ceiling_for_chunk, tree_in_cell,
+    place_trees, tree_ceiling_for_chunk, tree_in_cell, TreeKind, MAX_CANOPY_RADIUS, TREE_CELL_SIZE,
 };

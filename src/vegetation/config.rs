@@ -42,3 +42,6 @@ pub const GRASS_COLOR: [f32; 3] = [0.20, 0.55, 0.15];
 
 /// Arbustos (verde más oscuro para distinguirlos del pasto).
 pub const BUSH_COLOR: [f32; 3] = [0.10, 0.32, 0.10];
+
+/// Cactus (verde saguaro, algo azulado/apagado).
+pub const CACTUS_COLOR: [f32; 3] = [0.24, 0.45, 0.26];

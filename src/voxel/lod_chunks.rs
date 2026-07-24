@@ -640,7 +640,7 @@ fn add_tree_impostors(
 
     for cell_x in cell_x_min..=cell_x_max {
         for cell_z in cell_z_min..=cell_z_max {
-            let Some(tree) = tree_in_cell(cell_x, cell_z, seed) else {
+            let Some(tree) = tree_in_cell(cell_x, cell_z, seed, kind) else {
                 continue;
             };
 

@@ -222,6 +222,7 @@ pub fn update_chunk_load_queue(
     chunk_map: Res<ChunkMap>,
     spatial_hash: Res<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    world_kind: Res<WorldKind>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
@@ -237,9 +238,13 @@ pub fn update_chunk_load_queue(
 
     load_queue.last_player_chunk = player_chunk;
 
-    // Rango vertical reducido: desde -1 hasta +3 chunks (mejor rendimiento)
+    // Rango vertical: -1 hasta +4 chunks (mejor rendimiento). El desierto tiene
+    // dunas más altas (~19.5 m), así que sube el techo para no recortarlas plano.
     let y_min = -1;
-    let y_max = 4;
+    let y_max = match *world_kind {
+        WorldKind::Desert => 6,
+        WorldKind::Normal => 4,
+    };
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
     // El triple bucle visita cada (cx,cy,cz) exactamente una vez, así que no hay

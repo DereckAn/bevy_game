@@ -17,9 +17,9 @@ fn rgb(c: [f32; 3]) -> Color {
 // VOXEL TYPE ENUM
 // ============================================================================
 
-/// Número de variantes de `VoxelType` (Air=0 .. PineWood=12). Dimensiona tablas
+/// Número de variantes de `VoxelType` (Air=0 .. Cactus=13). Dimensiona tablas
 /// indexadas por `VoxelType as usize` (materiales de drops, inventario).
-pub const VOXEL_TYPE_COUNT: usize = 13;
+pub const VOXEL_TYPE_COUNT: usize = 14;
 
 /// Tipo de voxel que representa diferentes materiales del mundo.
 ///
@@ -72,6 +72,9 @@ pub enum VoxelType {
 
     /// Madera de pino: como `Wood`, pero con su propia paleta tonal (más oscura).
     PineWood = 12,
+
+    /// Cactus: cuerpo carnoso del desierto (verde), sólido y colisionable.
+    Cactus = 13,
 }
 
 // ============================================================================
@@ -247,6 +250,15 @@ impl VoxelType {
                 name: "PineWood",
                 density: 1.5,
             },
+
+            VoxelType::Cactus => VoxelProperties {
+                hardness: 0.4,
+                color: rgb(config::CACTUS_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "Cactus",
+                density: 0.3,
+            },
         }
     }
 
@@ -293,6 +305,7 @@ impl VoxelType {
             10 => VoxelType::PineNeedles,
             11 => VoxelType::SmallLeaves,
             12 => VoxelType::PineWood,
+            13 => VoxelType::Cactus,
             _ => VoxelType::Air,
         }
     }

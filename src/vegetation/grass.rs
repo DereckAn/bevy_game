@@ -6,10 +6,14 @@
 //! reconstruye el mismo pasto.
 
 use crate::core::constants::BASE_CHUNK_SIZE;
+use crate::core::WorldKind;
 use crate::voxel::{BaseChunk, VoxelType};
 
 /// Fracción de columnas de pasto que reciben un tufo.
 const GRASS_DENSITY: f32 = 0.35;
+
+/// Fracción de columnas de arena con un tufo seco (desierto, mucho más disperso).
+const DESERT_GRASS_DENSITY: f32 = 0.05;
 
 /// Hash determinista por columna mundial + seed.
 fn column_hash(wx: i32, wz: i32, seed: i32) -> u32 {
@@ -23,10 +27,17 @@ fn column_hash(wx: i32, wz: i32, seed: i32) -> u32 {
 /// Estampa tufos de pasto sobre las columnas cuyo voxel de superficie (el sólido
 /// más alto DENTRO de este chunk) es pasto. Se ejecuta después de los árboles, así
 /// no crece pasto encima de troncos/copas.
-pub fn place_grass(chunk: &mut BaseChunk, seed: i32) {
+pub fn place_grass(chunk: &mut BaseChunk, seed: i32, kind: WorldKind) {
     let n = BASE_CHUNK_SIZE;
     let origin_x = chunk.position.x * n as i32;
     let origin_z = chunk.position.z * n as i32;
+
+    // El tufo crece sobre pasto (normal) o sobre arena (desierto), con densidades
+    // distintas: el desierto es mucho más disperso.
+    let (surface_needed, density) = match kind {
+        WorldKind::Normal => (VoxelType::Grass, GRASS_DENSITY),
+        WorldKind::Desert => (VoxelType::Sand, DESERT_GRASS_DENSITY),
+    };
 
     for lz in 0..n {
         for lx in 0..n {
@@ -40,14 +51,13 @@ pub fn place_grass(chunk: &mut BaseChunk, seed: i32) {
             }
             let Some(sy) = surface else { continue };
 
-            // Solo sobre pasto (no piedra/arena/madera/hojas).
-            if chunk.voxel_types[lx][sy][lz] != VoxelType::Grass {
+            if chunk.voxel_types[lx][sy][lz] != surface_needed {
                 continue;
             }
 
             // Decisión determinista por columna.
             let h = column_hash(origin_x + lx as i32, origin_z + lz as i32, seed);
-            if (h & 0xff) as f32 / 255.0 > GRASS_DENSITY {
+            if (h & 0xff) as f32 / 255.0 > density {
                 continue;
             }
 
