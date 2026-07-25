@@ -40,8 +40,14 @@ pub const SMALL_LEAVES_COLOR: [f32; 3] = [0.45, 0.80, 0.35];
 /// Tufos de pasto.
 pub const GRASS_COLOR: [f32; 3] = [0.20, 0.55, 0.15];
 
+/// Tufos de pasto seco del desierto (#E49E49).
+pub const DESERT_GRASS_COLOR: [f32; 3] = [0.894, 0.620, 0.286];
+
 /// Arbustos (verde más oscuro para distinguirlos del pasto).
 pub const BUSH_COLOR: [f32; 3] = [0.10, 0.32, 0.10];
+
+/// Arbustos secos del desierto (#9C5906).
+pub const DESERT_BUSH_COLOR: [f32; 3] = [0.612, 0.349, 0.024];
 
 /// Cactus (verde saguaro, algo azulado/apagado).
 pub const CACTUS_COLOR: [f32; 3] = [0.24, 0.45, 0.26];

@@ -36,8 +36,8 @@ var<private> SPREADS: array<vec4<f32>, 16> = array<vec4<f32>, 16>(
     vec4<f32>(0.80, 1.15, 4.0, 0.0), // 11 SmallLeaves
     vec4<f32>(0.70, 1.25, 5.0, 0.0), // 12 PineWood
     vec4<f32>(0.80, 1.20, 4.0, 0.0), // 13 Cactus
-    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 14
-    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 15
+    vec4<f32>(0.60, 1.20, 5.0, 0.0), // 14 DesertGrass
+    vec4<f32>(0.70, 1.20, 4.0, 0.0), // 15 DesertBush
 );
 
 fn hash01(x: i32, z: i32) -> f32 {

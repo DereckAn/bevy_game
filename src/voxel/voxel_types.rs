@@ -17,9 +17,9 @@ fn rgb(c: [f32; 3]) -> Color {
 // VOXEL TYPE ENUM
 // ============================================================================
 
-/// Número de variantes de `VoxelType` (Air=0 .. Cactus=13). Dimensiona tablas
+/// Número de variantes de `VoxelType` (Air=0 .. DesertBush=15). Dimensiona tablas
 /// indexadas por `VoxelType as usize` (materiales de drops, inventario).
-pub const VOXEL_TYPE_COUNT: usize = 14;
+pub const VOXEL_TYPE_COUNT: usize = 16;
 
 /// Tipo de voxel que representa diferentes materiales del mundo.
 ///
@@ -75,6 +75,12 @@ pub enum VoxelType {
 
     /// Cactus: cuerpo carnoso del desierto (verde), sólido y colisionable.
     Cactus = 13,
+
+    /// Pasto seco del desierto: follaje atravesable, color arena (#E49E49).
+    DesertGrass = 14,
+
+    /// Arbusto seco del desierto: follaje atravesable, color marrón (#9C5906).
+    DesertBush = 15,
 }
 
 // ============================================================================
@@ -259,6 +265,24 @@ impl VoxelType {
                 name: "Cactus",
                 density: 0.3,
             },
+
+            VoxelType::DesertGrass => VoxelProperties {
+                hardness: 0.1, // se rompe al instante, como el follaje
+                color: rgb(config::DESERT_GRASS_COLOR),
+                is_solid: true, // se renderiza, pero no colisiona (ver is_collidable)
+                drops_self: false,
+                name: "DesertGrass",
+                density: 0.1,
+            },
+
+            VoxelType::DesertBush => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::DESERT_BUSH_COLOR),
+                is_solid: true, // se renderiza, pero no colisiona (ver is_collidable)
+                drops_self: false,
+                name: "DesertBush",
+                density: 0.1,
+            },
         }
     }
 
@@ -275,7 +299,14 @@ impl VoxelType {
     /// render, no para la física.
     #[inline]
     pub fn is_collidable(&self) -> bool {
-        self.is_solid() && !matches!(self, VoxelType::Foliage | VoxelType::Bush)
+        self.is_solid()
+            && !matches!(
+                self,
+                VoxelType::Foliage
+                    | VoxelType::Bush
+                    | VoxelType::DesertGrass
+                    | VoxelType::DesertBush
+            )
     }
 
     /// Verifica si este voxel es aire.
@@ -306,6 +337,8 @@ impl VoxelType {
             11 => VoxelType::SmallLeaves,
             12 => VoxelType::PineWood,
             13 => VoxelType::Cactus,
+            14 => VoxelType::DesertGrass,
+            15 => VoxelType::DesertBush,
             _ => VoxelType::Air,
         }
     }

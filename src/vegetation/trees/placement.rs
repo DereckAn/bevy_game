@@ -223,7 +223,14 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                 TreeKind::Small => tree_template(tree.trunk_height, tree.canopy_radius),
                 TreeKind::Pine => pine_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::Oak => oak_template(tree.rng_seed, tree.trunk_height),
-                TreeKind::Bush => bush_template(tree.canopy_radius),
+                TreeKind::Bush => {
+                    let bush_type = if kind == WorldKind::Desert {
+                        VoxelType::DesertBush
+                    } else {
+                        VoxelType::Bush
+                    };
+                    bush_template(tree.canopy_radius, bush_type)
+                }
                 TreeKind::Cactus => cactus_template(tree.rng_seed, tree.trunk_height),
             };
             for tv in template {
