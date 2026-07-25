@@ -3,6 +3,7 @@
 //! Define los diferentes materiales que pueden existir en el mundo,
 //! sus propiedades físicas, y cómo se comportan.
 
+use crate::core::WorldKind;
 use crate::vegetation::config;
 use bevy::prelude::*;
 
@@ -16,9 +17,9 @@ fn rgb(c: [f32; 3]) -> Color {
 // VOXEL TYPE ENUM
 // ============================================================================
 
-/// Número de variantes de `VoxelType` (Air=0 .. PineWood=12). Dimensiona tablas
+/// Número de variantes de `VoxelType` (Air=0 .. DesertBush=15). Dimensiona tablas
 /// indexadas por `VoxelType as usize` (materiales de drops, inventario).
-pub const VOXEL_TYPE_COUNT: usize = 13;
+pub const VOXEL_TYPE_COUNT: usize = 16;
 
 /// Tipo de voxel que representa diferentes materiales del mundo.
 ///
@@ -71,6 +72,15 @@ pub enum VoxelType {
 
     /// Madera de pino: como `Wood`, pero con su propia paleta tonal (más oscura).
     PineWood = 12,
+
+    /// Cactus: cuerpo carnoso del desierto (verde), sólido y colisionable.
+    Cactus = 13,
+
+    /// Pasto seco del desierto: follaje atravesable, color arena (#E49E49).
+    DesertGrass = 14,
+
+    /// Arbusto seco del desierto: follaje atravesable, color marrón (#9C5906).
+    DesertBush = 15,
 }
 
 // ============================================================================
@@ -246,6 +256,33 @@ impl VoxelType {
                 name: "PineWood",
                 density: 1.5,
             },
+
+            VoxelType::Cactus => VoxelProperties {
+                hardness: 0.4,
+                color: rgb(config::CACTUS_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "Cactus",
+                density: 0.3,
+            },
+
+            VoxelType::DesertGrass => VoxelProperties {
+                hardness: 0.1, // se rompe al instante, como el follaje
+                color: rgb(config::DESERT_GRASS_COLOR),
+                is_solid: true, // se renderiza, pero no colisiona (ver is_collidable)
+                drops_self: false,
+                name: "DesertGrass",
+                density: 0.1,
+            },
+
+            VoxelType::DesertBush => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::DESERT_BUSH_COLOR),
+                is_solid: true, // se renderiza, pero no colisiona (ver is_collidable)
+                drops_self: false,
+                name: "DesertBush",
+                density: 0.1,
+            },
         }
     }
 
@@ -262,7 +299,14 @@ impl VoxelType {
     /// render, no para la física.
     #[inline]
     pub fn is_collidable(&self) -> bool {
-        self.is_solid() && !matches!(self, VoxelType::Foliage | VoxelType::Bush)
+        self.is_solid()
+            && !matches!(
+                self,
+                VoxelType::Foliage
+                    | VoxelType::Bush
+                    | VoxelType::DesertGrass
+                    | VoxelType::DesertBush
+            )
     }
 
     /// Verifica si este voxel es aire.
@@ -292,6 +336,9 @@ impl VoxelType {
             10 => VoxelType::PineNeedles,
             11 => VoxelType::SmallLeaves,
             12 => VoxelType::PineWood,
+            13 => VoxelType::Cactus,
+            14 => VoxelType::DesertGrass,
+            15 => VoxelType::DesertBush,
             _ => VoxelType::Air,
         }
     }
@@ -306,15 +353,27 @@ impl VoxelType {
     /// # Parámetros
     /// - `density`: densidad del voxel (`<= 0` = aire)
     /// - `depth_below_surface`: metros bajo la superficie del terreno
-    pub fn from_depth(density: f32, depth_below_surface: f32) -> Self {
+    pub fn from_depth(density: f32, depth_below_surface: f32, kind: WorldKind) -> Self {
         if density <= 0.0 {
-            VoxelType::Air
-        } else if depth_below_surface < 0.1 {
-            VoxelType::Grass // Capa superior (~1 voxel)
-        } else if depth_below_surface < 0.5 {
-            VoxelType::Dirt // Tierra bajo el pasto (~4 voxels)
-        } else {
-            VoxelType::Stone // Roca en profundidad
+            return VoxelType::Air;
+        }
+        match kind {
+            WorldKind::Normal => {
+                if depth_below_surface < 0.1 {
+                    VoxelType::Grass // Capa superior (~1 voxel)
+                } else if depth_below_surface < 0.5 {
+                    VoxelType::Dirt // Tierra bajo el pasto (~4 voxels)
+                } else {
+                    VoxelType::Stone // Roca en profundidad
+                }
+            }
+            WorldKind::Desert => {
+                if depth_below_surface < 1.0 {
+                    VoxelType::Sand // Arena en superficie (~10 voxels)
+                } else {
+                    VoxelType::Stone // Roca bajo la arena
+                }
+            }
         }
     }
 }
@@ -355,21 +414,41 @@ mod tests {
 
     #[test]
     fn test_from_depth_surface_is_grass() {
-        assert_eq!(VoxelType::from_depth(1.0, 0.0), VoxelType::Grass);
+        assert_eq!(
+            VoxelType::from_depth(1.0, 0.0, WorldKind::Normal),
+            VoxelType::Grass
+        );
     }
 
     #[test]
     fn test_from_depth_just_below_surface_is_dirt() {
-        assert_eq!(VoxelType::from_depth(1.0, 0.3), VoxelType::Dirt);
+        assert_eq!(
+            VoxelType::from_depth(1.0, 0.3, WorldKind::Normal),
+            VoxelType::Dirt
+        );
     }
 
     #[test]
     fn test_from_depth_deep_is_stone() {
-        assert_eq!(VoxelType::from_depth(1.0, 1.0), VoxelType::Stone);
+        assert_eq!(
+            VoxelType::from_depth(1.0, 1.0, WorldKind::Normal),
+            VoxelType::Stone
+        );
     }
 
     #[test]
     fn test_from_depth_air_when_no_density() {
-        assert_eq!(VoxelType::from_depth(-1.0, 0.0), VoxelType::Air);
+        assert_eq!(
+            VoxelType::from_depth(-1.0, 0.0, WorldKind::Normal),
+            VoxelType::Air
+        );
+    }
+
+    #[test]
+    fn test_from_depth_desert_surface_is_sand() {
+        assert_eq!(
+            VoxelType::from_depth(1.0, 0.0, WorldKind::Desert),
+            VoxelType::Sand
+        );
     }
 }

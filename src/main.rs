@@ -12,6 +12,7 @@ mod debug;
 mod ui;
 mod physics; // Declara el módulo 'physics' (busca src/physics/mod.rs)
 mod player; // Declara el módulo 'player' (busca src/player/mod.rs)
+mod sky; // Declara el módulo 'sky' (busca src/sky/mod.rs)
 mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el módulo 'debug' (busca src/debug/mod.rs)
 mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 
@@ -21,10 +22,11 @@ mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
 use std::collections::HashMap;
 use ui::UIPlugin;
 use bevy::prelude::*;
-use core::{GameSettings, WorldSeed}; // Importa recursos globales desde nuestro módulo core
+use core::{GameSettings, WorldSeed, WorldKind}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
 use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
+use sky::SkyPlugin; // Importa SkyPlugin (atmósfera, día/noche, nubes)
 use voxel::{
     BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, SpatialHashGrid,
     complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
@@ -58,9 +60,11 @@ fn main() {
         .add_plugins(PhysicsPlugin) // Añade nuestro plugin de física (Rapier)
         .add_plugins(UIPlugin) // Anade el plugin de ui 
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
+        .add_plugins(SkyPlugin) // Añade el cielo (atmósfera, ciclo día/noche, nubes)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
         .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque
+        .insert_resource(WorldKind::default()) // Mundo por defecto: Normal (lo fija el menú)
         .insert_resource(ChunkMap {
             chunks: HashMap::new(),
         })
@@ -122,6 +126,7 @@ fn setup(
     chunk_materials: Res<ChunkMaterials>, // Materiales compartidos de chunks
     mut chunk_map: ResMut<ChunkMap>,
     world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
 ) {
     // ========================================================================
     // GENERACIÓN DE TERRENO INICIAL
@@ -130,6 +135,8 @@ fn setup(
     // Generar solo el área mínima bajo el spawn (radio de 2 chunks) para que el
     // jugador tenga suelo al caer; el loader async rellena el resto sin congelar
     // el arranque. (#10: antes radio 5 ≈ 390 chunks síncronos al pulsar Play.)
+    info!("Generando terreno para bioma: {:?}", *world_kind);
+
     let initial_radius = 2;
     let y_min = -1; // Chunks bajo tierra
     let y_max = 3; // Chunks en el aire (para montañas)
@@ -142,7 +149,7 @@ fn setup(
             if cx * cx + cz * cz <= initial_radius * initial_radius {
                 // Generar chunks en múltiples niveles verticales
                 for cy in y_min..=y_max {
-                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz), world_seed.0);
+                    let base_chunk = BaseChunk::new(IVec3::new(cx, cy, cz), world_seed.0, *world_kind);
                     temp_chunks.insert(base_chunk.position, base_chunk);
                 }
             }
@@ -198,7 +205,7 @@ fn setup(
         let height = 1.9; // 190 cm
 
         // Apoyar la base de la caja sobre el terreno: centro = suelo + media altura
-        let mut terrain_gen = TerrainGenerator::new(world_seed.0);
+        let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
         let ground_y = terrain_gen.biome_gen.generate_height(ref_x, ref_z);
 
         commands.spawn((
@@ -211,20 +218,5 @@ fn setup(
         ));
     }
 
-    // ========================================================================
-    // ILUMINACIÓN
-    // ========================================================================
-
-    // Luz direccional (simula el sol)
-    commands.spawn((
-        // Crea entidad de luz
-        DirectionalLight {
-            // Componente de luz direccional
-            illuminance: 15000.0,  // Intensidad de la luz en lux
-            shadows_enabled: true, // Habilitar sombras
-            ..default()            // Valores por defecto para el resto
-        },
-        Transform::from_xyz(4.0, 10.0, 4.0) // Posición de la luz en (4, 10, 4)
-            .looking_at(Vec3::ZERO, Vec3::Y), // Apunta hacia el origen (0,0,0), con Y como "arriba"
-    ));
+    // La iluminación (sol + ciclo día/noche) la gestiona ahora `SkyPlugin`.
 }

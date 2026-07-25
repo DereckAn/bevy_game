@@ -4,7 +4,7 @@
 //! Incluye caché persistente en disco
 
 use crate::{
-    core::{BASE_CHUNK_SIZE, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed},
+    core::{BASE_CHUNK_SIZE, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed, WorldKind},
     physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
@@ -13,8 +13,7 @@ use crate::{
     },
 };
 use bevy::{
-    prelude::*,
-    tasks::{AsyncComputeTaskPool, Task},
+    prelude::*, tasks::{AsyncComputeTaskPool, Task},
 };
 use futures_lite::future;
 use std::collections::{HashSet, VecDeque};
@@ -223,6 +222,7 @@ pub fn update_chunk_load_queue(
     chunk_map: Res<ChunkMap>,
     spatial_hash: Res<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    world_kind: Res<WorldKind>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
@@ -238,9 +238,13 @@ pub fn update_chunk_load_queue(
 
     load_queue.last_player_chunk = player_chunk;
 
-    // Rango vertical reducido: desde -1 hasta +3 chunks (mejor rendimiento)
+    // Rango vertical: -1 hasta +4 chunks (mejor rendimiento). El desierto tiene
+    // dunas más altas (~19.5 m), así que sube el techo para no recortarlas plano.
     let y_min = -1;
-    let y_max = 4;
+    let y_max = match *world_kind {
+        WorldKind::Desert => 6,
+        WorldKind::Normal => 4,
+    };
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
     // El triple bucle visita cada (cx,cy,cz) exactamente una vez, así que no hay
@@ -333,13 +337,15 @@ pub fn load_chunks_system(
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_materials: Res<ChunkMaterials>,
     world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
     voxel_diffs: Res<VoxelDiffs>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
     let seed = world_seed.0;
+    let kind = *world_kind;
 
     // Generador reutilizado para sondear la altura del terreno (saltar chunks de aire)
-    let mut terrain_gen = TerrainGenerator::new(seed);
+    let mut terrain_gen = TerrainGenerator::new(seed, kind);
 
     // Iniciar generación de hasta MAX_CHUNKS_PER_FRAME chunks por frame
     let chunks_to_load = load_queue.to_load.len().min(MAX_CHUNKS_PER_FRAME);
@@ -380,7 +386,7 @@ pub fn load_chunks_system(
                         // complete_chunk_generation_system. Aquí, en el hilo de fondo,
                         // construimos el COLLIDER con un mesh simple solo-colisionable
                         // (sin vecinos) → saca el trabajo caro del hilo principal.
-                        let mut base_chunk = BaseChunk::new(chunk_pos, seed);
+                        let mut base_chunk = BaseChunk::new(chunk_pos, seed, kind);
 
                         if let Some(diffs) = &chunk_diffs {
                             base_chunk.apply_diffs(diffs);
@@ -401,10 +407,10 @@ pub fn load_chunks_system(
                     let lod_level = LodLevel::from_distance(distance_chunks);
 
                     let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
-                    let mut terrain_gen = TerrainGenerator::new(seed); // Mismo seed del mundo
+                    let mut terrain_gen = TerrainGenerator::new(seed, kind); // Mismo seed del mundo
                     lod_chunk.generate_surface(&mut terrain_gen);
 
-                    let mesh = mesh_lod_chunk(&lod_chunk, seed);
+                    let mesh = mesh_lod_chunk(&lod_chunk, seed, kind);
 
                     // Solo renderizar si el mesh tiene vértices
                     if mesh.count_vertices() > 0 {
@@ -656,10 +662,12 @@ pub fn convert_lod_to_real_system(
     mut chunk_map: ResMut<ChunkMap>,
     lod_query: Query<&LodChunk>,
     world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
     voxel_diffs: Res<VoxelDiffs>,
 ) {
     let thread_pool = AsyncComputeTaskPool::get();
     let seed = world_seed.0;
+    let kind = *world_kind;
 
     // Procesar hasta MAX_CHUNK_TRANSITIONS_PER_FRAME conversiones
     let conversions_to_do = load_queue
@@ -675,7 +683,7 @@ pub fn convert_lod_to_real_system(
 
                 // Generar BaseChunk asíncronamente
                 let task = thread_pool.spawn(async move {
-                    let mut base_chunk = BaseChunk::new(chunk_pos, seed);
+                    let mut base_chunk = BaseChunk::new(chunk_pos, seed, kind);
                     if let Some(diffs) = chunk_diffs {
                         base_chunk.apply_diffs(&diffs);
                     }
@@ -708,6 +716,7 @@ pub fn convert_real_to_lod_system(
     mut chunk_map: ResMut<ChunkMap>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>
 ) {
     // Procesar hasta MAX_CHUNK_TRANSITIONS_PER_FRAME conversiones
     let conversions_to_do = load_queue
@@ -740,9 +749,9 @@ pub fn convert_real_to_lod_system(
                 // y=0 no contiene las montañas de los niveles superiores, así
                 // que extraerla de ahí aplanaría el terreno alto.
                 let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
-                let mut terrain_gen = TerrainGenerator::new(world_seed.0);
+                let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
                 lod_chunk.generate_surface(&mut terrain_gen);
-                let mesh = mesh_lod_chunk(&lod_chunk, world_seed.0);
+                let mesh = mesh_lod_chunk(&lod_chunk, world_seed.0, *world_kind);
 
                 // Solo crear si el mesh tiene vértices
                 if mesh.count_vertices() > 0 {
