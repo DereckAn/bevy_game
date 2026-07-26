@@ -244,6 +244,8 @@ pub fn update_chunk_load_queue(
     let y_max = match *world_kind {
         WorldKind::Desert => 6,
         WorldKind::Normal => 4,
+        // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
+        WorldKind::Ice => 20,
     };
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
@@ -373,6 +375,18 @@ pub fn load_chunks_system(
                     // saltan si el jugador los modificó (tienen diffs).
                     if !voxel_diffs.chunks.contains_key(&chunk_pos)
                         && chunk_is_above_terrain(chunk_pos, &mut terrain_gen, seed)
+                    {
+                        commands.entity(chunk_entity).insert(EmptyChunk);
+                        continue;
+                    }
+
+                    // Saltar chunks de piedra PROFUNDA (muy por debajo de la
+                    // superficie local): bajo los picos altos serían decenas de
+                    // chunks sólidos mallados que el jugador casi nunca alcanza.
+                    // Se deja una banda excavable bajo la superficie (ver la
+                    // constante en la función). No se saltan los modificados.
+                    if !voxel_diffs.chunks.contains_key(&chunk_pos)
+                        && chunk_is_below_terrain_floor(chunk_pos, &mut terrain_gen)
                     {
                         commands.entity(chunk_entity).insert(EmptyChunk);
                         continue;
@@ -597,6 +611,45 @@ fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator, 
     }
 
     max_height + margin < chunk_bottom_y
+}
+
+/// Profundidad de terreno excavable que se conserva bajo la superficie, en
+/// metros. Los chunks enteramente más profundos que esto se saltan (no se
+/// mallan). Subir = más profundidad para excavar pero más chunks generados.
+const DIGGABLE_DEPTH_M: f32 = 9.6; // ~3 chunks (BASE_CHUNK_SIZE * VOXEL_SIZE = 3.2 m)
+
+/// ¿Está el chunk enteramente MÁS de [`DIGGABLE_DEPTH_M`] bajo la superficie?
+///
+/// Bajo las montañas altas, el rango vertical fijo generaría muchos chunks de
+/// piedra maciza apilados hasta la cima. Esta comprobación (espejo de
+/// `chunk_is_above_terrain`) recorta esa piedra profunda: solo se malla una
+/// banda alrededor de la superficie, así el conteo de chunks es ~constante sin
+/// importar lo alto que sea el bioma.
+///
+/// Usa la superficie MÍNIMA sobre la huella del chunk (conservador: si alguna
+/// esquina es baja, no se salta el chunk).
+fn chunk_is_below_terrain_floor(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator) -> bool {
+    // Y mundial de la CIMA del chunk (metros).
+    let chunk_top_y = (chunk_pos.y + 1) as f32 * BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+
+    let step = BASE_CHUNK_SIZE / 4; // 5 muestras por eje
+    let mut min_height = f32::MAX;
+    let mut sx = 0;
+    while sx <= BASE_CHUNK_SIZE {
+        let mut sz = 0;
+        while sz <= BASE_CHUNK_SIZE {
+            let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + sx as i32) as f32 * VOXEL_SIZE;
+            let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + sz as i32) as f32 * VOXEL_SIZE;
+            let h = terrain_gen.biome_gen.generate_height(world_x, world_z);
+            if h < min_height {
+                min_height = h;
+            }
+            sz += step;
+        }
+        sx += step;
+    }
+
+    chunk_top_y < min_height - DIGGABLE_DEPTH_M
 }
 
 /// Convierte posición mundial a posición de chunk

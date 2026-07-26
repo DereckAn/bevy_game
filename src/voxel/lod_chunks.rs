@@ -123,133 +123,77 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32, kind: WorldKind) -> Mesh 
     let chunk_offset_x = lod_chunk.position.x as f32 * 32.0 * VOXEL_SIZE;
     let chunk_offset_z = lod_chunk.position.z as f32 * 32.0 * VOXEL_SIZE;
 
-    // Generar quads para cada punto del grid
+    // Alturas en las ESQUINAS del grid ((grid+1)²), muestreadas del MISMO campo de
+    // ruido que los chunks reales. Al caer en coordenadas de mundo exactas, dos
+    // chunks LOD vecinos comparten la altura de su borde → la superficie es
+    // CONTINUA y estanca. Antes cada celda era una loseta horizontal plana con
+    // faldones solo cuesta abajo: de canto (mirando montañas lejanas) las losetas
+    // quedaban de perfil y los faldones de una sola cara se descartaban por
+    // backface culling → se veía a través como una telaraña. Con esquinas
+    // compartidas la malla se inclina siguiendo el terreno y no necesita faldones.
+    let corners = grid_size + 1;
+    let mut terrain_gen = TerrainGenerator::new(seed, kind);
+    let mut corner_h = vec![0.0_f32; corners * corners];
+    for cz in 0..corners {
+        for cx in 0..corners {
+            let world_x = chunk_offset_x + cx as f32 * voxel_step;
+            let world_z = chunk_offset_z + cz as f32 * voxel_step;
+            corner_h[cx + cz * corners] = terrain_gen.biome_gen.generate_height(world_x, world_z);
+        }
+    }
+
+    // Un quad INCLINADO por celda, usando sus 4 alturas de esquina.
     for z in 0..grid_size {
         for x in 0..grid_size {
             let index = x + z * grid_size;
-            let height = lod_chunk.surface_heights[index];
 
-            // Posicion de esta columna
-            let pos_x = chunk_offset_x + x as f32 * voxel_step;
-            let pos_z = chunk_offset_z + z as f32 * voxel_step;
+            let h00 = corner_h[x + z * corners];
+            let h10 = corner_h[(x + 1) + z * corners];
+            let h11 = corner_h[(x + 1) + (z + 1) * corners];
+            let h01 = corner_h[x + (z + 1) * corners];
 
-            // Color del terreno para esta celda, muestreado en su centro en
-            // COORDENADAS MUNDIALES: es el mismo campo de ruido que usan los
-            // chunks reales, así el color del LOD encaja con el terreno cercano.
-            let base = voxel_color(
+            let x0 = chunk_offset_x + x as f32 * voxel_step;
+            let x1 = x0 + voxel_step;
+            let z0 = chunk_offset_z + z as f32 * voxel_step;
+            let z1 = z0 + voxel_step;
+
+            let p0 = Vec3::new(x0, h00, z0);
+            let p1 = Vec3::new(x1, h10, z0);
+            let p2 = Vec3::new(x1, h11, z1);
+            let p3 = Vec3::new(x0, h01, z1);
+
+            // Color de la celda: tipo de superficie muestreado en su centro, mismo
+            // campo de ruido que el terreno cercano (encaja sin costura de color).
+            let center_h = (h00 + h10 + h11 + h01) * 0.25;
+            let color = voxel_color(
                 lod_chunk.surface_types[index],
-                pos_x + voxel_step * 0.5,
-                height,
-                pos_z + voxel_step * 0.5,
+                x0 + voxel_step * 0.5,
+                center_h,
+                z0 + voxel_step * 0.5,
                 0.0,
             );
-            // Sombreado por cara igual que el greedy mesher: cima a brillo pleno,
-            // lados al 75% para dar volumen.
-            let side_color = [base[0] * 0.75, base[1] * 0.75, base[2] * 0.75, base[3]];
 
-            // Cara superior
-            add_top_face(
+            // Dos triángulos (winding CCW visto desde +Y → cara frontal hacia arriba).
+            add_terrain_tri(
+                p0,
+                p2,
+                p1,
+                color,
                 &mut positions,
                 &mut normals,
                 &mut colors,
                 &mut indices,
-                pos_x,
-                height,
-                pos_z,
-                voxel_step,
-                base,
             );
-
-            // --- CARAS LATERALES ---
-            // Solo renderizar caras que están en el borde o tienen vecinos más bajos
-
-            // Cara -X (izquierda)
-            if x == 0 || lod_chunk.surface_heights[index - 1] < height {
-                let neighbor_height = if x == 0 {
-                    0.0
-                } else {
-                    lod_chunk.surface_heights[index - 1]
-                };
-                add_side_face(
-                    &mut positions,
-                    &mut normals,
-                    &mut colors,
-                    &mut indices,
-                    pos_x,
-                    neighbor_height,
-                    height,
-                    pos_z,
-                    pos_z + voxel_step,
-                    [-1.0, 0.0, 0.0], // Normal apuntando a -X
-                    side_color,
-                );
-            }
-
-            // Cara +X (derecha)
-            if x == grid_size - 1 || lod_chunk.surface_heights[index + 1] < height {
-                let neighbor_height = if x == grid_size - 1 {
-                    0.0
-                } else {
-                    lod_chunk.surface_heights[index + 1]
-                };
-                add_side_face(
-                    &mut positions,
-                    &mut normals,
-                    &mut colors,
-                    &mut indices,
-                    pos_x + voxel_step,
-                    neighbor_height,
-                    height,
-                    pos_z,
-                    pos_z + voxel_step,
-                    [1.0, 0.0, 0.0], // Normal apuntando a +X
-                    side_color,
-                );
-            }
-
-            // Cara -Z (atrás)
-            if z == 0 || lod_chunk.surface_heights[index - grid_size] < height {
-                let neighbor_height = if z == 0 {
-                    0.0
-                } else {
-                    lod_chunk.surface_heights[index - grid_size]
-                };
-                add_side_face(
-                    &mut positions,
-                    &mut normals,
-                    &mut colors,
-                    &mut indices,
-                    pos_x,
-                    neighbor_height,
-                    height,
-                    pos_z,
-                    pos_z,
-                    [0.0, 0.0, -1.0], // Normal apuntando a -Z
-                    side_color,
-                );
-            }
-
-            // Cara +Z (adelante)
-            if z == grid_size - 1 || lod_chunk.surface_heights[index + grid_size] < height {
-                let neighbor_height = if z == grid_size - 1 {
-                    0.0
-                } else {
-                    lod_chunk.surface_heights[index + grid_size]
-                };
-                add_side_face(
-                    &mut positions,
-                    &mut normals,
-                    &mut colors,
-                    &mut indices,
-                    pos_x,
-                    neighbor_height,
-                    height,
-                    pos_z + voxel_step,
-                    pos_z + voxel_step,
-                    [0.0, 0.0, 1.0], // Normal apuntando a +Z
-                    side_color,
-                );
-            }
+            add_terrain_tri(
+                p0,
+                p3,
+                p2,
+                color,
+                &mut positions,
+                &mut normals,
+                &mut colors,
+                &mut indices,
+            );
         }
     }
 
@@ -277,88 +221,27 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32, kind: WorldKind) -> Mesh 
     mesh
 }
 
-/// Agrega una cara superior (horizontal)
-fn add_top_face(
+/// Agrega un triángulo del terreno LOD con su normal de cara. Los vértices llegan
+/// en winding CCW visto desde +Y (cara frontal hacia arriba), así el backface
+/// culling conserva la superficie vista desde arriba/de canto.
+fn add_terrain_tri(
+    v0: Vec3,
+    v1: Vec3,
+    v2: Vec3,
+    color: [f32; 4],
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,
     colors: &mut Vec<[f32; 4]>,
     indices: &mut Vec<u32>,
-    x: f32,
-    y: f32,
-    z: f32,
-    size: f32,
-    color: [f32; 4],
 ) {
+    // Normal de la cara según el winding; para una superficie de altura apunta
+    // hacia arriba y da relieve real a los planos inclinados.
+    let n = (v1 - v0).cross(v2 - v0).normalize_or_zero();
     let base_idx = positions.len() as u32;
-
-    // 4 vértices del quad superior
-    positions.push([x, y, z]);
-    positions.push([x + size, y, z]);
-    positions.push([x + size, y, z + size]);
-    positions.push([x, y, z + size]);
-
-    // Normal apuntando hacia arriba
-    normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
-    colors.extend_from_slice(&[color; 4]);
-
-    // 2 triángulos (winding CCW visto desde +Y, para backface culling)
-    indices.extend_from_slice(&[
-        base_idx,
-        base_idx + 2,
-        base_idx + 1,
-        base_idx,
-        base_idx + 3,
-        base_idx + 2,
-    ]);
-}
-/// Agrega una cara lateral (vertical)
-fn add_side_face(
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    colors: &mut Vec<[f32; 4]>,
-    indices: &mut Vec<u32>,
-    x: f32,
-    y_bottom: f32,
-    y_top: f32,
-    z_start: f32,
-    z_end: f32,
-    normal: [f32; 3],
-    color: [f32; 4],
-) {
-    let base_idx = positions.len() as u32;
-
-    // 4 vértices del quad lateral
-    positions.push([x, y_bottom, z_start]);
-    positions.push([x, y_bottom, z_end]);
-    positions.push([x, y_top, z_end]);
-    positions.push([x, y_top, z_start]);
-
-    // Normal de la cara
-    normals.extend_from_slice(&[normal; 4]);
-    colors.extend_from_slice(&[color; 4]);
-
-    // 2 triángulos. El orden de vértices produce winding frontal hacia el eje
-    // negativo; para caras que miran al eje positivo hay que invertirlo
-    // (necesario con backface culling activo).
-    if normal[0] > 0.0 || normal[2] > 0.0 {
-        indices.extend_from_slice(&[
-            base_idx,
-            base_idx + 2,
-            base_idx + 1,
-            base_idx,
-            base_idx + 3,
-            base_idx + 2,
-        ]);
-    } else {
-        indices.extend_from_slice(&[
-            base_idx,
-            base_idx + 1,
-            base_idx + 2,
-            base_idx,
-            base_idx + 2,
-            base_idx + 3,
-        ]);
-    }
+    positions.extend_from_slice(&[[v0.x, v0.y, v0.z], [v1.x, v1.y, v1.z], [v2.x, v2.y, v2.z]]);
+    normals.extend_from_slice(&[[n.x, n.y, n.z]; 3]);
+    colors.extend_from_slice(&[color; 3]);
+    indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2]);
 }
 
 /// Lados del cono/bola de la copa del impostor. 8 se ve suave a distancia LOD.

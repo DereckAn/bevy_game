@@ -35,6 +35,18 @@ const DESERT_MAX_AMPLITUDE: f32 = 7.0;
 /// Detalle de cresta mas marcado
 const DESERT_MOUNTAIN_DETAIL: f32 = 2.5;
 
+// -- Helado: montañas MUCHO más altas y escarpadas que los otros biomas --
+/// Altura base en los valles helados (algo elevada, no baja al mar).
+const ICE_VALLEY_BASE: f32 = 2.0;
+/// Altura base de los picos: muy alta para montañas imponentes.
+const ICE_MOUNTAIN_BASE: f32 = 40.0;
+/// Amplitud mínima: incluso los valles ondulan un poco.
+const ICE_MIN_AMPLITUDE: f32 = 2.0;
+/// Amplitud máxima: gran relieve en las zonas altas.
+const ICE_MAX_AMPLITUDE: f32 = 14.0;
+/// Detalle de montaña fuerte para crestas escarpadas.
+const ICE_MOUNTAIN_DETAIL: f32 = 5.0;
+
 /// Interpolación lineal.
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -110,6 +122,13 @@ impl BiomeGenerator {
                 DESERT_MIN_AMPLITUDE,
                 DESERT_MAX_AMPLITUDE,
                 DESERT_MOUNTAIN_DETAIL,
+            ),
+            WorldKind::Ice => (
+                ICE_VALLEY_BASE,
+                ICE_MOUNTAIN_BASE,
+                ICE_MIN_AMPLITUDE,
+                ICE_MAX_AMPLITUDE,
+                ICE_MOUNTAIN_DETAIL,
             ),
         };
 

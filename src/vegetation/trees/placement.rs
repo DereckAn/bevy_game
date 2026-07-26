@@ -10,6 +10,7 @@ use super::cactus::cactus_template;
 use super::oak::oak_template;
 use super::pine::pine_template;
 use super::small::tree_template;
+use super::white_tree::{snowy_pine_template, white_birch_template};
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::core::WorldKind;
 use crate::voxel::{BaseChunk, BiomeGenerator, VoxelType};
@@ -33,6 +34,8 @@ pub enum TreeKind {
     Oak,
     Bush,
     Cactus,
+    SnowyPine,
+    WhiteBirch,
 }
 
 /// Un árbol candidato: su columna (x,z) en VOXELS de mundo y su forma.
@@ -54,6 +57,8 @@ impl TreeInstance {
             TreeKind::Oak => self.trunk_height + self.trunk_height / 2,
             TreeKind::Bush => self.canopy_radius, // cúpula de radio = altura
             TreeKind::Cactus => self.trunk_height + 3, // cuerpo + brazos que suben
+            TreeKind::SnowyPine => self.trunk_height + 2, // mechón en la punta, como el pino
+            TreeKind::WhiteBirch => self.trunk_height + self.canopy_radius,
         }
     }
 }
@@ -119,6 +124,34 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Opt
             kind: TreeKind::Cactus,
             trunk_height,
             canopy_radius: 0,
+            rng_seed: h2,
+        });
+    }
+
+    // Helado: mezcla de pinos nevados (cónicos) y abedules blancos (esbeltos).
+    if kind == WorldKind::Ice {
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
+        if h2 % 2 == 0 {
+            let trunk_height = 40 + ((h2 >> 8) % 20) as i32; // 40..=59
+            return Some(TreeInstance {
+                world_x,
+                world_z,
+                kind: TreeKind::SnowyPine,
+                trunk_height,
+                canopy_radius: 0,
+                rng_seed: h2,
+            });
+        }
+        let trunk_height = 20 + ((h2 >> 8) % 13) as i32; // 20..=32
+        let canopy_radius = 2 + ((h2 >> 8) % 2) as i32; // 2..=3
+        return Some(TreeInstance {
+            world_x,
+            world_z,
+            kind: TreeKind::WhiteBirch,
+            trunk_height,
+            canopy_radius,
             rng_seed: h2,
         });
     }
@@ -232,6 +265,8 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                     bush_template(tree.canopy_radius, bush_type)
                 }
                 TreeKind::Cactus => cactus_template(tree.rng_seed, tree.trunk_height),
+                TreeKind::SnowyPine => snowy_pine_template(tree.rng_seed, tree.trunk_height),
+                TreeKind::WhiteBirch => white_birch_template(tree.trunk_height, tree.canopy_radius),
             };
             for tv in template {
                 let world = base + tv.offset;

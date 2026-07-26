@@ -10,6 +10,7 @@ mod pine;
 mod placement;
 mod small;
 mod voxelize;
+mod white_tree;
 
 // API pública del módulo (los paths `crate::vegetation::trees::*` siguen válidos).
 pub use placement::{

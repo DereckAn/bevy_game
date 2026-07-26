@@ -48,6 +48,8 @@ pub fn place_grass(chunk: &mut BaseChunk, seed: i32, kind: WorldKind) {
             DESERT_GRASS_DENSITY,
             VoxelType::DesertGrass,
         ),
+        // El bioma helado no tiene tufos de vegetación sobre la nieve.
+        WorldKind::Ice => return,
     };
 
     for lz in 0..n {
