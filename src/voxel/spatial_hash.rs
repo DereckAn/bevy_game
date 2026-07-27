@@ -93,6 +93,10 @@ impl SpatialHashGrid {
     ///
     /// Complejidad: O(c + k) donde c = celdas a verificar, k = chunks en resultado
     /// Para radio 64 con cell_size 16: c ≈ 25 celdas
+    // NOTE: era la consulta de descarga; tras pasar los LOD a columnas la
+    // descarga Real la hace `evict_real_to_lod_system` iterando `chunk_map`.
+    // Se mantiene (con cobertura de tests) como utilidad de consulta por radio.
+    #[allow(dead_code)]
     pub fn query_radius_horizontal(&self, center: IVec3, radius: i32) -> Vec<IVec3> {
         let mut results = Vec::new();
 

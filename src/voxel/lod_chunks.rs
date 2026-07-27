@@ -20,12 +20,17 @@ pub enum LodLevel {
 }
 
 impl LodLevel {
-    /// Obtiene el tamano de la grilla para este nivel LOD
+    /// Obtiene el tamano de la grilla para este nivel LOD.
+    ///
+    /// DEBE dividir a 32 (tamaño del chunk en voxels): 1, 2, 4, 8, 16. Si no, las
+    /// celdas no cubren el chunk y aparecen huecos en los bordes. Los triángulos
+    /// por chunk son `grid_size² * 2`; como los LOD están a 100 m+, una grilla
+    /// baja es imperceptible pero recorta mucha geometría.
     pub fn grid_size(&self) -> usize {
         match self {
-            LodLevel::Medium => 16,
-            LodLevel::Low => 8,
-            LodLevel::Minimal => 4,
+            LodLevel::Medium => 8,
+            LodLevel::Low => 4,
+            LodLevel::Minimal => 2,
         }
     }
 

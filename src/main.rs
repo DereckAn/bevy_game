@@ -28,12 +28,12 @@ use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa com
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use sky::SkyPlugin; // Importa SkyPlugin (atmósfera, día/noche, nubes)
 use voxel::{
-    BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, SpatialHashGrid,
-    complete_chunk_generation_system, convert_lod_to_real_system, convert_real_to_lod_system,
-    greedy_mesh_basechunk_simple, load_chunks_system, remesh_dirty_chunks_system,
+    BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, ColumnLods, SpatialHashGrid,
+    complete_chunk_generation_system, evict_real_to_lod_system, greedy_mesh_basechunk_simple,
+    load_chunks_system, remesh_dirty_chunks_system, retire_covered_lods_system,
     start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
-    update_chunk_lod_system, update_chunk_transitions_system, update_frustum_culling,
-    update_voxel_breaking_system, TerrainGenerator, VoxelDiffs,
+    update_chunk_lod_system, update_frustum_culling, update_voxel_breaking_system, TerrainGenerator,
+    VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -69,6 +69,7 @@ fn main() {
             chunks: HashMap::new(),
         })
         .insert_resource(ChunkLoadQueue::default())
+        .insert_resource(ColumnLods::default())
         .insert_resource(SpatialHashGrid::default())
         .init_resource::<VoxelDiffs>()
         .init_resource::<ChunkMaterials>()
@@ -94,10 +95,9 @@ fn main() {
                 load_chunks_system,
                 complete_chunk_generation_system,
                 unload_chunks_system,
-                // Sistemas de transiciones Real ↔ LOD
-                update_chunk_transitions_system,
-                convert_lod_to_real_system,
-                convert_real_to_lod_system,
+                // Transiciones Real ↔ LOD por columna, sin huecos (load-before-unload)
+                retire_covered_lods_system,
+                evict_real_to_lod_system,
                 // Optimización: Frustum culling
                 update_frustum_culling,
             )
