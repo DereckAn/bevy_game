@@ -144,8 +144,8 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Opt
                 rng_seed: h2,
             });
         }
-        let trunk_height = 20 + ((h2 >> 8) % 13) as i32; // 20..=32
-        let canopy_radius = 2 + ((h2 >> 8) % 2) as i32; // 2..=3
+        let trunk_height = 40 + ((h2 >> 8) % 21) as i32; // 40..=60 (mucho más alto)
+        let canopy_radius = 4 + ((h2 >> 8) % 3) as i32; // 4..=6 (copa más grande)
         return Some(TreeInstance {
             world_x,
             world_z,

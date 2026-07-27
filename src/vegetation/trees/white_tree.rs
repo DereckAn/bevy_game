@@ -27,17 +27,21 @@ pub fn snowy_pine_template(rng_seed: u32, trunk_height: i32) -> Vec<TreeVoxel> {
 pub fn white_birch_template(trunk_height: i32, canopy_radius: i32) -> Vec<TreeVoxel> {
     let mut voxels = Vec::new();
 
-    // Tronco: columna vertical de WhiteWood desde la base (y=0) hasta trunk_height-1.
+    // Tronco: columna de 2×2 voxeles (≈4 voxeles de grosor) de WhiteWood.
     for y in 0..trunk_height {
-        voxels.push(TreeVoxel {
-            offset: IVec3::new(0, y, 0),
-            voxel_type: VoxelType::WhiteWood,
-        });
+        for dz in 0..2 {
+            for dx in 0..2 {
+                voxels.push(TreeVoxel {
+                    offset: IVec3::new(dx, y, dz),
+                    voxel_type: VoxelType::WhiteWood,
+                });
+            }
+        }
     }
 
-    // Copa: esfera pequeña de WhiteLeaves centrada en la cima del tronco.
+    // Copa: esfera de WhiteLeaves centrada sobre el tronco (centro del 2×2 = 0.5, 0.5).
     add_leaf_blob(
-        Vec3::new(0.0, trunk_height as f32, 0.0),
+        Vec3::new(0.5, trunk_height as f32, 0.5),
         canopy_radius as f32,
         VoxelType::WhiteLeaves,
         &mut voxels,

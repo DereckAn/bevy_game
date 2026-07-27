@@ -575,11 +575,16 @@ pub fn unload_chunks_system(
 
     for _ in 0..chunks_to_unload {
         if let Some((chunk_pos, entity)) = load_queue.to_unload.pop() {
-            // Limpiar SIEMPRE los registros, sea Real, LOD o aún generándose.
-            // Si no, el chunk_map conserva una key fantasma y load_chunks_system
-            // nunca vuelve a cargar esa posición (hueco permanente).
-            chunk_map.chunks.remove(&chunk_pos);
-            spatial_hash.remove(chunk_pos);
+            // Limpiar el mapa SOLO si sigue apuntando a ESTA entidad. Al alejarse,
+            // `evict_real_to_lod_system` ya la sacó del mapa antes de encolarla; si
+            // el jugador volvió antes de que llegáramos aquí, `load_chunks_system`
+            // recreó la posición con OTRA entidad. Borrar el slot a ciegas le robaría
+            // el lugar → entidades huérfanas + regeneración en bucle. Solo hay que
+            // despawnear la entidad vieja.
+            if chunk_map.chunks.get(&chunk_pos) == Some(&entity) {
+                chunk_map.chunks.remove(&chunk_pos);
+                spatial_hash.remove(chunk_pos);
+            }
             commands.entity(entity).despawn();
         }
     }
