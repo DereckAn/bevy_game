@@ -5,6 +5,7 @@
 
 mod bush;
 mod cactus;
+mod mangrove;
 mod oak;
 mod pine;
 mod placement;

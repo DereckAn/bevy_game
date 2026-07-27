@@ -67,3 +67,19 @@ pub const WHITE_WOOD_COLOR: [f32; 3] = [0.310, 0.384, 0.443];
 
 /// Copas de los árboles del bioma helado: pizarra media azulada (#778ca4).
 pub const WHITE_LEAVES_COLOR: [f32; 3] = [0.467, 0.549, 0.643];
+
+// Paleta del bioma manglar (tomada de las fotos: turquesa costero, fango marrón,
+// mangles de tronco gris-marrón y copa verde vivo).
+
+/// Agua costera turquesa. Es el color del material translúcido del agua (el
+/// alpha lo pone el material, no esta constante).
+pub const WATER_COLOR: [f32; 3] = [0.157, 0.549, 0.580];
+
+/// Fango de la llanura de marea: marrón oscuro húmedo.
+pub const MUD_COLOR: [f32; 3] = [0.282, 0.235, 0.157];
+
+/// Tronco y raíces zancudas del mangle: marrón grisáceo.
+pub const MANGROVE_WOOD_COLOR: [f32; 3] = [0.337, 0.271, 0.204];
+
+/// Copa del mangle: verde vivo.
+pub const MANGROVE_LEAVES_COLOR: [f32; 3] = [0.235, 0.522, 0.196];

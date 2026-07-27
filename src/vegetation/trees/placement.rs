@@ -7,11 +7,12 @@
 
 use super::bush::bush_template;
 use super::cactus::cactus_template;
+use super::mangrove::mangrove_template;
 use super::oak::oak_template;
 use super::pine::pine_template;
 use super::small::tree_template;
 use super::white_tree::{snowy_pine_template, white_birch_template};
-use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
+use crate::core::constants::{BASE_CHUNK_SIZE, SEA_LEVEL_M, VOXEL_SIZE};
 use crate::core::WorldKind;
 use crate::voxel::{BaseChunk, BiomeGenerator, VoxelType};
 use bevy::prelude::*;
@@ -36,6 +37,7 @@ pub enum TreeKind {
     Cactus,
     SnowyPine,
     WhiteBirch,
+    Mangrove,
 }
 
 /// Un árbol candidato: su columna (x,z) en VOXELS de mundo y su forma.
@@ -59,6 +61,7 @@ impl TreeInstance {
             TreeKind::Cactus => self.trunk_height + 3, // cuerpo + brazos que suben
             TreeKind::SnowyPine => self.trunk_height + 2, // mechón en la punta, como el pino
             TreeKind::WhiteBirch => self.trunk_height + self.canopy_radius,
+            TreeKind::Mangrove => self.trunk_height + self.canopy_radius,
         }
     }
 }
@@ -156,6 +159,23 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Opt
         });
     }
 
+    // Manglar: solo mangles. La franja de marea (cerca del nivel del mar) la
+    // decide `place_trees` con la altura real de la columna.
+    if kind == WorldKind::Mangrove {
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
+        let trunk_height = 15 + ((h2 >> 8) % 10) as i32; // 15..=24 (bajo y ancho)
+        return Some(TreeInstance {
+            world_x,
+            world_z,
+            kind: TreeKind::Mangrove,
+            trunk_height,
+            canopy_radius: 6,
+            rng_seed: h2,
+        });
+    }
+
     if h2 % 6 == 0 {
         // pino (igual que antes)
         if !crate::vegetation::config::ENABLE_TREES {
@@ -247,6 +267,16 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
             let world_x_m = tree.world_x as f32 * VOXEL_SIZE;
             let world_z_m = tree.world_z as f32 * VOXEL_SIZE;
             let surface_m = biome.generate_height(world_x_m, world_z_m);
+
+            // Los mangles solo crecen en la franja de marea: la orilla y la tierra
+            // baja junto al agua (así la copa emerge sobre el agua). Fuera de ella
+            // (agua profunda o tierra alta interior) se descartan.
+            if tree.kind == TreeKind::Mangrove
+                && (surface_m < SEA_LEVEL_M - 0.5 || surface_m > SEA_LEVEL_M + 1.2)
+            {
+                continue;
+            }
+
             let surface_voxel_y = (surface_m / VOXEL_SIZE).floor() as i32;
 
             // Base = el voxel justo SOBRE el suelo (donde arranca el tronco).
@@ -267,6 +297,7 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                 TreeKind::Cactus => cactus_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::SnowyPine => snowy_pine_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::WhiteBirch => white_birch_template(tree.trunk_height, tree.canopy_radius),
+                TreeKind::Mangrove => mangrove_template(tree.rng_seed, tree.trunk_height),
             };
             for tv in template {
                 let world = base + tv.offset;

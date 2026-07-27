@@ -61,4 +61,8 @@ pub enum WorldKind {
 
     /// Helado: montañas altas nevadas, superficie nieve/hielo, árboles blancos.
     Ice,
+
+    /// Manglar: costa plana a nivel del mar, lagunas y ríos de agua, fango/arena,
+    /// mangles de raíces zancudas.
+    Mangrove,
 }

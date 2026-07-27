@@ -21,7 +21,7 @@ const VOXEL_SIZE: f32 = 0.1; // = core::constants::VOXEL_SIZE
 // material plano. Hardcodeado aquí (no un uniform) porque el StandardMaterial
 // bindless de Bevy 0.17 descarta bindings de extensión en el grupo 2.
 // ESPEJO de `src/voxel/palette.rs::palette_of` — mantener en sync.
-var<private> SPREADS: array<vec4<f32>, 20> = array<vec4<f32>, 20>(
+var<private> SPREADS: array<vec4<f32>, 24> = array<vec4<f32>, 24>(
     vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 0  Air
     vec4<f32>(0.80, 1.20, 4.0, 0.0), // 1  Dirt
     vec4<f32>(0.60, 1.35, 6.0, 0.0), // 2  Stone
@@ -42,6 +42,10 @@ var<private> SPREADS: array<vec4<f32>, 20> = array<vec4<f32>, 20>(
     vec4<f32>(0.85, 1.12, 5.0, 0.0), // 17 Ice
     vec4<f32>(0.82, 1.10, 5.0, 0.0), // 18 WhiteWood
     vec4<f32>(0.88, 1.08, 4.0, 0.0), // 19 WhiteLeaves
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 20 Water (malla/material propio, no usa paleta)
+    vec4<f32>(0.80, 1.20, 4.0, 0.0), // 21 Mud
+    vec4<f32>(0.70, 1.25, 5.0, 0.0), // 22 MangroveWood
+    vec4<f32>(0.80, 1.15, 4.0, 0.0), // 23 MangroveLeaves
 );
 
 fn hash01(x: i32, z: i32) -> f32 {
@@ -70,7 +74,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 
 #ifdef VERTEX_COLORS
     // El vertex alpha lleva el discriminante de VoxelType (id/255).
-    let id = min(u32(round(in.color.a * 255.0)), 19u);
+    let id = min(u32(round(in.color.a * 255.0)), 23u);
     let spread = SPREADS[id]; // (dark_mul, light_mul, steps, 0)
     let steps = u32(spread.z);
     if (steps >= 1u) {

@@ -87,7 +87,17 @@ impl BaseChunk {
                 let terrain_height = heightmap_ref[x + z * grid];
                 let depth = terrain_height - world_y;
 
-                VoxelType::from_depth(depth, depth, kind)
+                let voxel = VoxelType::from_depth(depth, depth, kind);
+                // Manglar: rellena de agua el aire por debajo del nivel del mar
+                // (lagunas costeras + cauces de río tallados por el terreno).
+                if voxel == VoxelType::Air
+                    && kind == WorldKind::Mangrove
+                    && world_y < crate::core::SEA_LEVEL_M
+                {
+                    VoxelType::Water
+                } else {
+                    voxel
+                }
             })
             .collect();
 

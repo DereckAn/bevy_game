@@ -17,9 +17,9 @@ fn rgb(c: [f32; 3]) -> Color {
 // VOXEL TYPE ENUM
 // ============================================================================
 
-/// Número de variantes de `VoxelType` (Air=0 .. WhiteLeaves=19). Dimensiona tablas
+/// Número de variantes de `VoxelType` (Air=0 .. MangroveLeaves=23). Dimensiona tablas
 /// indexadas por `VoxelType as usize` (materiales de drops, inventario).
-pub const VOXEL_TYPE_COUNT: usize = 20;
+pub const VOXEL_TYPE_COUNT: usize = 24;
 
 /// Tipo de voxel que representa diferentes materiales del mundo.
 ///
@@ -93,6 +93,19 @@ pub enum VoxelType {
 
     /// Hojas blancas: copa nevada de los árboles del bioma helado.
     WhiteLeaves = 19,
+
+    /// Agua: se ve translúcida y NO colisiona (el jugador entra y nada).
+    /// Se renderiza en su propia malla/material, no por la paleta tonal.
+    Water = 20,
+
+    /// Fango: superficie del manglar, marrón oscuro húmedo.
+    Mud = 21,
+
+    /// Madera de mangle: tronco y raíces zancudas, marrón grisáceo.
+    MangroveWood = 22,
+
+    /// Hojas de mangle: copa densa verde vivo.
+    MangroveLeaves = 23,
 }
 
 // ============================================================================
@@ -331,6 +344,42 @@ impl VoxelType {
                 name: "WhiteLeaves",
                 density: 0.1,
             },
+
+            VoxelType::Water => VoxelProperties {
+                hardness: 0.0,
+                color: rgb(config::WATER_COLOR),
+                is_solid: true, // se renderiza, pero NO colisiona (ver is_collidable)
+                drops_self: false,
+                name: "Water",
+                density: 0.0,
+            },
+
+            VoxelType::Mud => VoxelProperties {
+                hardness: 0.6,
+                color: rgb(config::MUD_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "Mud",
+                density: 1.0,
+            },
+
+            VoxelType::MangroveWood => VoxelProperties {
+                hardness: 2.0,
+                color: rgb(config::MANGROVE_WOOD_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "MangroveWood",
+                density: 1.5,
+            },
+
+            VoxelType::MangroveLeaves => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::MANGROVE_LEAVES_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "MangroveLeaves",
+                density: 0.1,
+            },
         }
     }
 
@@ -354,7 +403,15 @@ impl VoxelType {
                     | VoxelType::Bush
                     | VoxelType::DesertGrass
                     | VoxelType::DesertBush
+                    | VoxelType::Water
             )
+    }
+
+    /// ¿Es agua? El agua es "sólida" para el render (se ve) pero se maneja en su
+    /// propia malla translúcida y no colisiona; el mesher la trata aparte.
+    #[inline]
+    pub fn is_water(&self) -> bool {
+        matches!(self, VoxelType::Water)
     }
 
     /// Verifica si este voxel es aire.
@@ -391,6 +448,10 @@ impl VoxelType {
             17 => VoxelType::Ice,
             18 => VoxelType::WhiteWood,
             19 => VoxelType::WhiteLeaves,
+            20 => VoxelType::Water,
+            21 => VoxelType::Mud,
+            22 => VoxelType::MangroveWood,
+            23 => VoxelType::MangroveLeaves,
             _ => VoxelType::Air,
         }
     }
@@ -431,6 +492,15 @@ impl VoxelType {
                     VoxelType::Snow // Nieve en superficie (~1 voxel)
                 } else if depth_below_surface < 0.5 {
                     VoxelType::Ice // Hielo bajo la nieve (~4 voxels)
+                } else {
+                    VoxelType::Stone // Roca en profundidad
+                }
+            }
+            WorldKind::Mangrove => {
+                if depth_below_surface < 0.3 {
+                    VoxelType::Mud // Fango en la superficie (llanura de marea)
+                } else if depth_below_surface < 0.8 {
+                    VoxelType::Sand // Arena bajo el fango
                 } else {
                     VoxelType::Stone // Roca en profundidad
                 }
