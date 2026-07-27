@@ -63,6 +63,13 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
     mesh_simple_inner(chunk, MeshLayer::Opaque)
 }
 
+/// Mesh simple del AGUA (sin vecinos), para los chunks del arranque. Igual que
+/// `greedy_mesh_basechunk_water` pero sin consultar el `ChunkMap`, que en `setup`
+/// todavía no existe.
+pub fn greedy_mesh_basechunk_water_simple(chunk: &BaseChunk) -> Mesh {
+    mesh_simple_inner(chunk, MeshLayer::Water)
+}
+
 /// Mesh simple SOLO-COLISIONABLE (sin vecinos, ignora el follaje). Se usa para
 /// construir el collider en el hilo de fondo: no necesita chunks vecinos, así que
 /// puede correr dentro de la tarea async de generación. Las caras extra en los
@@ -164,7 +171,7 @@ fn generate_slice_mask_simple(
                 || neighbor_y >= BASE_CHUNK_SIZE as i32
                 || neighbor_z >= BASE_CHUNK_SIZE as i32
             {
-                true // Borde del chunk
+                face_visible_against_unknown(layer) // Borde del chunk, sin vecino
             } else {
                 !face_hidden_by(
                     chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
@@ -214,6 +221,21 @@ fn face_hidden_by(vt: VoxelType, layer: MeshLayer) -> bool {
         MeshLayer::Water => !vt.is_air(),
         _ => cell_in_layer(vt, layer),
     }
+}
+
+/// ¿Se dibuja una cara contra un vecino DESCONOCIDO? Pasa cuando el vecino cae
+/// fuera del chunk y no hay datos: mallado simple (sin vecinos) o chunk vecino
+/// todavía generándose.
+///
+/// Opaco/colisión dibujan la cara: mejor una cara de más que un hueco en el suelo.
+/// El agua la OMITE. Al dibujarla, los DOS chunks a cada lado del borde emiten un
+/// quad en el mismo plano (ninguno se remalla cuando el otro carga), y dos quads
+/// translúcidos coplanares producen una costura que parpadea. Omitirla acierta
+/// casi siempre: bajo el nivel del mar el vecino es agua o terreno, no aire —
+/// `chunk_is_above_terrain` ya impide que esos chunks se salten como vacíos.
+#[inline]
+fn face_visible_against_unknown(layer: MeshLayer) -> bool {
+    layer != MeshLayer::Water
 }
 
 /// Mesh OPACO para RENDER (todo lo sólido menos el agua, incluido el follaje).
@@ -615,5 +637,50 @@ fn is_face_visible_cross_chunk(
         }
     }
 
-    true // Sin chunk vecino, renderizar cara
+    // Sin chunk vecino (no cargado o aún generándose): el vecino es desconocido.
+    face_visible_against_unknown(layer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk_filled_with(vt: VoxelType) -> BaseChunk {
+        BaseChunk {
+            voxel_types: Box::new([[[vt; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]),
+            position: IVec3::ZERO,
+        }
+    }
+
+    /// Regresión: dos chunks de agua vecinos emitían cada uno un muro en el plano
+    /// que comparten (ninguno se remalla cuando el otro carga), y dos quads
+    /// translúcidos coplanares parpadean al mezclarse.
+    #[test]
+    fn water_emits_no_faces_against_an_unknown_neighbor() {
+        let chunk = chunk_filled_with(VoxelType::Water);
+
+        assert_eq!(greedy_mesh_basechunk_water_simple(&chunk).count_vertices(), 0);
+    }
+
+    #[test]
+    fn water_under_air_meshes_the_surface_as_one_merged_quad() {
+        let mut chunk = chunk_filled_with(VoxelType::Water);
+        for x in 0..BASE_CHUNK_SIZE {
+            for z in 0..BASE_CHUNK_SIZE {
+                chunk.voxel_types[x][BASE_CHUNK_SIZE - 1][z] = VoxelType::Air;
+            }
+        }
+
+        // Un único quad (4 vértices): la capa de aire deja ver solo la superficie,
+        // y el greedy la fusiona en un rectángulo de 32x32.
+        assert_eq!(greedy_mesh_basechunk_water_simple(&chunk).count_vertices(), 4);
+    }
+
+    #[test]
+    fn opaque_still_draws_faces_against_an_unknown_neighbor() {
+        let chunk = chunk_filled_with(VoxelType::Stone);
+
+        // 6 caras de chunk, cada una fusionada en un quad de 4 vértices.
+        assert_eq!(greedy_mesh_basechunk_simple(&chunk).count_vertices(), 24);
+    }
 }

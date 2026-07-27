@@ -3,6 +3,7 @@
 // ============================================================================
 
 use super::components::{Player, PlayerController};
+use super::swim::Swimming;
 use bevy::prelude::*; // Tipos básicos de Bevy (Vec3, Query, Res, etc.)
 use bevy_rapier3d::prelude::*; // Tipos de física (Velocity) // Nuestros componentes desde el módulo padre
 
@@ -21,10 +22,11 @@ pub fn player_movement(
     keys: Res<ButtonInput<KeyCode>>, // Recurso de solo lectura para detectar teclas presionadas
     mut query: Query<
         // Query mutable para buscar entidades específicas
-        (&Player, &mut Velocity, &Transform), // Tupla de componentes que necesitamos:
+        (&Player, &mut Velocity, &Transform, Option<&Swimming>), // Tupla de componentes que necesitamos:
         //   - Player: propiedades del jugador (solo lectura)
         //   - Velocity: velocidad física (mutable)
         //   - Transform: posición y rotación (solo lectura)
+        //   - Swimming: presente si el jugador está en el agua (ver `swim.rs`)
         With<PlayerController>, // Filtro: solo entidades que tengan PlayerController
     >,
 ) {
@@ -33,7 +35,7 @@ pub fn player_movement(
     // ========================================================================
 
     // Intenta obtener la única entidad que coincida con el query
-    let Ok((player, mut velocity, transform)) = query.single_mut() else {
+    let Ok((player, mut velocity, transform, swimming)) = query.single_mut() else {
         return; // Si no hay jugador o hay más de uno, salir
     };
     // Explicación de la sintaxis:
@@ -103,8 +105,11 @@ pub fn player_movement(
     // PROCESAR SALTO
     // ========================================================================
 
-    // Salto simple por ahora
-    if keys.just_pressed(KeyCode::Space) {
+    // Salto simple por ahora. En el agua NO se salta: `water_physics` es el único
+    // dueño de la vertical mientras se nada (Space = subir). Sin este guard los
+    // dos sistemas escriben `linvel.y` el mismo frame y el resultado depende del
+    // orden de ejecución.
+    if swimming.is_none() && keys.just_pressed(KeyCode::Space) {
         // Si Space fue presionada este frame (no mantenida)
         velocity.linvel.y = player.jump_force; // Aplicar velocidad vertical hacia arriba
     }

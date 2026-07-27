@@ -135,14 +135,25 @@ impl FromWorld for ChunkMaterials {
         };
 
         // Material del agua: turquesa translúcido. El color/alpha viven aquí (los
-        // vertex colors del agua son blancos), y `AlphaMode::Blend` la hace ver a
-        // través. `cull_mode: None` para ver la superficie desde bajo el agua.
+        // vertex colors del agua son blancos). `cull_mode: None` para ver la
+        // superficie desde bajo el agua.
+        //
+        // `AlphaToCoverage` en vez de `Blend`: `Blend` desactiva la escritura de
+        // profundidad, así que el resultado depende del orden de dibujado, y ese
+        // orden se ordena por entidad — con un hijo de agua por chunk (todos con
+        // el origen del chunk como clave de orden) los chunks vecinos se
+        // intercambian al moverse la cámara y la superficie parpadea.
+        // `AlphaToCoverage` escribe profundidad (usa la cobertura MSAA para la
+        // transparencia) → orden determinista, sin parpadeo.
+        // ponytail: cuantiza el alpha a los samples de MSAA (se puede notar un
+        // dithering fino). Si molesta más que el parpadeo, volver a
+        // `AlphaMode::Blend` — es un cambio de una palabra.
         let water = {
             let c = crate::vegetation::config::WATER_COLOR;
             let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
             materials.add(StandardMaterial {
                 base_color: Color::srgba(c[0], c[1], c[2], 0.65),
-                alpha_mode: AlphaMode::Blend,
+                alpha_mode: AlphaMode::AlphaToCoverage,
                 cull_mode: None,
                 perceptual_roughness: 0.2,
                 ..default()
@@ -170,6 +181,12 @@ impl ChunkMaterials {
         self.water.clone()
     }
 }
+
+/// Marca la entidad HIJA que lleva la malla translúcida de agua de un chunk.
+/// Permite volver a encontrarla para reconstruirla cuando el chunk se remalla
+/// (ver `remesh_dirty_chunks_system`).
+#[derive(Component)]
+pub struct WaterMesh;
 
 /// Recurso que rastrea qué chunks necesitan ser cargados
 #[derive(Resource, Default)]
@@ -554,10 +571,16 @@ pub fn complete_chunk_generation_system(
             // vino construido desde el hilo de fondo.
             let mesh = greedy_mesh_basechunk(&base_chunk, &chunk_map, &base_chunks);
 
-            // Malla translúcida del agua (bioma manglar). Vacía en biomas secos.
-            let water_mesh = greedy_mesh_basechunk_water(&base_chunk, &chunk_map, &base_chunks);
-            let water_handle = (water_mesh.count_vertices() > 0)
-                .then(|| meshes.add(water_mesh));
+            // Malla translúcida del agua. El pase completo (3 ejes × 32 slices,
+            // con consulta de vecinos) solo se paga si el chunk TIENE agua: en un
+            // bioma seco devolvería una malla vacía tras todo el trabajo, y esto
+            // corre para hasta MAX_CHUNK_COMPLETIONS_PER_FRAME chunks por frame
+            // en el hilo principal.
+            let water_handle = base_chunk
+                .has_water()
+                .then(|| greedy_mesh_basechunk_water(&base_chunk, &chunk_map, &base_chunks))
+                .filter(|m| m.count_vertices() > 0)
+                .map(|m| meshes.add(m));
 
             let mut ec = commands.entity(entity);
             ec.insert((
@@ -574,6 +597,7 @@ pub fn complete_chunk_generation_system(
             // cascada con el chunk al descargarse. Sin collider: se atraviesa.
             if let Some(water_handle) = water_handle {
                 ec.with_child((
+                    WaterMesh,
                     Mesh3d(water_handle),
                     MeshMaterial3d(chunk_materials.water_handle()),
                     Transform::default(),
@@ -631,7 +655,7 @@ pub fn unload_chunks_system(
 /// Construye el collider de un chunk a partir de un mesh simple SOLO-COLISIONABLE
 /// (sin vecinos, ignora el follaje). Pensado para correr en el hilo de fondo.
 /// `None` si el chunk no tiene geometría colisionable.
-fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
+pub fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
     let mesh = crate::voxel::greedy_mesh_basechunk_collider_simple(chunk);
     (mesh.count_vertices() > 0).then(|| create_terrain_collider(&mesh))
 }

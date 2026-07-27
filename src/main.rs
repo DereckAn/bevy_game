@@ -24,16 +24,16 @@ use ui::UIPlugin;
 use bevy::prelude::*;
 use core::{GameSettings, WorldSeed, WorldKind}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
-use physics::{PhysicsPlugin, RigidBody, create_terrain_collider}; // Importa componentes de física
+use physics::{PhysicsPlugin, RigidBody}; // Importa componentes de física
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use sky::SkyPlugin; // Importa SkyPlugin (atmósfera, día/noche, nubes)
 use voxel::{
     BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, ColumnLods, SpatialHashGrid,
-    complete_chunk_generation_system, evict_real_to_lod_system, greedy_mesh_basechunk_simple,
-    load_chunks_system, remesh_dirty_chunks_system, retire_covered_lods_system,
-    start_voxel_breaking_system, teardown_world, unload_chunks_system, update_chunk_load_queue,
-    update_chunk_lod_system, update_frustum_culling, update_voxel_breaking_system, TerrainGenerator,
-    VoxelDiffs,
+    WaterMesh, build_chunk_collider, complete_chunk_generation_system, evict_real_to_lod_system,
+    greedy_mesh_basechunk_simple, greedy_mesh_basechunk_water_simple, load_chunks_system,
+    remesh_dirty_chunks_system, retire_covered_lods_system, start_voxel_breaking_system,
+    teardown_world, unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
+    update_frustum_culling, update_voxel_breaking_system, TerrainGenerator, VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -162,35 +162,39 @@ fn setup(
     for (chunk_pos, base_chunk) in temp_chunks.into_iter() {
         let mesh = greedy_mesh_basechunk_simple(&base_chunk);
 
-        // Solo crear entidad si el mesh tiene vértices
-        if mesh.count_vertices() > 0 {
-            let chunk_entity = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh.clone())),
-                    MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
-                    Transform::default(),
-                    base_chunk,
-                    ChunkLOD::Ultra,
-                    RigidBody::Fixed,
-                    create_terrain_collider(&mesh),
-                ))
-                .id();
+        // El collider sale de la capa COLISIONABLE, NO del mesh de render (que
+        // incluye follaje y agua, atravesables). `None` = chunk sin geometría
+        // sólida; se spawnea igual, solo sin cuerpo rígido.
+        let collider = build_chunk_collider(&base_chunk);
 
-            chunk_map.chunks.insert(chunk_pos, chunk_entity);
-        } else {
-            // Chunk vacío, crear sin collider
-            let chunk_entity = commands
-                .spawn((
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
-                    Transform::default(),
-                    base_chunk,
-                    ChunkLOD::Ultra,
-                ))
-                .id();
+        // Agua translúcida: entidad hija, sin collider (se atraviesa y se nada).
+        // Se despawnea en cascada con el chunk.
+        let water_mesh = base_chunk
+            .has_water()
+            .then(|| greedy_mesh_basechunk_water_simple(&base_chunk))
+            .filter(|m| m.count_vertices() > 0);
 
-            chunk_map.chunks.insert(chunk_pos, chunk_entity);
+        let mut ec = commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
+            Transform::default(),
+            base_chunk,
+            ChunkLOD::Ultra,
+        ));
+
+        if let Some(collider) = collider {
+            ec.insert((RigidBody::Fixed, collider));
         }
+        if let Some(water_mesh) = water_mesh {
+            ec.with_child((
+                WaterMesh,
+                Mesh3d(meshes.add(water_mesh)),
+                MeshMaterial3d(chunk_materials.water_handle()),
+                Transform::default(),
+            ));
+        }
+
+        chunk_map.chunks.insert(chunk_pos, ec.id());
     }
 
     info!("Initial chunks generated!");
