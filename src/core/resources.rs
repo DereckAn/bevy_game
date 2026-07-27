@@ -58,4 +58,7 @@ pub enum WorldKind {
 
     /// Desierto: arena, dunas, cactus.
     Desert,
+
+    /// Helado: montañas altas nevadas, superficie nieve/hielo, árboles blancos.
+    Ice,
 }

@@ -17,9 +17,9 @@ fn rgb(c: [f32; 3]) -> Color {
 // VOXEL TYPE ENUM
 // ============================================================================
 
-/// Número de variantes de `VoxelType` (Air=0 .. DesertBush=15). Dimensiona tablas
+/// Número de variantes de `VoxelType` (Air=0 .. WhiteLeaves=19). Dimensiona tablas
 /// indexadas por `VoxelType as usize` (materiales de drops, inventario).
-pub const VOXEL_TYPE_COUNT: usize = 16;
+pub const VOXEL_TYPE_COUNT: usize = 20;
 
 /// Tipo de voxel que representa diferentes materiales del mundo.
 ///
@@ -81,6 +81,18 @@ pub enum VoxelType {
 
     /// Arbusto seco del desierto: follaje atravesable, color marrón (#9C5906).
     DesertBush = 15,
+
+    /// Nieve: superficie del bioma helado, suave, casi blanca.
+    Snow = 16,
+
+    /// Hielo: capa bajo la nieve, más dura, blanco azulado.
+    Ice = 17,
+
+    /// Madera pálida: tronco de los árboles del bioma helado.
+    WhiteWood = 18,
+
+    /// Hojas blancas: copa nevada de los árboles del bioma helado.
+    WhiteLeaves = 19,
 }
 
 // ============================================================================
@@ -283,6 +295,42 @@ impl VoxelType {
                 name: "DesertBush",
                 density: 0.1,
             },
+
+            VoxelType::Snow => VoxelProperties {
+                hardness: 0.5, // suave, como la arena
+                color: rgb(config::SNOW_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "Snow",
+                density: 0.7,
+            },
+
+            VoxelType::Ice => VoxelProperties {
+                hardness: 3.0, // más duro que la nieve, requiere pico
+                color: rgb(config::ICE_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "Ice",
+                density: 2.0,
+            },
+
+            VoxelType::WhiteWood => VoxelProperties {
+                hardness: 2.0,
+                color: rgb(config::WHITE_WOOD_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "WhiteWood",
+                density: 1.5,
+            },
+
+            VoxelType::WhiteLeaves => VoxelProperties {
+                hardness: 0.2,
+                color: rgb(config::WHITE_LEAVES_COLOR),
+                is_solid: true,
+                drops_self: true,
+                name: "WhiteLeaves",
+                density: 0.1,
+            },
         }
     }
 
@@ -339,6 +387,10 @@ impl VoxelType {
             13 => VoxelType::Cactus,
             14 => VoxelType::DesertGrass,
             15 => VoxelType::DesertBush,
+            16 => VoxelType::Snow,
+            17 => VoxelType::Ice,
+            18 => VoxelType::WhiteWood,
+            19 => VoxelType::WhiteLeaves,
             _ => VoxelType::Air,
         }
     }
@@ -372,6 +424,15 @@ impl VoxelType {
                     VoxelType::Sand // Arena en superficie (~10 voxels)
                 } else {
                     VoxelType::Stone // Roca bajo la arena
+                }
+            }
+            WorldKind::Ice => {
+                if depth_below_surface < 0.1 {
+                    VoxelType::Snow // Nieve en superficie (~1 voxel)
+                } else if depth_below_surface < 0.5 {
+                    VoxelType::Ice // Hielo bajo la nieve (~4 voxels)
+                } else {
+                    VoxelType::Stone // Roca en profundidad
                 }
             }
         }

@@ -51,3 +51,19 @@ pub const DESERT_BUSH_COLOR: [f32; 3] = [0.612, 0.349, 0.024];
 
 /// Cactus (verde saguaro, algo azulado/apagado).
 pub const CACTUS_COLOR: [f32; 3] = [0.24, 0.45, 0.26];
+
+// Paleta pizarra-azulada del bioma helado (de claro a oscuro):
+// #d5dbe2 nieve · #b3bfcb hielo · #778ca4 copas · #4f6271 troncos · (#313c45 libre)
+
+/// Nieve de superficie: el tono más claro de la paleta (#d5dbe2).
+pub const SNOW_COLOR: [f32; 3] = [0.835, 0.859, 0.886];
+
+/// Hielo bajo la nieve: gris-azul claro, algo más oscuro que la nieve (#b3bfcb).
+pub const ICE_COLOR: [f32; 3] = [0.702, 0.749, 0.796];
+
+/// Tronco/ramas de los árboles del bioma helado: pizarra oscura, contrasta
+/// contra la nieve (#4f6271).
+pub const WHITE_WOOD_COLOR: [f32; 3] = [0.310, 0.384, 0.443];
+
+/// Copas de los árboles del bioma helado: pizarra media azulada (#778ca4).
+pub const WHITE_LEAVES_COLOR: [f32; 3] = [0.467, 0.549, 0.643];

@@ -16,7 +16,7 @@ use bevy::{
     prelude::*, tasks::{AsyncComputeTaskPool, Task},
 };
 use futures_lite::future;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Radio de carga de chunks (en chunks, no metros)
 /// Aumentado para incluir chunks LOD distantes
@@ -50,29 +50,32 @@ pub const MAX_CHUNK_COMPLETIONS_PER_FRAME: usize = 24;
 /// Máximo de chunks a eliminar por frame
 pub const MAX_CHUNKS_TO_UNLOAD_PER_FRAME: usize = 16;
 
-/// Máximo de conversiones Real ↔ LOD por frame
-pub const MAX_CHUNK_TRANSITIONS_PER_FRAME: usize = 4;
+/// Radio (chunks) dentro del cual una columna tiene chunks Real (voxeles).
+pub const REAL_RADIUS: i32 = 32;
 
-/// Distancia para convertir LOD → Real (con hysteresis)
-pub const LOD_TO_REAL_DISTANCE: i32 = 30;
+/// Radio (chunks) más allá del cual los chunks Real se descargan. Es > `REAL_RADIUS`
+/// (hysteresis) para que la frontera Real↔LOD no parpadee al caminar sobre ella.
+pub const REAL_KEEP: i32 = 36;
 
-/// Distancia para convertir Real → LOD (con hysteresis)
-pub const REAL_TO_LOD_DISTANCE: i32 = 36;
+/// Cuánto se BAJA el LOD respecto a la superficie real (metros). Durante el
+/// solape de carga el chunk Real (a la altura real) gana el test de profundidad
+/// y el LOD queda oculto detrás en vez de hacer z-fighting. A 100 m+ es invisible.
+pub const LOD_DROP: f32 = 0.3;
 
 /// Tipo de chunk a generar segun distancia
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkType {
-    // Chunk real con colision (0-32 chunks de distancia)
+    /// Chunk real con voxeles y colisión (columna cercana).
     Real,
 
-    // Chunk LOD visiaul sin colision (32 - 200 chunks de distancia)
+    /// Backdrop LOD por columna (heightmap sin colisión, lejano).
     Lod,
 }
 
 impl ChunkType {
     // Determina el tipo de chunk segun la distancia al jugador
     pub fn from_distance(distance_chunks: i32) -> Self {
-        if distance_chunks <= 32 {
+        if distance_chunks <= REAL_RADIUS {
             ChunkType::Real
         } else {
             ChunkType::Lod
@@ -153,13 +156,19 @@ pub struct ChunkLoadQueue {
     pub to_load: VecDeque<(IVec3, ChunkType)>,
     pub to_unload: Vec<(IVec3, Entity)>,
 
-    // Conversiones pendientes
-    pub to_convert_to_real: Vec<Entity>, // LOD → Real
-    pub to_convert_to_lod: Vec<Entity>,  // Real → LOD
-
     pub last_player_chunk: IVec3,
     pub total_loaded: usize,
     pub last_log_time: f32,
+}
+
+/// LODs indexados por COLUMNA (x,z de chunk). Viven aquí, NO en `ChunkMap`: un
+/// LOD representa la columna entera (heightmap de alturas absolutas), así que no
+/// compite por el slot `(x,0,z)` con un chunk Real. Se retiran cuando el terreno
+/// Real cubre la columna, y se recrean antes de descargar el Real al alejarse
+/// → transiciones sin huecos en ninguna dirección.
+#[derive(Resource, Default)]
+pub struct ColumnLods {
+    pub columns: HashMap<IVec2, Entity>,
 }
 
 /// Marcador para posiciones de chunk que son enteramente aire (por encima del
@@ -189,6 +198,7 @@ pub fn teardown_world(
     mut chunk_map: ResMut<ChunkMap>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    mut column_lods: ResMut<ColumnLods>,
     chunks: Query<
         Entity,
         Or<(
@@ -213,6 +223,7 @@ pub fn teardown_world(
     chunk_map.chunks.clear();
     voxel_diffs.chunks.clear();
     spatial_hash.clear();
+    column_lods.columns.clear(); // las entidades LOD ya se despawnearon vía `chunks`
     *load_queue = ChunkLoadQueue::default();
 }
 
@@ -220,8 +231,8 @@ pub fn teardown_world(
 pub fn update_chunk_load_queue(
     player_query: Query<&Transform, With<Player>>,
     chunk_map: Res<ChunkMap>,
-    spatial_hash: Res<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    column_lods: Res<ColumnLods>,
     world_kind: Res<WorldKind>,
 ) {
     let Ok(player_transform) = player_query.single() else {
@@ -244,6 +255,8 @@ pub fn update_chunk_load_queue(
     let y_max = match *world_kind {
         WorldKind::Desert => 6,
         WorldKind::Normal => 4,
+        // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
+        WorldKind::Ice => 20,
     };
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
@@ -275,23 +288,29 @@ pub fn update_chunk_load_queue(
                     continue;
                 }
 
-                // Solo encolar lo que aún no está cargado
-                if chunk_map.chunks.contains_key(&chunk_pos) {
-                    continue;
-                }
-
                 // Distancia horizontal al jugador = (cx, cz) directamente
                 let distance_chunks = ((x_sq + cz * cz) as f32).sqrt() as i32;
-                let chunk_type = ChunkType::from_distance(distance_chunks);
 
-                // Los LOD son heightmaps con alturas ABSOLUTAS (ignoran position.y):
-                // un solo chunk en y=0 representa la columna entera. Cargar los
-                // demás niveles Y produciría 5 meshes idénticos apilados.
-                if chunk_type == ChunkType::Lod && chunk_pos.y != 0 {
-                    continue;
+                match ChunkType::from_distance(distance_chunks) {
+                    ChunkType::Real => {
+                        // Un chunk Real por nivel Y; encola solo lo que falta.
+                        if !chunk_map.chunks.contains_key(&chunk_pos) {
+                            to_load_vec.push((chunk_pos, ChunkType::Real));
+                        }
+                    }
+                    ChunkType::Lod => {
+                        // Un LOD por COLUMNA (heightmap de alturas absolutas): se
+                        // encola en cy=0 y se deduplica contra `ColumnLods`, no
+                        // contra `chunk_map` (los LOD ya no viven ahí).
+                        if cy != 0 {
+                            continue;
+                        }
+                        let column = IVec2::new(chunk_pos.x, chunk_pos.z);
+                        if !column_lods.columns.contains_key(&column) {
+                            to_load_vec.push((chunk_pos, ChunkType::Lod));
+                        }
+                    }
                 }
-
-                to_load_vec.push((chunk_pos, chunk_type));
             }
         }
     }
@@ -306,26 +325,9 @@ pub fn update_chunk_load_queue(
     });
 
     load_queue.to_load = VecDeque::from(to_load_vec);
-
-    // Verificar cuáles chunks están fuera del radio de descarga
-    // OPTIMIZACIÓN: Usar Spatial Hash Grid con distancia HORIZONTAL (2D)
-    load_queue.to_unload.clear();
-
-    // Usar spatial hash para encontrar chunks DENTRO del radio horizontal
-    let chunks_to_keep = spatial_hash.query_radius_horizontal(player_chunk, CHUNK_UNLOAD_RADIUS);
-
-    // Filtrar por rango vertical y convertir a HashSet para búsqueda O(1)
-    let keep_set: HashSet<IVec3> = chunks_to_keep
-        .into_iter()
-        .filter(|pos| pos.y >= y_min && pos.y <= y_max)
-        .collect();
-
-    // Descargar chunks que NO están en el set de chunks a mantener
-    for (chunk_pos, &entity) in &chunk_map.chunks {
-        if !keep_set.contains(chunk_pos) {
-            load_queue.to_unload.push((*chunk_pos, entity));
-        }
-    }
+    // La DESCARGA de chunks Real la hace `evict_real_to_lod_system` (asegura el
+    // backdrop LOD antes de sacar el Real → sin huecos). Los LOD fuera de rango
+    // los retira `retire_covered_lods_system`.
 }
 
 /// Sistema que inicia la generación asíncrona de chunks con caché
@@ -334,6 +336,7 @@ pub fn load_chunks_system(
     mut chunk_map: ResMut<ChunkMap>,
     mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    mut column_lods: ResMut<ColumnLods>,
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_materials: Res<ChunkMaterials>,
     world_seed: Res<WorldSeed>,
@@ -352,27 +355,36 @@ pub fn load_chunks_system(
 
     for _ in 0..chunks_to_load {
         if let Some((chunk_pos, chunk_type)) = load_queue.to_load.pop_front() {
-            // Verificar que no se haya cargado mientras tanto
-            if chunk_map.chunks.contains_key(&chunk_pos) {
-                continue;
-            }
-
-            // Crear entidad placeholder y marcarla como "en generación"
-            let chunk_entity = commands.spawn_empty().id();
-            chunk_map.chunks.insert(chunk_pos, chunk_entity);
-
-            // Agregar al spatial hash para búsquedas rápidas
-            spatial_hash.insert(chunk_pos);
-
-            // Genera chunk segun tipo
             match chunk_type {
                 ChunkType::Real => {
+                    // Verificar que no se haya cargado mientras tanto
+                    if chunk_map.chunks.contains_key(&chunk_pos) {
+                        continue;
+                    }
+
+                    // Crear entidad placeholder y marcarla como "en generación"
+                    let chunk_entity = commands.spawn_empty().id();
+                    chunk_map.chunks.insert(chunk_pos, chunk_entity);
+                    spatial_hash.insert(chunk_pos);
+
                     // Saltar chunks enteramente por encima del terreno: son puro
                     // aire, sin geometría ni colisión. Se marcan con EmptyChunk
                     // (siguen en ChunkMap, así no se vuelven a evaluar). NO se
                     // saltan si el jugador los modificó (tienen diffs).
                     if !voxel_diffs.chunks.contains_key(&chunk_pos)
                         && chunk_is_above_terrain(chunk_pos, &mut terrain_gen, seed)
+                    {
+                        commands.entity(chunk_entity).insert(EmptyChunk);
+                        continue;
+                    }
+
+                    // Saltar chunks de piedra PROFUNDA (muy por debajo de la
+                    // superficie local): bajo los picos altos serían decenas de
+                    // chunks sólidos mallados que el jugador casi nunca alcanza.
+                    // Se deja una banda excavable bajo la superficie (ver la
+                    // constante en la función). No se saltan los modificados.
+                    if !voxel_diffs.chunks.contains_key(&chunk_pos)
+                        && chunk_is_below_terrain_floor(chunk_pos, &mut terrain_gen)
                     {
                         commands.entity(chunk_entity).insert(EmptyChunk);
                         continue;
@@ -401,39 +413,68 @@ pub fn load_chunks_system(
                 }
 
                 ChunkType::Lod => {
-                    // chunk Lod solo superficie (generacion sincrona por ahora)
+                    // Un LOD por columna: heightmap de superficie (síncrono, barato).
+                    // Vive en `ColumnLods`, NO en `chunk_map`/`spatial_hash`.
+                    let column = IVec2::new(chunk_pos.x, chunk_pos.z);
+                    if column_lods.columns.contains_key(&column) {
+                        continue;
+                    }
+
                     let delta = chunk_pos - load_queue.last_player_chunk;
                     let distance_chunks = ((delta.x.pow(2) + delta.z.pow(2)) as f32).sqrt() as i32;
-                    let lod_level = LodLevel::from_distance(distance_chunks);
 
-                    let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
-                    let mut terrain_gen = TerrainGenerator::new(seed, kind); // Mismo seed del mundo
-                    lod_chunk.generate_surface(&mut terrain_gen);
-
-                    let mesh = mesh_lod_chunk(&lod_chunk, seed, kind);
-
-                    // Solo renderizar si el mesh tiene vértices
-                    if mesh.count_vertices() > 0 {
-                        // Insertar componentes para renderizado (SIN colisión)
-                        commands.entity(chunk_entity).insert((
-                            Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
-                            Transform::default(),
-                            lod_chunk,
-                            ChunkLOD::from_distance(distance_chunks as f32),
-                        ));
-
-                        // Agregar mesh y material después
+                    if let Some(entity) = spawn_column_lod(
+                        &mut commands,
+                        &mut meshes,
+                        &chunk_materials,
+                        chunk_pos,
+                        distance_chunks,
+                        seed,
+                        kind,
+                    ) {
+                        column_lods.columns.insert(column, entity);
                         load_queue.total_loaded += 1;
-                    } else {
-                        // Chunk LOD vacío, despawnear
-                        commands.entity(chunk_entity).despawn();
-                        chunk_map.chunks.remove(&chunk_pos);
                     }
                 }
             }
         }
     }
+}
+
+/// Construye y spawnea el LOD de una columna (heightmap de superficie, sin
+/// colisión), BAJADO `LOD_DROP` metros para que un chunk Real encima gane el
+/// z-test. Devuelve la entidad, o `None` si el mesh sale vacío. Compartido por la
+/// carga normal y por la evicción Real→LOD (ambas necesitan crear el mismo LOD).
+fn spawn_column_lod(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    chunk_materials: &ChunkMaterials,
+    chunk_pos: IVec3,
+    distance_chunks: i32,
+    seed: i32,
+    kind: WorldKind,
+) -> Option<Entity> {
+    let lod_level = LodLevel::from_distance(distance_chunks);
+    let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
+    let mut terrain_gen = TerrainGenerator::new(seed, kind);
+    lod_chunk.generate_surface(&mut terrain_gen);
+
+    let mesh = mesh_lod_chunk(&lod_chunk, seed, kind);
+    if mesh.count_vertices() == 0 {
+        return None;
+    }
+
+    Some(
+        commands
+            .spawn((
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
+                Transform::from_xyz(0.0, -LOD_DROP, 0.0),
+                lod_chunk,
+                ChunkLOD::from_distance(distance_chunks as f32),
+            ))
+            .id(),
+    )
 }
 
 /// Sistema que completa la generación de chunks cuando las tareas terminan
@@ -534,11 +575,16 @@ pub fn unload_chunks_system(
 
     for _ in 0..chunks_to_unload {
         if let Some((chunk_pos, entity)) = load_queue.to_unload.pop() {
-            // Limpiar SIEMPRE los registros, sea Real, LOD o aún generándose.
-            // Si no, el chunk_map conserva una key fantasma y load_chunks_system
-            // nunca vuelve a cargar esa posición (hueco permanente).
-            chunk_map.chunks.remove(&chunk_pos);
-            spatial_hash.remove(chunk_pos);
+            // Limpiar el mapa SOLO si sigue apuntando a ESTA entidad. Al alejarse,
+            // `evict_real_to_lod_system` ya la sacó del mapa antes de encolarla; si
+            // el jugador volvió antes de que llegáramos aquí, `load_chunks_system`
+            // recreó la posición con OTRA entidad. Borrar el slot a ciegas le robaría
+            // el lugar → entidades huérfanas + regeneración en bucle. Solo hay que
+            // despawnear la entidad vieja.
+            if chunk_map.chunks.get(&chunk_pos) == Some(&entity) {
+                chunk_map.chunks.remove(&chunk_pos);
+                spatial_hash.remove(chunk_pos);
+            }
             commands.entity(entity).despawn();
         }
     }
@@ -599,6 +645,45 @@ fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator, 
     max_height + margin < chunk_bottom_y
 }
 
+/// Profundidad de terreno excavable que se conserva bajo la superficie, en
+/// metros. Los chunks enteramente más profundos que esto se saltan (no se
+/// mallan). Subir = más profundidad para excavar pero más chunks generados.
+const DIGGABLE_DEPTH_M: f32 = 9.6; // ~3 chunks (BASE_CHUNK_SIZE * VOXEL_SIZE = 3.2 m)
+
+/// ¿Está el chunk enteramente MÁS de [`DIGGABLE_DEPTH_M`] bajo la superficie?
+///
+/// Bajo las montañas altas, el rango vertical fijo generaría muchos chunks de
+/// piedra maciza apilados hasta la cima. Esta comprobación (espejo de
+/// `chunk_is_above_terrain`) recorta esa piedra profunda: solo se malla una
+/// banda alrededor de la superficie, así el conteo de chunks es ~constante sin
+/// importar lo alto que sea el bioma.
+///
+/// Usa la superficie MÍNIMA sobre la huella del chunk (conservador: si alguna
+/// esquina es baja, no se salta el chunk).
+fn chunk_is_below_terrain_floor(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator) -> bool {
+    // Y mundial de la CIMA del chunk (metros).
+    let chunk_top_y = (chunk_pos.y + 1) as f32 * BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+
+    let step = BASE_CHUNK_SIZE / 4; // 5 muestras por eje
+    let mut min_height = f32::MAX;
+    let mut sx = 0;
+    while sx <= BASE_CHUNK_SIZE {
+        let mut sz = 0;
+        while sz <= BASE_CHUNK_SIZE {
+            let world_x = (chunk_pos.x * BASE_CHUNK_SIZE as i32 + sx as i32) as f32 * VOXEL_SIZE;
+            let world_z = (chunk_pos.z * BASE_CHUNK_SIZE as i32 + sz as i32) as f32 * VOXEL_SIZE;
+            let h = terrain_gen.biome_gen.generate_height(world_x, world_z);
+            if h < min_height {
+                min_height = h;
+            }
+            sz += step;
+        }
+        sx += step;
+    }
+
+    chunk_top_y < min_height - DIGGABLE_DEPTH_M
+}
+
 /// Convierte posición mundial a posición de chunk
 fn world_pos_to_chunk_pos(world_pos: Vec3) -> IVec3 {
     let chunk_size_meters = BASE_CHUNK_SIZE as f32 * 0.1; // VOXEL_SIZE = 0.1
@@ -610,174 +695,147 @@ fn world_pos_to_chunk_pos(world_pos: Vec3) -> IVec3 {
     )
 }
 
-/// Sistema que detecta chunks que necesitan convertirse entre Real y LOD
-pub fn update_chunk_transitions_system(
-    player_query: Query<&Transform, With<Player>>,
+/// Mitad "LOD → Real" de la transición, sin huecos: RETIRA el backdrop LOD de una
+/// columna solo cuando el terreno Real ya la cubre (su chunk de superficie existe
+/// y está mallado). Hasta entonces el LOD sigue visible mientras el Real se genera
+/// async, así nunca aparece un hueco. También descarga los LOD fuera de rango.
+///
+/// Corre cada frame (la cobertura Real puede completarse con el jugador quieto).
+pub fn retire_covered_lods_system(
+    mut commands: Commands,
+    mut column_lods: ResMut<ColumnLods>,
     chunk_map: Res<ChunkMap>,
-    base_chunk_query: Query<&BaseChunk>,
-    lod_chunk_query: Query<&LodChunk>,
+    base_chunks: Query<&BaseChunk>,
+    player_query: Query<&Transform, With<Player>>,
+    world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
+) {
+    let Ok(player_transform) = player_query.single() else {
+        return;
+    };
+    let player_chunk = world_pos_to_chunk_pos(player_transform.translation);
+    let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
+
+    let chunk_m = BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+    let half = BASE_CHUNK_SIZE as i32 / 2;
+    let unload_sq = CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS;
+    let real_sq = REAL_RADIUS * REAL_RADIUS;
+
+    let mut retired: Vec<IVec2> = Vec::new();
+    for (&column, &lod_entity) in &column_lods.columns {
+        let dx = column.x - player_chunk.x;
+        let dz = column.y - player_chunk.z;
+        let dist_sq = dx * dx + dz * dz;
+
+        // Fuera de rango → descargar el LOD.
+        if dist_sq > unload_sq {
+            commands.entity(lod_entity).despawn();
+            retired.push(column);
+            continue;
+        }
+
+        // Solo columnas cercanas pueden estar cubiertas por chunks Real.
+        if dist_sq > real_sq {
+            continue;
+        }
+
+        // Chunk Real de la SUPERFICIE de la columna (centro de su huella).
+        let world_x = (column.x * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
+        let world_z = (column.y * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
+        let surface_m = terrain_gen.biome_gen.generate_height(world_x, world_z);
+        let surface_y = (surface_m / chunk_m).floor() as i32;
+        let surface_pos = IVec3::new(column.x, surface_y, column.y);
+
+        let covered = chunk_map
+            .chunks
+            .get(&surface_pos)
+            .is_some_and(|&e| base_chunks.get(e).is_ok());
+        if covered {
+            commands.entity(lod_entity).despawn();
+            retired.push(column);
+        }
+    }
+    for column in retired {
+        column_lods.columns.remove(&column);
+    }
+}
+
+/// Mitad "Real → LOD" de la transición, sin huecos: cuando una columna sale del
+/// rango Real, primero ASEGURA su backdrop LOD (lo crea si falta) y solo después
+/// saca del mapa sus chunks Real y los encola para despawnear (con presupuesto en
+/// `unload_chunks_system`). Como el LOD ya cubre la columna, no hay hueco.
+///
+/// Solo actúa al cambiar de chunk (los Real solo salen de rango al moverse).
+pub fn evict_real_to_lod_system(
+    mut commands: Commands,
+    mut column_lods: ResMut<ColumnLods>,
+    mut chunk_map: ResMut<ChunkMap>,
+    mut spatial_hash: ResMut<SpatialHashGrid>,
     mut load_queue: ResMut<ChunkLoadQueue>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    chunk_materials: Res<ChunkMaterials>,
+    player_query: Query<&Transform, With<Player>>,
+    world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
     mut last_chunk: Local<IVec3>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
     };
-
     let player_chunk = world_pos_to_chunk_pos(player_transform.translation);
-
-    // Las conversiones solo cambian cuando el jujgador cambia de chunk
-    // Estando quieto, lsos sitemas de conversion siguien drenando las colas.
     if player_chunk == *last_chunk {
         return;
     }
     *last_chunk = player_chunk;
 
-    // Limpiar colas de conversión
-    load_queue.to_convert_to_real.clear();
-    load_queue.to_convert_to_lod.clear();
-
-    // Revisar todos los chunks cargados
-    for (chunk_pos, &entity) in &chunk_map.chunks {
-        // Calcular distancia horizontal al jugador (ignorar Y)
-        let dx = chunk_pos.x - player_chunk.x;
-        let dz = chunk_pos.z - player_chunk.z;
-        let distance_sq = dx * dx + dz * dz;
-
-        if base_chunk_query.get(entity).is_ok() {
-            if distance_sq > REAL_TO_LOD_DISTANCE * REAL_TO_LOD_DISTANCE {
-                load_queue.to_convert_to_lod.push(entity);
-            }
-        } else if lod_chunk_query.get(entity).is_ok() {
-            if distance_sq < LOD_TO_REAL_DISTANCE * LOD_TO_REAL_DISTANCE {
-                load_queue.to_convert_to_real.push(entity);
-            }
-        }
-    }
-}
-
-/// Sistema que ejecuta las conversiones LOD → Real
-pub fn convert_lod_to_real_system(
-    mut commands: Commands,
-    mut load_queue: ResMut<ChunkLoadQueue>,
-    mut chunk_map: ResMut<ChunkMap>,
-    lod_query: Query<&LodChunk>,
-    world_seed: Res<WorldSeed>,
-    world_kind: Res<WorldKind>,
-    voxel_diffs: Res<VoxelDiffs>,
-) {
-    let thread_pool = AsyncComputeTaskPool::get();
     let seed = world_seed.0;
     let kind = *world_kind;
+    let keep_sq = REAL_KEEP * REAL_KEEP;
 
-    // Procesar hasta MAX_CHUNK_TRANSITIONS_PER_FRAME conversiones
-    let conversions_to_do = load_queue
-        .to_convert_to_real
-        .len()
-        .min(MAX_CHUNK_TRANSITIONS_PER_FRAME);
-
-    for _ in 0..conversions_to_do {
-        if let Some(entity) = load_queue.to_convert_to_real.pop() {
-            if let Ok(lod_chunk) = lod_query.get(entity) {
-                let chunk_pos = lod_chunk.position;
-                let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
-
-                // Generar BaseChunk asíncronamente
-                let task = thread_pool.spawn(async move {
-                    let mut base_chunk = BaseChunk::new(chunk_pos, seed, kind);
-                    if let Some(diffs) = chunk_diffs {
-                        base_chunk.apply_diffs(&diffs);
-                    }
-                    let collider = build_chunk_collider(&base_chunk);
-                    (chunk_pos, base_chunk, collider)
-                });
-
-                // Despawnear el LOD chunk y crear tarea de generación
-                commands.entity(entity).despawn();
-
-                // Crear nueva entidad con la tarea
-                let new_entity = commands.spawn(ChunkGenerationTask { task, chunk_pos }).id();
-
-                // Actualizar ChunkMap para que apunte a la nueva entidad
-                chunk_map.chunks.insert(chunk_pos, new_entity);
-
-                info!("Converting LOD → Real at {:?}", chunk_pos);
-            }
+    // Chunks (Real / vacíos / generándose) cuya columna salió del rango Real.
+    let mut to_remove: Vec<(IVec3, Entity)> = Vec::new();
+    let mut columns_beyond: HashSet<IVec2> = HashSet::new();
+    for (&pos, &entity) in &chunk_map.chunks {
+        let dx = pos.x - player_chunk.x;
+        let dz = pos.z - player_chunk.z;
+        if dx * dx + dz * dz > keep_sq {
+            to_remove.push((pos, entity));
+            columns_beyond.insert(IVec2::new(pos.x, pos.z));
         }
     }
-}
+    if to_remove.is_empty() {
+        return;
+    }
 
-/// Sistema que ejecuta las conversiones Real → LOD
-pub fn convert_real_to_lod_system(
-    mut commands: Commands,
-    mut load_queue: ResMut<ChunkLoadQueue>,
-    base_query: Query<&BaseChunk>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    chunk_materials: Res<ChunkMaterials>,
-    mut chunk_map: ResMut<ChunkMap>,
-    mut spatial_hash: ResMut<SpatialHashGrid>,
-    world_seed: Res<WorldSeed>,
-    world_kind: Res<WorldKind>
-) {
-    // Procesar hasta MAX_CHUNK_TRANSITIONS_PER_FRAME conversiones
-    let conversions_to_do = load_queue
-        .to_convert_to_lod
-        .len()
-        .min(MAX_CHUNK_TRANSITIONS_PER_FRAME);
-
-    for _ in 0..conversions_to_do {
-        if let Some(entity) = load_queue.to_convert_to_lod.pop() {
-            if let Ok(base_chunk) = base_query.get(entity) {
-                let chunk_pos = base_chunk.position;
-
-                // Solo la columna y=0 se convierte en LOD (heightmap con
-                // alturas absolutas que representa la columna entera); los
-                // demás niveles Y simplemente se descartan.
-                if chunk_pos.y != 0 {
-                    commands.entity(entity).despawn();
-                    chunk_map.chunks.remove(&chunk_pos);
-                    spatial_hash.remove(chunk_pos);
-                    continue;
-                }
-
-                // Calcular distancia al jugador para determinar nivel LOD
-                let delta = chunk_pos - load_queue.last_player_chunk;
-                let distance_chunks =
-                    ((delta.x * delta.x + delta.z * delta.z) as f32).sqrt() as i32;
-                let lod_level = LodLevel::from_distance(distance_chunks);
-
-                // Regenerar la superficie desde el noise: el volumen del chunk
-                // y=0 no contiene las montañas de los niveles superiores, así
-                // que extraerla de ahí aplanaría el terreno alto.
-                let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
-                let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
-                lod_chunk.generate_surface(&mut terrain_gen);
-                let mesh = mesh_lod_chunk(&lod_chunk, world_seed.0, *world_kind);
-
-                // Solo crear si el mesh tiene vértices
-                if mesh.count_vertices() > 0 {
-                    // Despawnear el BaseChunk
-                    commands.entity(entity).despawn();
-
-                    // Crear nuevo LOD chunk
-                    let new_entity = commands
-                        .spawn((
-                            Mesh3d(meshes.add(mesh)),
-                            MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
-                            Transform::default(),
-                            lod_chunk,
-                        ))
-                        .id();
-
-                    // Actualizar ChunkMap
-                    chunk_map.chunks.insert(chunk_pos, new_entity);
-
-                    info!("Converting Real → LOD at {:?}", chunk_pos);
-                } else {
-                    // Mesh vacío, solo despawnear
-                    commands.entity(entity).despawn();
-                    chunk_map.chunks.remove(&chunk_pos);
-                }
-            }
+    // 1) Asegurar el LOD de cada columna ANTES de descargar su Real.
+    for &column in &columns_beyond {
+        if column_lods.columns.contains_key(&column) {
+            continue;
         }
+        let dx = column.x - player_chunk.x;
+        let dz = column.y - player_chunk.z;
+        let distance_chunks = ((dx * dx + dz * dz) as f32).sqrt() as i32;
+        if distance_chunks > CHUNK_LOAD_RADIUS {
+            continue; // fuera del rango LOD: no hace falta backdrop
+        }
+        let chunk_pos = IVec3::new(column.x, 0, column.y);
+        if let Some(entity) = spawn_column_lod(
+            &mut commands,
+            &mut meshes,
+            &chunk_materials,
+            chunk_pos,
+            distance_chunks,
+            seed,
+            kind,
+        ) {
+            column_lods.columns.insert(column, entity);
+        }
+    }
+
+    // 2) Sacar del mapa YA (para no re-encolar) y despawnear con presupuesto.
+    for (pos, entity) in to_remove {
+        chunk_map.chunks.remove(&pos);
+        spatial_hash.remove(pos);
+        load_queue.to_unload.push((pos, entity));
     }
 }

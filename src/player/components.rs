@@ -2,7 +2,8 @@
 // IMPORTS - TRAER CÓDIGO DE OTRAS LIBRERÍAS
 // ============================================================================
 
-use crate::voxel::{Tool, ToolType};
+use crate::core::{WorldKind, WorldSeed};
+use crate::voxel::{TerrainGenerator, Tool, ToolType};
 use bevy::prelude::*; // Importa tipos básicos de Bevy (Component, Commands, Transform, etc.)
 use bevy_rapier3d::prelude::*; // Importa tipos de física de Rapier (RigidBody, Collider, Velocity, etc.)
 
@@ -49,7 +50,18 @@ pub struct PlayerController; // Estructura vacía usada solo como "etiqueta" o "
 ///
 /// Esta función se ejecuta al inicio del juego y crea una entidad completa
 /// del jugador con todos los componentes necesarios para movimiento, cámara y física.
-pub fn spawn_player(mut commands: Commands) {
+pub fn spawn_player(
+    mut commands: Commands,
+    world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
+) {
+    // Altura real del terreno en el punto de aparición (0,0): así el jugador cae
+    // SOBRE la superficie en lugar de dentro de la montaña (los picos del bioma
+    // helado llegan a ~60 m, un Y fijo lo enterraría).
+    let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
+    let surface_m = terrain_gen.biome_gen.generate_height(0.0, 0.0);
+    let spawn_y = surface_m + 5.0; // unos metros para caer sobre el terreno recién generado
+
     // Recibe Commands mutable para crear entidades
     commands.spawn((
         // Crea una nueva entidad con los siguientes componentes:
@@ -64,9 +76,8 @@ pub fn spawn_player(mut commands: Commands) {
         // COMPONENTES DE BEVY
         // ====================================================================
         Camera3d::default(), // Cámara 3D con configuración por defecto
-        // Y=20 está por encima de la altura máxima del terreno (~12m), así el
-        // jugador cae sobre el terreno recién generado en lugar de quedar dentro.
-        Transform::from_xyz(0.0, 20.0, 0.0),
+        // Altura de aparición calculada desde la superficie real (ver arriba).
+        Transform::from_xyz(0.0, spawn_y, 0.0),
         // ====================================================================
         // COMPONENTES DE FÍSICA (RAPIER)
         // ====================================================================
