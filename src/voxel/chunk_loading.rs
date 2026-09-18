@@ -296,8 +296,10 @@ pub fn update_chunk_load_queue(
         WorldKind::Normal => 4,
         // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
         WorldKind::Ice => 20,
-        // Manglar plano a nivel del mar: techo bajo basta (islotes de ~2.5 m).
-        WorldKind::Mangrove => 3,
+        // Manglar: los islotes son bajos (~2.5 m) pero los robles realistas de la
+        // tierra seca llegan a ~10 m, así que su copa cae en el chunk y=4. Con
+        // techo 3 saldrían decapitados en plano a y=127 voxels.
+        WorldKind::Mangrove => 4,
     };
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
