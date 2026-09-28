@@ -50,6 +50,17 @@ impl BaseChunk {
         self.voxel_types[x][y][z] != VoxelType::Air
     }
 
+    /// ¿Hay algún voxel de agua en el chunk? Un escaneo lineal (32³ comparaciones
+    /// de un byte) para descartar el pase de mallado del agua, que es órdenes de
+    /// magnitud más caro y en un bioma seco siempre devuelve una malla vacía.
+    pub fn has_water(&self) -> bool {
+        self.voxel_types
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|vt| vt.is_water())
+    }
+
     /// Generación de terreno con biomas
     /// Combina FastNoiseLite + Rayon + Sistema de Biomas
     /// Optimizado: calcula heightmap una vez por columna XZ (33x33 = 1,089 evaluaciones)
@@ -87,7 +98,17 @@ impl BaseChunk {
                 let terrain_height = heightmap_ref[x + z * grid];
                 let depth = terrain_height - world_y;
 
-                VoxelType::from_depth(depth, depth, kind)
+                let voxel = VoxelType::from_depth(depth, depth, kind);
+                // Manglar: rellena de agua el aire por debajo del nivel del mar
+                // (lagunas costeras + cauces de río tallados por el terreno).
+                if voxel == VoxelType::Air
+                    && kind == WorldKind::Mangrove
+                    && world_y < crate::core::SEA_LEVEL_M
+                {
+                    VoxelType::Water
+                } else {
+                    voxel
+                }
             })
             .collect();
 

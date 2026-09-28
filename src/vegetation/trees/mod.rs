@@ -5,9 +5,11 @@
 
 mod bush;
 mod cactus;
+mod mangrove;
 mod oak;
 mod pine;
 mod placement;
+mod realistic_oak;
 mod small;
 mod voxelize;
 mod white_tree;

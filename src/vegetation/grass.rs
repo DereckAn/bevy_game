@@ -50,6 +50,8 @@ pub fn place_grass(chunk: &mut BaseChunk, seed: i32, kind: WorldKind) {
         ),
         // El bioma helado no tiene tufos de vegetación sobre la nieve.
         WorldKind::Ice => return,
+        // El manglar no tiene tufos de pasto sobre el fango.
+        WorldKind::Mangrove => return,
     };
 
     for lz in 0..n {

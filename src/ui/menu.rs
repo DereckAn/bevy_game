@@ -79,6 +79,7 @@ pub fn setup_main_menu(mut commands: Commands) {
                     create_menu_button(parent, "PLAY", MenuAction::Play(WorldKind::Normal));
                     create_menu_button(parent, "DESERT", MenuAction::Play(WorldKind::Desert));
                     create_menu_button(parent, "ICE", MenuAction::Play(WorldKind::Ice));
+                    create_menu_button(parent, "MANGROVE", MenuAction::Play(WorldKind::Mangrove));
                     create_menu_button(parent, "SETTINGS", MenuAction::Settings);
                 });
         });

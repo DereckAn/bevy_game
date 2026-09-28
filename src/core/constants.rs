@@ -15,6 +15,10 @@ pub const WORLD_CHUNK_RADIUS: i32 = 128;
 // Tamaño de voxel en metros
 pub const VOXEL_SIZE: f32 = 0.1;
 
+// Nivel del mar (metros). En el bioma manglar, todo espacio de aire por debajo
+// de esta altura se llena de agua durante la generación → lagunas y ríos.
+pub const SEA_LEVEL_M: f32 = 1.0;
+
 // Distancias para cada nivel de LOD (Level of Detail)
 // Ajustadas para Distant Horizons style rendering (64 chunk radius)
 pub const LOD_DISTANCES: [f32; 5] = [

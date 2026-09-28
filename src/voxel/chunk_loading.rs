@@ -4,7 +4,7 @@
 //! Incluye caché persistente en disco
 
 use crate::{
-    core::{BASE_CHUNK_SIZE, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed, WorldKind},
+    core::{BASE_CHUNK_SIZE, SEA_LEVEL_M, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed, WorldKind},
     physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
@@ -95,6 +95,8 @@ pub struct ChunkMaterials {
     real: [Handle<ChunkMaterial>; 5],
     /// Por nivel de `LodLevel` (chunks LOD): Medium, Low, Minimal
     lod: [Handle<StandardMaterial>; 3],
+    /// Agua: material translúcido compartido (turquesa, `AlphaMode::Blend`).
+    water: Handle<StandardMaterial>,
 }
 
 impl FromWorld for ChunkMaterials {
@@ -132,7 +134,33 @@ impl FromWorld for ChunkMaterials {
             })
         };
 
-        Self { real, lod }
+        // Material del agua: turquesa translúcido. El color/alpha viven aquí (los
+        // vertex colors del agua son blancos). `cull_mode: None` para ver la
+        // superficie desde bajo el agua.
+        //
+        // `AlphaToCoverage` en vez de `Blend`: `Blend` desactiva la escritura de
+        // profundidad, así que el resultado depende del orden de dibujado, y ese
+        // orden se ordena por entidad — con un hijo de agua por chunk (todos con
+        // el origen del chunk como clave de orden) los chunks vecinos se
+        // intercambian al moverse la cámara y la superficie parpadea.
+        // `AlphaToCoverage` escribe profundidad (usa la cobertura MSAA para la
+        // transparencia) → orden determinista, sin parpadeo.
+        // ponytail: cuantiza el alpha a los samples de MSAA (se puede notar un
+        // dithering fino). Si molesta más que el parpadeo, volver a
+        // `AlphaMode::Blend` — es un cambio de una palabra.
+        let water = {
+            let c = crate::vegetation::config::WATER_COLOR;
+            let mut materials = world.resource_mut::<Assets<StandardMaterial>>();
+            materials.add(StandardMaterial {
+                base_color: Color::srgba(c[0], c[1], c[2], 0.65),
+                alpha_mode: AlphaMode::AlphaToCoverage,
+                cull_mode: None,
+                perceptual_roughness: 0.2,
+                ..default()
+            })
+        };
+
+        Self { real, lod, water }
     }
 }
 
@@ -147,7 +175,18 @@ impl ChunkMaterials {
         };
         self.real[idx].clone()
     }
+
+    /// Handle del material de agua translúcido (compartido por todos los chunks).
+    pub fn water_handle(&self) -> Handle<StandardMaterial> {
+        self.water.clone()
+    }
 }
+
+/// Marca la entidad HIJA que lleva la malla translúcida de agua de un chunk.
+/// Permite volver a encontrarla para reconstruirla cuando el chunk se remalla
+/// (ver `remesh_dirty_chunks_system`).
+#[derive(Component)]
+pub struct WaterMesh;
 
 /// Recurso que rastrea qué chunks necesitan ser cargados
 #[derive(Resource, Default)]
@@ -257,6 +296,10 @@ pub fn update_chunk_load_queue(
         WorldKind::Normal => 4,
         // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
         WorldKind::Ice => 20,
+        // Manglar: los islotes son bajos (~2.5 m) pero los robles realistas de la
+        // tierra seca llegan a ~10 m, así que su copa cae en el chunk y=4. Con
+        // techo 3 saldrían decapitados en plano a y=127 voxels.
+        WorldKind::Mangrove => 4,
     };
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
@@ -489,7 +532,7 @@ pub fn complete_chunk_generation_system(
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
 ) {
-    use crate::voxel::greedy_mesh_basechunk;
+    use crate::voxel::{greedy_mesh_basechunk, greedy_mesh_basechunk_water};
 
     // Posición del jugador en chunks: para integrar primero los huecos cercanos.
     let player_chunk = player_query
@@ -530,6 +573,17 @@ pub fn complete_chunk_generation_system(
             // vino construido desde el hilo de fondo.
             let mesh = greedy_mesh_basechunk(&base_chunk, &chunk_map, &base_chunks);
 
+            // Malla translúcida del agua. El pase completo (3 ejes × 32 slices,
+            // con consulta de vecinos) solo se paga si el chunk TIENE agua: en un
+            // bioma seco devolvería una malla vacía tras todo el trabajo, y esto
+            // corre para hasta MAX_CHUNK_COMPLETIONS_PER_FRAME chunks por frame
+            // en el hilo principal.
+            let water_handle = base_chunk
+                .has_water()
+                .then(|| greedy_mesh_basechunk_water(&base_chunk, &chunk_map, &base_chunks))
+                .filter(|m| m.count_vertices() > 0)
+                .map(|m| meshes.add(m));
+
             let mut ec = commands.entity(entity);
             ec.insert((
                 Mesh3d(meshes.add(mesh)),
@@ -540,6 +594,16 @@ pub fn complete_chunk_generation_system(
             ));
             if let Some(collider) = collider {
                 ec.insert((RigidBody::Fixed, collider));
+            }
+            // El agua es una entidad hija (mismo espacio-mundo): se despawnea en
+            // cascada con el chunk al descargarse. Sin collider: se atraviesa.
+            if let Some(water_handle) = water_handle {
+                ec.with_child((
+                    WaterMesh,
+                    Mesh3d(water_handle),
+                    MeshMaterial3d(chunk_materials.water_handle()),
+                    Transform::default(),
+                ));
             }
             ec.remove::<ChunkGenerationTask>();
 
@@ -593,7 +657,7 @@ pub fn unload_chunks_system(
 /// Construye el collider de un chunk a partir de un mesh simple SOLO-COLISIONABLE
 /// (sin vecinos, ignora el follaje). Pensado para correr en el hilo de fondo.
 /// `None` si el chunk no tiene geometría colisionable.
-fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
+pub fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
     let mesh = crate::voxel::greedy_mesh_basechunk_collider_simple(chunk);
     (mesh.count_vertices() > 0).then(|| create_terrain_collider(&mesh))
 }
@@ -608,6 +672,12 @@ fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
 fn chunk_is_above_terrain(chunk_pos: IVec3, terrain_gen: &mut TerrainGenerator, seed: i32) -> bool {
     // Y mundial del fondo del chunk (metros)
     let chunk_bottom_y = chunk_pos.y as f32 * BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+
+    // Manglar: un chunk sobre el terreno pero (parte) bajo el nivel del mar se
+    // llena de agua, así que NO es aire vacío aunque no toque el fondo.
+    if terrain_gen.biome_gen.kind() == WorldKind::Mangrove && chunk_bottom_y < SEA_LEVEL_M {
+        return false;
+    }
 
     // Margen de seguridad (~5 voxels) contra picos entre muestras
     let margin = 0.5;

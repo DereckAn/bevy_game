@@ -49,6 +49,9 @@ pub fn palette_of(voxel_type: VoxelType) -> Option<Palette> {
         VoxelType::Ice => (config::ICE_COLOR, 0.85, 1.12, 5),
         VoxelType::WhiteWood => (config::WHITE_WOOD_COLOR, 0.82, 1.10, 5),
         VoxelType::WhiteLeaves => (config::WHITE_LEAVES_COLOR, 0.88, 1.08, 4),
+        VoxelType::Mud => (config::MUD_COLOR, 0.80, 1.20, 4),
+        VoxelType::MangroveWood => (config::MANGROVE_WOOD_COLOR, 0.70, 1.25, 5),
+        VoxelType::MangroveLeaves => (config::MANGROVE_LEAVES_COLOR, 0.80, 1.15, 4),
         _ => return None,
     };
     Some(Palette {

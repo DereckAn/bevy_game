@@ -60,7 +60,14 @@ fn slope_at(column_top: &[i32], x: usize, z: usize) -> f32 {
 /// Mesh simple (sin vecinos), para RENDER inicial. Usado al arrancar cuando no
 /// todos los chunks están cargados.
 pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
-    mesh_simple_inner(chunk, false)
+    mesh_simple_inner(chunk, MeshLayer::Opaque)
+}
+
+/// Mesh simple del AGUA (sin vecinos), para los chunks del arranque. Igual que
+/// `greedy_mesh_basechunk_water` pero sin consultar el `ChunkMap`, que en `setup`
+/// todavía no existe.
+pub fn greedy_mesh_basechunk_water_simple(chunk: &BaseChunk) -> Mesh {
+    mesh_simple_inner(chunk, MeshLayer::Water)
 }
 
 /// Mesh simple SOLO-COLISIONABLE (sin vecinos, ignora el follaje). Se usa para
@@ -68,10 +75,10 @@ pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
 /// puede correr dentro de la tarea async de generación. Las caras extra en los
 /// bordes del chunk son inofensivas para la colisión.
 pub fn greedy_mesh_basechunk_collider_simple(chunk: &BaseChunk) -> Mesh {
-    mesh_simple_inner(chunk, true)
+    mesh_simple_inner(chunk, MeshLayer::Collider)
 }
 
-fn mesh_simple_inner(chunk: &BaseChunk, collidable_only: bool) -> Mesh {
+fn mesh_simple_inner(chunk: &BaseChunk, layer: MeshLayer) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -83,7 +90,7 @@ fn mesh_simple_inner(chunk: &BaseChunk, collidable_only: bool) -> Mesh {
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
-            let mask_pos = generate_slice_mask_simple(chunk, axis, d, 1, collidable_only);
+            let mask_pos = generate_slice_mask_simple(chunk, axis, d, 1, layer);
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
@@ -98,7 +105,7 @@ fn mesh_simple_inner(chunk: &BaseChunk, collidable_only: bool) -> Mesh {
             );
 
             // Dirección negativa
-            let mask_neg = generate_slice_mask_simple(chunk, axis, d, -1, collidable_only);
+            let mask_neg = generate_slice_mask_simple(chunk, axis, d, -1, layer);
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
@@ -129,7 +136,7 @@ fn generate_slice_mask_simple(
     axis: usize,
     d: usize,
     direction: i32, // +1 o -1
-    collidable_only: bool,
+    layer: MeshLayer,
 ) -> Vec<Option<VoxelType>> {
     let u = (axis + 1) % 3;
     let v = (axis + 2) % 3;
@@ -147,8 +154,8 @@ fn generate_slice_mask_simple(
             let y = pos[1];
             let z = pos[2];
 
-            // ¿Presente para esta malla? (render = sólido; collider = colisionable)
-            if !voxel_present(chunk.voxel_types[x][y][z], collidable_only) {
+            // ¿Pertenece a esta malla? (opaco = sólido no-agua; agua; collider)
+            if !cell_in_layer(chunk.voxel_types[x][y][z], layer) {
                 continue;
             }
 
@@ -164,12 +171,12 @@ fn generate_slice_mask_simple(
                 || neighbor_y >= BASE_CHUNK_SIZE as i32
                 || neighbor_z >= BASE_CHUNK_SIZE as i32
             {
-                true // Borde del chunk
+                face_visible_against_unknown(layer) // Borde del chunk, sin vecino
             } else {
-                !voxel_present(
+                !face_hidden_by(
                     chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
                         [neighbor_z as usize],
-                    collidable_only,
+                    layer,
                 )
             };
 
@@ -182,34 +189,80 @@ fn generate_slice_mask_simple(
     mask
 }
 
-/// ¿Cuenta este voxel como "presente" para esta malla? Para el render, presente
-/// = sólido (se ve). Para el colisionador, presente = colisionable: el follaje
-/// (pasto/arbustos) se ignora, de modo que se puede atravesar.
+/// Qué capa de malla se está construyendo. El agua es translúcida, así que se
+/// mallea aparte de la geometría opaca y con su propio material.
+#[derive(Clone, Copy, PartialEq)]
+pub enum MeshLayer {
+    /// Render opaco: todo lo sólido MENOS el agua (el suelo se ve bajo el agua).
+    Opaque,
+    /// Render del agua: solo voxeles de agua, malla translúcida.
+    Water,
+    /// Colisión: solo lo colisionable (ignora follaje y agua).
+    Collider,
+}
+
+/// ¿Pertenece este voxel a la malla de esta capa?
 #[inline]
-fn voxel_present(vt: VoxelType, collidable_only: bool) -> bool {
-    if collidable_only {
-        vt.is_collidable()
-    } else {
-        vt.is_solid()
+fn cell_in_layer(vt: VoxelType, layer: MeshLayer) -> bool {
+    match layer {
+        MeshLayer::Opaque => vt.is_solid() && !vt.is_water(),
+        MeshLayer::Water => vt.is_water(),
+        MeshLayer::Collider => vt.is_collidable(),
     }
 }
 
-/// Mesh para RENDER (todos los voxeles sólidos, incluido el follaje).
+/// ¿El vecino OCULTA la cara (no hay que dibujarla)? Para opaco/colisión, oculta
+/// lo que pertenece a la misma capa. Para el agua, oculta TODO lo que no sea aire
+/// (agua contra agua se fusiona; agua contra suelo la tapa el suelo opaco → se
+/// descarta para no malgastar triángulos ni pelear el z-buffer).
+#[inline]
+fn face_hidden_by(vt: VoxelType, layer: MeshLayer) -> bool {
+    match layer {
+        MeshLayer::Water => !vt.is_air(),
+        _ => cell_in_layer(vt, layer),
+    }
+}
+
+/// ¿Se dibuja una cara contra un vecino DESCONOCIDO? Pasa cuando el vecino cae
+/// fuera del chunk y no hay datos: mallado simple (sin vecinos) o chunk vecino
+/// todavía generándose.
+///
+/// Opaco/colisión dibujan la cara: mejor una cara de más que un hueco en el suelo.
+/// El agua la OMITE. Al dibujarla, los DOS chunks a cada lado del borde emiten un
+/// quad en el mismo plano (ninguno se remalla cuando el otro carga), y dos quads
+/// translúcidos coplanares producen una costura que parpadea. Omitirla acierta
+/// casi siempre: bajo el nivel del mar el vecino es agua o terreno, no aire —
+/// `chunk_is_above_terrain` ya impide que esos chunks se salten como vacíos.
+#[inline]
+fn face_visible_against_unknown(layer: MeshLayer) -> bool {
+    layer != MeshLayer::Water
+}
+
+/// Mesh OPACO para RENDER (todo lo sólido menos el agua, incluido el follaje).
 pub fn greedy_mesh_basechunk(
     chunk: &BaseChunk,
     chunk_map: &ChunkMap,
     chunks: &Query<&BaseChunk>,
 ) -> Mesh {
-    mesh_basechunk_inner(chunk, chunk_map, chunks, false)
+    mesh_basechunk_inner(chunk, chunk_map, chunks, MeshLayer::Opaque)
 }
 
-/// Greedy meshing con verificación de vecinos. `collidable_only` decide si el
-/// follaje cuenta (render) o se ignora (collider).
+/// Mesh translúcido del AGUA (con verificación de vecinos, sin costuras entre chunks).
+pub fn greedy_mesh_basechunk_water(
+    chunk: &BaseChunk,
+    chunk_map: &ChunkMap,
+    chunks: &Query<&BaseChunk>,
+) -> Mesh {
+    mesh_basechunk_inner(chunk, chunk_map, chunks, MeshLayer::Water)
+}
+
+/// Greedy meshing con verificación de vecinos. `layer` decide qué voxeles entran
+/// (opaco / agua / colisión).
 fn mesh_basechunk_inner(
     chunk: &BaseChunk,
     chunk_map: &ChunkMap,
     chunks: &Query<&BaseChunk>,
-    collidable_only: bool,
+    layer: MeshLayer,
 ) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -222,8 +275,7 @@ fn mesh_basechunk_inner(
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
-            let mask_pos =
-                generate_slice_mask(chunk, chunk_map, chunks, axis, d, 1, collidable_only);
+            let mask_pos = generate_slice_mask(chunk, chunk_map, chunks, axis, d, 1, layer);
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
@@ -238,8 +290,7 @@ fn mesh_basechunk_inner(
             );
 
             // Dirección negativa
-            let mask_neg =
-                generate_slice_mask(chunk, chunk_map, chunks, axis, d, -1, collidable_only);
+            let mask_neg = generate_slice_mask(chunk, chunk_map, chunks, axis, d, -1, layer);
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
@@ -272,7 +323,7 @@ fn generate_slice_mask(
     axis: usize,
     d: usize,
     direction: i32,
-    collidable_only: bool,
+    layer: MeshLayer,
 ) -> Vec<Option<VoxelType>> {
     let u = (axis + 1) % 3;
     let v = (axis + 2) % 3;
@@ -290,7 +341,7 @@ fn generate_slice_mask(
             let y = pos[1];
             let z = pos[2];
 
-            if !voxel_present(chunk.voxel_types[x][y][z], collidable_only) {
+            if !cell_in_layer(chunk.voxel_types[x][y][z], layer) {
                 continue;
             }
 
@@ -308,22 +359,14 @@ fn generate_slice_mask(
             {
                 // Fuera del chunk - verificar chunk vecino
                 is_face_visible_cross_chunk(
-                    chunk,
-                    chunk_map,
-                    chunks,
-                    x,
-                    y,
-                    z,
-                    axis,
-                    direction,
-                    collidable_only,
+                    chunk, chunk_map, chunks, x, y, z, axis, direction, layer,
                 )
             } else {
                 // Dentro del chunk
-                !voxel_present(
+                !face_hidden_by(
                     chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
                         [neighbor_z as usize],
-                    collidable_only,
+                    layer,
                 )
             };
 
@@ -519,13 +562,20 @@ fn add_greedy_quad(
         _ => 0.75,
     };
 
-    let c = voxel_color(voxel_type, center_x, center_y, center_z, slope);
-    let color = [
-        c[0] * face_shade,
-        c[1] * face_shade,
-        c[2] * face_shade,
-        c[3],
-    ];
+    // El agua se dibuja con su propio material translúcido (color y alpha vienen
+    // del material, no del voxel), así que su vertex color es blanco opaco. El
+    // resto usa `voxel_color`, cuyo alpha lleva el id para la paleta en GPU.
+    let color = if voxel_type == VoxelType::Water {
+        [face_shade, face_shade, face_shade, 1.0]
+    } else {
+        let c = voxel_color(voxel_type, center_x, center_y, center_z, slope);
+        [
+            c[0] * face_shade,
+            c[1] * face_shade,
+            c[2] * face_shade,
+            c[3],
+        ]
+    };
     colors.extend_from_slice(&[color; 4]);
 
     // Normal según dirección
@@ -551,7 +601,7 @@ fn is_face_visible_cross_chunk(
     z: usize,
     axis: usize,
     direction: i32,
-    collidable_only: bool,
+    layer: MeshLayer,
 ) -> bool {
     let mut neighbor_chunk_offset = IVec3::ZERO;
     neighbor_chunk_offset[axis as usize] = direction;
@@ -583,12 +633,54 @@ fn is_face_visible_cross_chunk(
                 z
             };
 
-            return !voxel_present(
-                neighbor_chunk.voxel_types[local_x][local_y][local_z],
-                collidable_only,
-            );
+            return !face_hidden_by(neighbor_chunk.voxel_types[local_x][local_y][local_z], layer);
         }
     }
 
-    true // Sin chunk vecino, renderizar cara
+    // Sin chunk vecino (no cargado o aún generándose): el vecino es desconocido.
+    face_visible_against_unknown(layer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk_filled_with(vt: VoxelType) -> BaseChunk {
+        BaseChunk {
+            voxel_types: Box::new([[[vt; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]),
+            position: IVec3::ZERO,
+        }
+    }
+
+    /// Regresión: dos chunks de agua vecinos emitían cada uno un muro en el plano
+    /// que comparten (ninguno se remalla cuando el otro carga), y dos quads
+    /// translúcidos coplanares parpadean al mezclarse.
+    #[test]
+    fn water_emits_no_faces_against_an_unknown_neighbor() {
+        let chunk = chunk_filled_with(VoxelType::Water);
+
+        assert_eq!(greedy_mesh_basechunk_water_simple(&chunk).count_vertices(), 0);
+    }
+
+    #[test]
+    fn water_under_air_meshes_the_surface_as_one_merged_quad() {
+        let mut chunk = chunk_filled_with(VoxelType::Water);
+        for x in 0..BASE_CHUNK_SIZE {
+            for z in 0..BASE_CHUNK_SIZE {
+                chunk.voxel_types[x][BASE_CHUNK_SIZE - 1][z] = VoxelType::Air;
+            }
+        }
+
+        // Un único quad (4 vértices): la capa de aire deja ver solo la superficie,
+        // y el greedy la fusiona en un rectángulo de 32x32.
+        assert_eq!(greedy_mesh_basechunk_water_simple(&chunk).count_vertices(), 4);
+    }
+
+    #[test]
+    fn opaque_still_draws_faces_against_an_unknown_neighbor() {
+        let chunk = chunk_filled_with(VoxelType::Stone);
+
+        // 6 caras de chunk, cada una fusionada en un quad de 4 vértices.
+        assert_eq!(greedy_mesh_basechunk_simple(&chunk).count_vertices(), 24);
+    }
 }

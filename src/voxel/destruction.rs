@@ -3,13 +3,14 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
-    greedy_meshing::greedy_mesh_basechunk,
+    chunk_loading::{build_chunk_collider, ChunkMaterials, WaterMesh},
+    greedy_meshing::{greedy_mesh_basechunk, greedy_mesh_basechunk_water},
     tools::{Tool, ToolType},
     BaseChunk, VoxelType, VOXEL_TYPE_COUNT,
 };
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
 use crate::{
-    physics::{create_terrain_collider, spawn_rapier_voxel_drop, Collider, DropAssets},
+    physics::{spawn_rapier_voxel_drop, Collider, DropAssets},
     player::components::Player,
 };
 use bevy::prelude::*;
@@ -497,14 +498,16 @@ const DIRTY_REMESH_BUDGET_MS: u64 = 4;
 pub fn remesh_dirty_chunks_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    dirty: Query<Entity, With<DirtyChunk>>,
+    chunk_materials: Res<ChunkMaterials>,
+    dirty: Query<(Entity, Option<&Children>), With<DirtyChunk>>,
     chunks: Query<&BaseChunk>,
+    water_children: Query<(), With<WaterMesh>>,
     chunk_map: Res<ChunkMap>,
     mut mesh_query: Query<&mut Mesh3d>,
 ) {
     let start = std::time::Instant::now();
 
-    for entity in dirty.iter() {
+    for (entity, children) in dirty.iter() {
         if start.elapsed() >= std::time::Duration::from_millis(DIRTY_REMESH_BUDGET_MS) {
             break; // El resto conserva DirtyChunk y se remalla en frames siguientes
         }
@@ -518,16 +521,40 @@ pub fn remesh_dirty_chunks_system(
         // Remesh con vecinos para eliminar seams
         let new_mesh = greedy_mesh_basechunk(chunk, &chunk_map, &chunks);
 
-        if new_mesh.count_vertices() > 0 {
-            commands
-                .entity(entity)
-                .insert(create_terrain_collider(&new_mesh));
-        } else {
-            commands.entity(entity).remove::<Collider>();
+        // El collider sale de la capa COLISIONABLE, NO del mesh de render: este
+        // incluye follaje y (en el manglar) agua, que deben poder atravesarse.
+        match build_chunk_collider(chunk) {
+            Some(collider) => {
+                commands.entity(entity).insert(collider);
+            }
+            None => {
+                commands.entity(entity).remove::<Collider>();
+            }
         }
 
         if let Ok(mut mesh3d) = mesh_query.get_mut(entity) {
             *mesh3d = Mesh3d(meshes.add(new_mesh));
+        }
+
+        // El agua translúcida vive en una entidad hija; romper un voxel bajo el
+        // nivel del mar cambia su superficie, así que se reconstruye desde cero
+        // (la destrucción es esporádica: despawn + respawn es más simple que
+        // distinguir "sigue habiendo agua" de "ahora hay más").
+        for &child in children.into_iter().flatten() {
+            if water_children.contains(child) {
+                commands.entity(child).despawn();
+            }
+        }
+        if chunk.has_water() {
+            let water_mesh = greedy_mesh_basechunk_water(chunk, &chunk_map, &chunks);
+            if water_mesh.count_vertices() > 0 {
+                commands.entity(entity).with_child((
+                    WaterMesh,
+                    Mesh3d(meshes.add(water_mesh)),
+                    MeshMaterial3d(chunk_materials.water_handle()),
+                    Transform::default(),
+                ));
+            }
         }
 
         commands.entity(entity).remove::<DirtyChunk>();

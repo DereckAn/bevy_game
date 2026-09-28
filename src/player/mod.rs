@@ -3,6 +3,7 @@ pub mod components;
 pub mod input;
 pub mod movement;
 pub mod reticle;
+pub mod swim;
 
 use bevy::prelude::*;
 use camera::*;
@@ -10,6 +11,7 @@ pub use components::*;
 use input::*;
 use movement::*;
 use reticle::*;
+use swim::*;
 
 use crate::core::GameState;
 
@@ -45,6 +47,9 @@ impl Plugin for PlayerPlugin {
                 (
                     player_look,
                     player_movement,
+                    // Nado: corre después de `player_movement` para amortiguar la
+                    // velocidad que este fijó y controlar la vertical bajo el agua.
+                    water_physics.after(player_movement),
                     cursor_grab_on_click,
                     switch_tool,
                     highlight_aimed_voxel,

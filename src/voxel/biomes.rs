@@ -1,7 +1,7 @@
 //! Sistema de biomas para generación de terreno variado
 //! Incluye montañas, llanuras, valles, colinas, etc.
 
-use crate::core::WorldKind;
+use crate::core::{WorldKind, SEA_LEVEL_M};
 use fastnoise_lite::{FastNoiseLite, FractalType, NoiseType};
 
 // ============================================================================
@@ -47,6 +47,28 @@ const ICE_MAX_AMPLITUDE: f32 = 14.0;
 /// Detalle de montaña fuerte para crestas escarpadas.
 const ICE_MOUNTAIN_DETAIL: f32 = 5.0;
 
+// -- Manglar: tierra PLANA claramente sobre el mar, cuencas de agua PROFUNDAS --
+// La clave para que el agua se lea como agua (y no un charco a ras de suelo) es
+// separar bien los dos regímenes: la tierra queda varios metros SOBRE el nivel
+// del mar y las cuencas varios metros por DEBAJO, con poca amplitud local para
+// que ninguno cruce el nivel del mar al azar (evita la costa "damero").
+/// Fondo de las cuencas: bien hundido → agua profunda, nadable.
+const MANGROVE_VALLEY_BASE: f32 = SEA_LEVEL_M - 3.5;
+/// Tierra: claramente por encima del mar → islas planas secas.
+const MANGROVE_MOUNTAIN_BASE: f32 = SEA_LEVEL_M + 2.0;
+/// Amplitud mínima baja: el fondo de las cuencas es casi plano.
+const MANGROVE_MIN_AMPLITUDE: f32 = 0.3;
+/// Amplitud máxima baja: la tierra es casi plana (no vuelve a cruzar el mar).
+const MANGROVE_MAX_AMPLITUDE: f32 = 0.7;
+/// Sin detalle de montaña: el manglar no tiene picos.
+const MANGROVE_MOUNTAIN_DETAIL: f32 = 0.0;
+/// Ancho de la banda de río alrededor del contorno-cero de `river_noise`.
+/// Cuanto mayor, más anchos los canales.
+const MANGROVE_RIVER_BAND: f32 = 0.07;
+/// Metros que se hunde el fondo del río por debajo del nivel del mar (canales
+/// profundos que cortan la tierra plana).
+const MANGROVE_RIVER_DEPTH: f32 = 4.0;
+
 /// Interpolación lineal.
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
@@ -66,6 +88,8 @@ pub struct BiomeGenerator {
     terrain_noise: FastNoiseLite,
     /// Detalle adicional para montañas (entra gradualmente con la altura)
     mountain_detail_noise: FastNoiseLite,
+    /// Contorno para tallar ríos serpenteantes en el manglar (baja frecuencia).
+    river_noise: FastNoiseLite,
     /// bioma que se esta generando (elige los parametros de relieve).
     kind: WorldKind,
 }
@@ -93,10 +117,18 @@ impl BiomeGenerator {
         mountain_detail_noise.set_frequency(Some(0.08));
         mountain_detail_noise.set_seed(Some(seed.wrapping_add(54321)));
 
+        // Ríos del manglar: baja frecuencia → meandros largos. Se talla el
+        // terreno a lo largo de su contorno-cero (ver `generate_height`).
+        let mut river_noise = FastNoiseLite::new();
+        river_noise.set_noise_type(Some(NoiseType::OpenSimplex2));
+        river_noise.set_frequency(Some(0.004));
+        river_noise.set_seed(Some(seed.wrapping_add(900)));
+
         Self {
             biome_noise,
             terrain_noise,
             mountain_detail_noise,
+            river_noise,
             kind,
         }
     }
@@ -130,6 +162,13 @@ impl BiomeGenerator {
                 ICE_MAX_AMPLITUDE,
                 ICE_MOUNTAIN_DETAIL,
             ),
+            WorldKind::Mangrove => (
+                MANGROVE_VALLEY_BASE,
+                MANGROVE_MOUNTAIN_BASE,
+                MANGROVE_MIN_AMPLITUDE,
+                MANGROVE_MAX_AMPLITUDE,
+                MANGROVE_MOUNTAIN_DETAIL,
+            ),
         };
 
         let continent = self.biome_noise.get_noise_2d(world_x, world_z);
@@ -147,6 +186,16 @@ impl BiomeGenerator {
         height += self.mountain_detail_noise.get_noise_2d(world_x, world_z)
             * mountain_detail
             * mountain_weight;
+
+        // Ríos del manglar: talla canales serpenteantes a lo largo del
+        // contorno-cero de `river_noise`. Cerca del contorno, hunde el terreno
+        // hasta por debajo del nivel del mar para que se llenen de agua.
+        if self.kind == WorldKind::Mangrove {
+            let r = self.river_noise.get_noise_2d(world_x, world_z).abs();
+            let carve = smoothstep(MANGROVE_RIVER_BAND, 0.0, r); // 1 en el centro del canal, 0 fuera
+            let river_bed = SEA_LEVEL_M - MANGROVE_RIVER_DEPTH;
+            height = lerp(height, height.min(river_bed), carve);
+        }
 
         height
     }

@@ -7,11 +7,13 @@
 
 use super::bush::bush_template;
 use super::cactus::cactus_template;
+use super::mangrove::mangrove_template;
 use super::oak::oak_template;
 use super::pine::pine_template;
+use super::realistic_oak::realistic_oak_template;
 use super::small::tree_template;
 use super::white_tree::{snowy_pine_template, white_birch_template};
-use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
+use crate::core::constants::{BASE_CHUNK_SIZE, SEA_LEVEL_M, VOXEL_SIZE};
 use crate::core::WorldKind;
 use crate::voxel::{BaseChunk, BiomeGenerator, VoxelType};
 use bevy::prelude::*;
@@ -22,9 +24,20 @@ pub const TREE_CELL_SIZE: i32 = 12;
 /// Probabilidad (0..1) de que una celda contenga un árbol.
 const TREE_PROBABILITY: f32 = 0.45;
 
-/// Alcance horizontal máximo de un árbol (voxels): debe ser >= lo que sobresale
-/// el más ancho (ramas + hojas del pino). Lo usan el escaneo de celdas y el loader.
-pub const MAX_CANOPY_RADIUS: i32 = 8;
+/// Lado (en celdas) del bloque que reparte un roble realista. 8 celdas = 96
+/// voxels ≈ 9.6 m ≈ el diámetro de su copa, así las copas se tocan sin fundirse.
+/// Debe ser 8: la celda elegida dentro del bloque se saca con máscaras `& 0x7`.
+const OAK_BLOCK_CELLS: i32 = 8;
+
+/// Alcance horizontal máximo de CUALQUIER especie (voxels): el radio del escaneo
+/// de celdas. Debe ser >= el `canopy_reach()` más grande, o las ramas de un árbol
+/// cuya base cae fuera del chunk nunca se estampan y la copa sale cortada en
+/// plano por el borde del chunk.
+///
+/// Solo acota el bucle de celdas (hashes baratos); cada árbol se descarta después
+/// con su propio `canopy_reach()`, así que las especies estrechas no pagan por la
+/// anchura del roble realista.
+pub const MAX_CANOPY_RADIUS: i32 = 48;
 
 /// Tipo de árbol: arbusto pequeño (esfera) o pino grande (cónico, con ramas).
 #[derive(Clone, Copy, PartialEq)]
@@ -36,6 +49,10 @@ pub enum TreeKind {
     Cactus,
     SnowyPine,
     WhiteBirch,
+    Mangrove,
+    /// Roble con geometría realista (ramas curvas, dominancia apical, copa
+    /// perforada por ruido). Ver `realistic_oak.rs`.
+    RealisticOak,
 }
 
 /// Un árbol candidato: su columna (x,z) en VOXELS de mundo y su forma.
@@ -59,6 +76,29 @@ impl TreeInstance {
             TreeKind::Cactus => self.trunk_height + 3, // cuerpo + brazos que suben
             TreeKind::SnowyPine => self.trunk_height + 2, // mechón en la punta, como el pino
             TreeKind::WhiteBirch => self.trunk_height + self.canopy_radius,
+            TreeKind::Mangrove => self.trunk_height + self.canopy_radius,
+            // La plantilla mide ~1.82x el tronco; x2 sobreestima a propósito.
+            // Sobreestimar solo mantiene cargado un chunk que quizá esté vacío;
+            // subestimar DECAPITA el árbol (el loader lo marcaría como aire).
+            TreeKind::RealisticOak => self.trunk_height * 2,
+        }
+    }
+
+    /// Alcance horizontal de este árbol sobre su base, en voxels: hasta dónde
+    /// pueden llegar sus ramas y hojas en XZ.
+    ///
+    /// El escaneo de celdas usa [`MAX_CANOPY_RADIUS`] (el máximo de todas las
+    /// especies) y luego descarta con esto, así que un arbusto no cuesta lo que
+    /// un roble realista.
+    pub fn canopy_reach(&self) -> i32 {
+        match self.kind {
+            TreeKind::Small | TreeKind::Bush => self.canopy_radius + 1,
+            TreeKind::Cactus => 4,
+            // Ramificadas: medido sobre la plantilla, no es `canopy_radius`.
+            TreeKind::Pine | TreeKind::Oak | TreeKind::SnowyPine => 24,
+            TreeKind::WhiteBirch => self.canopy_radius + 2,
+            TreeKind::Mangrove => self.canopy_radius + 2,
+            TreeKind::RealisticOak => MAX_CANOPY_RADIUS,
         }
     }
 }
@@ -156,6 +196,47 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Opt
         });
     }
 
+    // Manglar: solo mangles. La franja de marea (cerca del nivel del mar) la
+    // decide `place_trees` con la altura real de la columna.
+    if kind == WorldKind::Mangrove {
+        if !crate::vegetation::config::ENABLE_TREES {
+            return None;
+        }
+
+        // Roble realista: como máximo UNO por bloque de `OAK_BLOCK_CELLS`² celdas
+        // (~9.6 m). Su copa mide ~9.6 m de diámetro y `TREE_CELL_SIZE` separa las
+        // celdas solo 1.2 m: una por celda fundiría el bioma en una masa verde.
+        // La celda concreta del bloque sale del hash del bloque, así solo una de
+        // las 64 planta el roble.
+        let hb = hash_cell(
+            cell_x.div_euclid(OAK_BLOCK_CELLS),
+            cell_z.div_euclid(OAK_BLOCK_CELLS),
+            seed ^ 0x2f9e_c1d3,
+        );
+        if cell_x.rem_euclid(OAK_BLOCK_CELLS) == (hb & 0x7) as i32
+            && cell_z.rem_euclid(OAK_BLOCK_CELLS) == ((hb >> 3) & 0x7) as i32
+        {
+            return Some(TreeInstance {
+                world_x,
+                world_z,
+                kind: TreeKind::RealisticOak,
+                trunk_height: 40 + ((hb >> 8) % 16) as i32, // 40..=55
+                canopy_radius: 0,                           // la plantilla no lo usa
+                rng_seed: hb,
+            });
+        }
+
+        let trunk_height = 15 + ((h2 >> 8) % 10) as i32; // 15..=24 (bajo y ancho)
+        return Some(TreeInstance {
+            world_x,
+            world_z,
+            kind: TreeKind::Mangrove,
+            trunk_height,
+            canopy_radius: 6,
+            rng_seed: h2,
+        });
+    }
+
     if h2 % 6 == 0 {
         // pino (igual que antes)
         if !crate::vegetation::config::ENABLE_TREES {
@@ -216,6 +297,17 @@ pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Opt
     }
 }
 
+/// ¿Puede este árbol tocar el chunk cuyo origen en voxels es `origin` y cuyo lado
+/// es `n`? Compara la caja XZ del árbol (su base ± [`TreeInstance::canopy_reach`])
+/// con la del chunk.
+fn reaches_chunk(tree: &TreeInstance, origin: IVec3, n: i32) -> bool {
+    let r = tree.canopy_reach();
+    tree.world_x + r >= origin.x
+        && tree.world_x - r < origin.x + n
+        && tree.world_z + r >= origin.z
+        && tree.world_z - r < origin.z + n
+}
+
 /// Estampa en `chunk` los árboles deterministas que caen dentro de él.
 ///
 /// Recorre las celdas de espaciado que se solapan con el chunk (expandido por el
@@ -243,10 +335,35 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                 continue;
             };
 
+            // El escaneo abarca la especie MÁS ancha; descarta ya los árboles cuyo
+            // propio alcance no llega a este chunk, antes de construir su
+            // plantilla. Sin esto, subir `MAX_CANOPY_RADIUS` haría que cada chunk
+            // generase plantillas de árboles a 50 voxels que no le tocan.
+            if !reaches_chunk(&tree, origin, n) {
+                continue;
+            }
+
             // Altura de la superficie en la columna del árbol (metros → voxels).
             let world_x_m = tree.world_x as f32 * VOXEL_SIZE;
             let world_z_m = tree.world_z as f32 * VOXEL_SIZE;
             let surface_m = biome.generate_height(world_x_m, world_z_m);
+
+            // Los mangles solo crecen en la franja de marea: la orilla y la tierra
+            // baja junto al agua (así la copa emerge sobre el agua). Fuera de ella
+            // (agua profunda o tierra alta interior) se descartan.
+            if tree.kind == TreeKind::Mangrove
+                && (surface_m < SEA_LEVEL_M - 0.5 || surface_m > SEA_LEVEL_M + 1.2)
+            {
+                continue;
+            }
+
+            // El roble realista es lo contrario: solo en la tierra seca, POR ENCIMA
+            // de la franja de marea, donde el mangle ya no crece. Así el manglar
+            // queda con mangles en la orilla y robles en los islotes secos.
+            if tree.kind == TreeKind::RealisticOak && surface_m <= SEA_LEVEL_M + 1.2 {
+                continue;
+            }
+
             let surface_voxel_y = (surface_m / VOXEL_SIZE).floor() as i32;
 
             // Base = el voxel justo SOBRE el suelo (donde arranca el tronco).
@@ -267,6 +384,15 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
                 TreeKind::Cactus => cactus_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::SnowyPine => snowy_pine_template(tree.rng_seed, tree.trunk_height),
                 TreeKind::WhiteBirch => white_birch_template(tree.trunk_height, tree.canopy_radius),
+                TreeKind::Mangrove => mangrove_template(tree.rng_seed, tree.trunk_height),
+                // Se genera ya RECORTADO a este chunk: su copa solapa ~22 chunks y
+                // construirla entera cada vez serían ~16k voxels para tirar el 95%.
+                TreeKind::RealisticOak => realistic_oak_template(
+                    tree.rng_seed,
+                    tree.trunk_height,
+                    origin - base,
+                    origin + IVec3::splat(n - 1) - base,
+                ),
             };
             for tv in template {
                 let world = base + tv.offset;
@@ -317,6 +443,9 @@ pub fn tree_ceiling_for_chunk(
             let Some(tree) = tree_in_cell(cell_x, cell_z, seed, kind) else {
                 continue;
             };
+            if !reaches_chunk(&tree, origin, n) {
+                continue;
+            }
             let wx_m = tree.world_x as f32 * VOXEL_SIZE;
             let wz_m = tree.world_z as f32 * VOXEL_SIZE;
             let surface_voxel_y = (biome.generate_height(wx_m, wz_m) / VOXEL_SIZE).floor() as i32;
@@ -325,4 +454,59 @@ pub fn tree_ceiling_for_chunk(
         }
     }
     ceiling
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// El bioma manglar tiene que plantar robles realistas de verdad: entre el
+    /// filtro de probabilidad y el bloque de `OAK_BLOCK_CELLS`² es fácil que la
+    /// combinación no deje pasar ninguno y el bioma salga pelado.
+    #[test]
+    fn mangrove_biome_places_realistic_oaks() {
+        let oaks = (-40..40)
+            .flat_map(|cx| (-40..40).map(move |cz| (cx, cz)))
+            .filter_map(|(cx, cz)| tree_in_cell(cx, cz, 1234, WorldKind::Mangrove))
+            .filter(|t| t.kind == TreeKind::RealisticOak)
+            .count();
+        assert!(oaks > 0);
+    }
+
+    /// Un roble por bloque como máximo: si el gate del bloque se rompiera, cada
+    /// celda plantaría uno y las copas (46 voxels de radio) se fundirían.
+    #[test]
+    fn realistic_oaks_are_sparser_than_mangroves() {
+        let cells: Vec<_> = (-40..40)
+            .flat_map(|cx| (-40..40).map(move |cz| (cx, cz)))
+            .filter_map(|(cx, cz)| tree_in_cell(cx, cz, 1234, WorldKind::Mangrove))
+            .collect();
+        let oaks = cells
+            .iter()
+            .filter(|t| t.kind == TreeKind::RealisticOak)
+            .count();
+        let mangroves = cells
+            .iter()
+            .filter(|t| t.kind == TreeKind::Mangrove)
+            .count();
+        assert!(
+            mangroves > oaks * 20,
+            "{mangroves} mangles vs {oaks} robles"
+        );
+    }
+
+    /// El escaneo de celdas debe cubrir a la especie más ancha, o sus ramas nunca
+    /// se estampan en los chunks lejanos y la copa sale cortada en plano.
+    #[test]
+    fn scan_radius_covers_the_widest_species() {
+        let widest = TreeInstance {
+            world_x: 0,
+            world_z: 0,
+            kind: TreeKind::RealisticOak,
+            trunk_height: 55,
+            canopy_radius: 0,
+            rng_seed: 1,
+        };
+        assert!(widest.canopy_reach() <= MAX_CANOPY_RADIUS);
+    }
 }

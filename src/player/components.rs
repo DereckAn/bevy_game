@@ -86,8 +86,9 @@ pub fn spawn_player(
         //   - 0.9 = mitad de altura (total 1.8m)
         //   - 0.3 = radio (0.6m de diámetro)
         Velocity::zero(),                     // Velocidad inicial en cero (parado)
+        GravityScale(1.0), // Gravedad normal en tierra; el nado la reduce bajo el agua
         LockedAxes::ROTATION_LOCKED, // Bloquea rotación por física (evita que el jugador ruede)
-        Friction::coefficient(0.7),  // Coeficiente de fricción 0.7 (realista para caminar)
+        Friction::coefficient(0.7), // Coeficiente de fricción 0.7 (realista para caminar)
         Restitution::coefficient(0.0), // Sin rebote (coeficiente 0.0 = no elástico)
         AdditionalMassProperties::Mass(70.0), // Masa de 70 kilogramos (peso humano promedio)
     ));
