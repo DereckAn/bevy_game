@@ -52,6 +52,8 @@ pub struct PlayerController; // Estructura vacía usada solo como "etiqueta" o "
 /// del jugador con todos los componentes necesarios para movimiento, cámara y física.
 pub fn spawn_player(
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     world_seed: Res<WorldSeed>,
     world_kind: Res<WorldKind>,
 ) {
@@ -63,35 +65,44 @@ pub fn spawn_player(
     let spawn_y = surface_m + 5.0; // unos metros para caer sobre el terreno recién generado
 
     // Recibe Commands mutable para crear entidades
-    commands.spawn((
-        // Crea una nueva entidad con los siguientes componentes:
+    commands
+        .spawn((
+            // Crea una nueva entidad con los siguientes componentes:
 
-        // ====================================================================
-        // COMPONENTES PERSONALIZADOS
-        // ====================================================================
-        Player::default(), // Nuestro componente Player con valores por defecto
-        PlayerController,  // Marcador para identificar esta entidad como jugador
-        Tool::new(ToolType::Shovel), // Agregar tool al jugador
-        // ====================================================================
-        // COMPONENTES DE BEVY
-        // ====================================================================
-        Camera3d::default(), // Cámara 3D con configuración por defecto
-        // Altura de aparición calculada desde la superficie real (ver arriba).
-        Transform::from_xyz(0.0, spawn_y, 0.0),
-        // ====================================================================
-        // COMPONENTES DE FÍSICA (RAPIER)
-        // ====================================================================
-        RigidBody::Dynamic, // Cuerpo rígido dinámico (afectado por fuerzas y gravedad)
-        Collider::capsule_y(0.9, 0.3), // Colisionador en forma de cápsula:
-        //   - 0.9 = mitad de altura (total 1.8m)
-        //   - 0.3 = radio (0.6m de diámetro)
-        Velocity::zero(),                     // Velocidad inicial en cero (parado)
-        GravityScale(1.0), // Gravedad normal en tierra; el nado la reduce bajo el agua
-        LockedAxes::ROTATION_LOCKED, // Bloquea rotación por física (evita que el jugador ruede)
-        Friction::coefficient(0.7), // Coeficiente de fricción 0.7 (realista para caminar)
-        Restitution::coefficient(0.0), // Sin rebote (coeficiente 0.0 = no elástico)
-        AdditionalMassProperties::Mass(70.0), // Masa de 70 kilogramos (peso humano promedio)
-    ));
+            // ====================================================================
+            // COMPONENTES PERSONALIZADOS
+            // ====================================================================
+            Player::default(), // Nuestro componente Player con valores por defecto
+            PlayerController,  // Marcador para identificar esta entidad como jugador
+            Tool::new(ToolType::Shovel), // Agregar tool al jugador
+            // ====================================================================
+            // COMPONENTES DE BEVY
+            // ====================================================================
+            // Camera3d::default(), // Cámara 3D con configuración por defecto
+            // Cuerpo visible: mismas medidas que la capsula
+            Mesh3d(meshes.add(Cuboid::new(0.6, 2.4, 0.6))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgb(0.15, 0.35, 0.85),
+                ..default()
+            })),
+            // Altura de aparición calculada desde la superficie real (ver arriba).
+            Transform::from_xyz(0.0, spawn_y, 0.0),
+            // ====================================================================
+            // COMPONENTES DE FÍSICA (RAPIER)
+            // ====================================================================
+            RigidBody::Dynamic, // Cuerpo rígido dinámico (afectado por fuerzas y gravedad)
+            Collider::capsule_y(0.9, 0.3), // Colisionador en forma de cápsula:
+            //   - 0.9 = mitad de altura (total 1.8m)
+            //   - 0.3 = radio (0.6m de diámetro)
+            Velocity::zero(),              // Velocidad inicial en cero (parado)
+            GravityScale(1.0), // Gravedad normal en tierra; el nado la reduce bajo el agua
+            LockedAxes::ROTATION_LOCKED, // Bloquea rotación por física (evita que el jugador ruede)
+            Friction::coefficient(0.7), // Coeficiente de fricción 0.7 (realista para caminar)
+            Restitution::coefficient(0.0), // Sin rebote (coeficiente 0.0 = no elástico)
+            AdditionalMassProperties::Mass(70.0), // Masa de 70 kilogramos (peso humano promedio)
+        ))
+        // La camarea es hija: heredera posicion y yaw del cuerpo, pero solo ella palica el pitch (mirar arriba/abajo)
+        .with_child((Camera3d::default(), Transform::from_xyz(0.0, 1.8, 0.0)));
 }
 
 /// Elimina al jugador al salir del juego (evita duplicados al volver al menú).

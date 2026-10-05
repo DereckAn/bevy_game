@@ -51,7 +51,7 @@ pub fn despawn_crosshair(mut commands: Commands, crosshairs: Query<Entity, With<
 
 /// Dibuja un recuadro wireframe alrededor del voxel que el jugador apunta.
 pub fn highlight_aimed_voxel(
-    camera_query: Query<&Transform, With<Camera>>,
+    camera_query: Query<&GlobalTransform, With<Camera>>,
     chunk_map: Res<ChunkMap>,
     chunks: Query<&BaseChunk>,
     mut gizmos: Gizmos,
@@ -60,7 +60,7 @@ pub fn highlight_aimed_voxel(
         return;
     };
 
-    let origin = camera.translation;
+    let origin = camera.translation();
     let direction = camera.forward().as_vec3();
 
     // Mismo alcance que la destrucción (5 m): solo resaltamos lo que se puede romper

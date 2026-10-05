@@ -99,13 +99,13 @@ pub fn update_cloud_material(
     tod: Res<TimeOfDay>,
     mut materials: ResMut<Assets<CloudMaterial>>,
     mut dome: Query<(&MeshMaterial3d<CloudMaterial>, &mut Transform), With<CloudDome>>,
-    camera: Query<&Transform, (With<Camera3d>, Without<CloudDome>)>,
+    camera: Query<&GlobalTransform, (With<Camera3d>, Without<CloudDome>)>,
 ) {
     let Ok((mat_handle, mut dome_tf)) = dome.single_mut() else {
         return;
     };
     if let Ok(cam_tf) = camera.single() {
-        dome_tf.translation = cam_tf.translation;
+       dome_tf.translation = cam_tf.translation();
     }
     if let Some(mat) = materials.get_mut(&mat_handle.0) {
         mat.data.sun_direction = sun_direction(tod.fraction).extend(0.0);
