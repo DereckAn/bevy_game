@@ -280,7 +280,7 @@ pub fn raycast_voxel(
 /// Solo se ejecuta cuando el jugador presiona el boton de romper.
 pub fn start_voxel_breaking_system(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    camera_query: Query<&Transform, With<Camera>>,
+    camera_query: Query<&GlobalTransform, With<Camera>>,
     chunk_map: Res<ChunkMap>,
     chunks: Query<&BaseChunk>,
     player_query: Query<&Tool, With<Player>>,
@@ -301,7 +301,7 @@ pub fn start_voxel_breaking_system(
         return; // No hay camara.
     };
 
-    let ray_origin = camera_transform.translation;
+    let ray_origin = camera_transform.translation();
     let ray_direction = camera_transform.forward().as_vec3();
 
     // Hacer raycast para encontrar voxel
