@@ -89,16 +89,25 @@ pub struct NeighborBorders([Option<Box<[VoxelType]>>; 6]);
 impl NeighborBorders {
     /// Copia la capa de contacto de cada vecino que ya tenga voxeles en el ECS.
     pub fn gather(chunk_pos: IVec3, chunk_map: &ChunkMap, chunks: &Query<&BaseChunk>) -> Self {
+        Self::from_neighbors(chunk_pos, |pos| {
+            chunk_map
+                .chunks
+                .get(&pos)
+                .and_then(|&entity| chunks.get(entity).ok())
+        })
+    }
+
+    /// Como `gather`, pero con cualquier fuente de chunks (los tests no tienen ECS).
+    fn from_neighbors<'a>(
+        chunk_pos: IVec3,
+        neighbor_at: impl Fn(IVec3) -> Option<&'a BaseChunk>,
+    ) -> Self {
         let mut borders = Self::default();
         for axis in 0..3 {
             for direction in [-1, 1] {
                 let mut offset = IVec3::ZERO;
                 offset[axis] = direction;
-                let Some(neighbor) = chunk_map
-                    .chunks
-                    .get(&(chunk_pos + offset))
-                    .and_then(|&entity| chunks.get(entity).ok())
-                else {
+                let Some(neighbor) = neighbor_at(chunk_pos + offset) else {
                     continue;
                 };
 
@@ -549,9 +558,244 @@ fn add_greedy_quad(
     }
 }
 
+/// Mesher ANTERIOR (celda a celda, máscara `Option<VoxelType>` por slice), tal
+/// cual estaba antes del binary greedy meshing. Solo existe como oráculo: los
+/// tests exigen que el mesher binario produzca exactamente los mismos quads.
+#[cfg(test)]
+mod reference {
+    use super::*;
+
+    pub(super) fn greedy_mesh(
+        chunk: &BaseChunk,
+        borders: &NeighborBorders,
+        layer: MeshLayer,
+    ) -> Mesh {
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut normals: Vec<[f32; 3]> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+        let mut colors: Vec<[f32; 4]> = Vec::new();
+
+        let column_top = compute_column_top(chunk);
+
+        // Procesar cada eje (X, Y, Z) para greedy meshing
+        for axis in 0..3 {
+            for d in 0..BASE_CHUNK_SIZE {
+                // Dirección positiva
+                let mask_pos = generate_slice_mask(chunk, borders, axis, d, 1, layer);
+                greedy_mesh_slice(
+                    &mask_pos,
+                    chunk,
+                    &column_top,
+                    axis,
+                    d,
+                    1,
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    &mut colors,
+                );
+
+                // Dirección negativa
+                let mask_neg = generate_slice_mask(chunk, borders, axis, d, -1, layer);
+                greedy_mesh_slice(
+                    &mask_neg,
+                    chunk,
+                    &column_top,
+                    axis,
+                    d,
+                    -1,
+                    &mut positions,
+                    &mut normals,
+                    &mut indices,
+                    &mut colors,
+                );
+            }
+        }
+
+        // Construir mesh final
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        mesh.insert_indices(Indices::U32(indices));
+        mesh
+    }
+
+    /// Genera máscara de caras visibles para un slice (con verificación de vecinos)
+    fn generate_slice_mask(
+        chunk: &BaseChunk,
+        borders: &NeighborBorders,
+        axis: usize,
+        d: usize,
+        direction: i32,
+        layer: MeshLayer,
+    ) -> Vec<Option<VoxelType>> {
+        let u = (axis + 1) % 3;
+        let v = (axis + 2) % 3;
+
+        let mut mask = vec![None; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
+
+        for j in 0..BASE_CHUNK_SIZE {
+            for i in 0..BASE_CHUNK_SIZE {
+                let mut pos = [0; 3];
+                pos[axis] = d;
+                pos[u] = i;
+                pos[v] = j;
+
+                let x = pos[0];
+                let y = pos[1];
+                let z = pos[2];
+
+                if !cell_in_layer(chunk.voxel_types[x][y][z], layer) {
+                    continue;
+                }
+
+                // Calcular posición del vecino
+                let neighbor_x = x as i32 + if axis == 0 { direction } else { 0 };
+                let neighbor_y = y as i32 + if axis == 1 { direction } else { 0 };
+                let neighbor_z = z as i32 + if axis == 2 { direction } else { 0 };
+
+                let is_face_visible = if neighbor_x < 0
+                    || neighbor_y < 0
+                    || neighbor_z < 0
+                    || neighbor_x >= BASE_CHUNK_SIZE as i32
+                    || neighbor_y >= BASE_CHUNK_SIZE as i32
+                    || neighbor_z >= BASE_CHUNK_SIZE as i32
+                {
+                    // Fuera del chunk - verificar el borde copiado del vecino
+                    match borders.get(axis, direction, i, j) {
+                        Some(neighbor) => !face_hidden_by(neighbor, layer),
+                        None => face_visible_against_unknown(layer),
+                    }
+                } else {
+                    // Dentro del chunk
+                    !face_hidden_by(
+                        chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
+                            [neighbor_z as usize],
+                        layer,
+                    )
+                };
+
+                if is_face_visible {
+                    mask[i + j * BASE_CHUNK_SIZE] = Some(chunk.voxel_types[x][y][z]);
+                }
+            }
+        }
+
+        mask
+    }
+
+    /// Aplica greedy meshing a un slice usando la máscara
+    fn greedy_mesh_slice(
+        mask: &[Option<VoxelType>],
+        chunk: &BaseChunk,
+        column_top: &[i32],
+        axis: usize,
+        d: usize,
+        direction: i32,
+        positions: &mut Vec<[f32; 3]>,
+        normals: &mut Vec<[f32; 3]>,
+        indices: &mut Vec<u32>,
+        colors: &mut Vec<[f32; 4]>,
+    ) {
+        let u = (axis + 1) % 3;
+        let v = (axis + 2) % 3;
+
+        let mut processed = vec![false; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
+
+        for j in 0..BASE_CHUNK_SIZE {
+            for i in 0..BASE_CHUNK_SIZE {
+                let idx = i + j * BASE_CHUNK_SIZE;
+
+                if processed[idx] || mask[idx].is_none() {
+                    continue;
+                }
+
+                let voxel_type = mask[idx].unwrap();
+
+                // Pendiente de la columna del voxel (solo afecta al pasto).
+                let slope = if voxel_type == VoxelType::Grass {
+                    let mut pos = [0usize; 3];
+                    pos[axis] = d;
+                    pos[u] = i;
+                    pos[v] = j;
+                    slope_at(column_top, pos[0], pos[2])
+                } else {
+                    0.0
+                };
+
+                // Las caras SUPERIORES de pasto (eje Y, +1) NO se fusionan: cada voxel
+                // recibe su propio tono baked en el vertex color. La madera SÍ se
+                // fusiona: su color base es uniforme por quad y la variación de tono la
+                // aplica el shader de paleta por fragmento (ver palette_extension.wgsl).
+                let is_grass_top = voxel_type == VoxelType::Grass && axis == 1 && direction == 1;
+                let (width, height) = if is_grass_top {
+                    processed[idx] = true;
+                    (1, 1)
+                } else {
+                    find_max_rect(mask, &mut processed, i, j, voxel_type)
+                };
+
+                // Generar quad
+                add_greedy_quad(
+                    chunk, axis, d, i, j, width, height, direction, voxel_type, slope, positions,
+                    normals, indices, colors,
+                );
+            }
+        }
+    }
+
+    /// Encuentra el rectángulo máximo que comienza en (start_i, start_j)
+    fn find_max_rect(
+        mask: &[Option<VoxelType>],
+        processed: &mut [bool],
+        start_i: usize,
+        start_j: usize,
+        voxel_type: VoxelType,
+    ) -> (usize, usize) {
+        // Expandir en dirección U (horizontal)
+        let mut width = 1;
+        while start_i + width < BASE_CHUNK_SIZE {
+            let idx = (start_i + width) + start_j * BASE_CHUNK_SIZE;
+            if processed[idx] || mask[idx] != Some(voxel_type) {
+                break;
+            }
+            width += 1;
+        }
+
+        // Expandir en dirección V (vertical)
+        let mut height = 1;
+        'outer: while start_j + height < BASE_CHUNK_SIZE {
+            for w in 0..width {
+                let idx = (start_i + w) + (start_j + height) * BASE_CHUNK_SIZE;
+                if processed[idx] || mask[idx] != Some(voxel_type) {
+                    break 'outer;
+                }
+            }
+            height += 1;
+        }
+
+        // Marcar como procesados
+        for h in 0..height {
+            for w in 0..width {
+                let idx = (start_i + w) + (start_j + h) * BASE_CHUNK_SIZE;
+                processed[idx] = true;
+            }
+        }
+
+        (width, height)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::LazyLock;
+
+    use bevy::mesh::VertexAttributeValues;
+
     use super::*;
+    use crate::core::WorldKind;
 
     fn chunk_filled_with(vt: VoxelType) -> BaseChunk {
         BaseChunk {
@@ -625,5 +869,147 @@ mod tests {
         let mesh = greedy_mesh_basechunk_simple(&chunk);
 
         assert_eq!(mesh.count_vertices(), 56);
+    }
+
+    // --- Equivalencia con el mesher anterior (`reference`) ---
+
+    /// Chunks reales (4 biomas, varias alturas) + uno sintético, cada uno sin
+    /// vecinos y con los 6 bordes vecinos. Se generan una vez para los 3 tests.
+    static EQUIVALENCE_CASES: LazyLock<Vec<(BaseChunk, NeighborBorders)>> = LazyLock::new(|| {
+        let seed = 12345;
+        let centers = [
+            IVec3::new(0, 0, 0),
+            IVec3::new(7, 1, -3),
+            IVec3::new(-12, 2, 20),
+            IVec3::new(3, -1, 9),
+        ];
+        let mut cases = Vec::new();
+        for kind in [
+            WorldKind::Normal,
+            WorldKind::Desert,
+            WorldKind::Ice,
+            WorldKind::Mangrove,
+        ] {
+            for center in centers {
+                cases.extend(cases_around(center, |pos| BaseChunk::new(pos, seed, kind)));
+            }
+        }
+        cases.extend(cases_around(IVec3::new(2, 0, -5), mixed_material_chunk));
+        cases
+    });
+
+    /// El chunk en `center` dos veces: sin vecinos (bordes desconocidos) y con
+    /// los bordes de sus 6 vecinos.
+    fn cases_around(
+        center: IVec3,
+        make: impl Fn(IVec3) -> BaseChunk,
+    ) -> [(BaseChunk, NeighborBorders); 2] {
+        let neighbors: HashMap<IVec3, BaseChunk> = [
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
+        ]
+        .map(|offset| (center + offset, make(center + offset)))
+        .into_iter()
+        .collect();
+        let borders = NeighborBorders::from_neighbors(center, |pos| neighbors.get(&pos));
+        let chunk = make(center);
+        [
+            (chunk.clone(), NeighborBorders::default()),
+            (chunk, borders),
+        ]
+    }
+
+    /// Bloques de 4³ con material pseudoaleatorio entre los 24 tipos (aire y agua
+    /// incluidos): fuerza fusiones, cortes entre materiales y caras agua/sólido
+    /// que el terreno real produce poco.
+    fn mixed_material_chunk(position: IVec3) -> BaseChunk {
+        let mut chunk = chunk_filled_with(VoxelType::Air);
+        chunk.position = position;
+        let origin = position * BASE_CHUNK_SIZE as i32;
+        for x in 0..BASE_CHUNK_SIZE {
+            for y in 0..BASE_CHUNK_SIZE {
+                for z in 0..BASE_CHUNK_SIZE {
+                    let local = IVec3::new(x as i32, y as i32, z as i32);
+                    let block = (origin + local).div_euclid(IVec3::splat(4));
+                    let hash = block.x.wrapping_mul(73_856_093)
+                        ^ block.y.wrapping_mul(19_349_663)
+                        ^ block.z.wrapping_mul(83_492_791);
+                    let t = hash.rem_euclid(VOXEL_TYPE_COUNT as i32) as u8;
+                    chunk.voxel_types[x][y][z] = VoxelType::from_u8(t);
+                }
+            }
+        }
+        chunk
+    }
+
+    /// Quads de la malla como claves comparables (bits exactos de posiciones,
+    /// normales y colores + índices locales), ordenados: el mesher binario emite
+    /// los mismos quads en otro orden.
+    fn sorted_quads(mesh: &Mesh) -> Vec<Vec<u32>> {
+        let Some(VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("mesh sin posiciones");
+        };
+        let Some(VertexAttributeValues::Float32x3(normals)) =
+            mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+        else {
+            panic!("mesh sin normales");
+        };
+        let Some(VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("mesh sin colores");
+        };
+        let Some(Indices::U32(indices)) = mesh.indices() else {
+            panic!("mesh sin índices u32");
+        };
+
+        let mut quads: Vec<Vec<u32>> = (0..positions.len() / 4)
+            .map(|q| {
+                let vertices = 4 * q..4 * q + 4;
+                let floats = vertices
+                    .flat_map(|v| positions[v].into_iter().chain(normals[v]).chain(colors[v]));
+                let local_indices = indices[6 * q..6 * q + 6].iter().map(|&i| i - 4 * q as u32);
+                floats.map(f32::to_bits).chain(local_indices).collect()
+            })
+            .collect();
+        quads.sort();
+        quads
+    }
+
+    /// Primer caso cuya malla binaria difiere de la de referencia, o `None`.
+    fn first_mismatch_with_reference(layer: MeshLayer) -> Option<String> {
+        EQUIVALENCE_CASES.iter().find_map(|(chunk, borders)| {
+            let expected = sorted_quads(&reference::greedy_mesh(chunk, borders, layer));
+            let actual = sorted_quads(&greedy_mesh_with_borders(chunk, borders, layer));
+            (expected != actual).then(|| {
+                let known = borders.0.iter().filter(|b| b.is_some()).count();
+                format!(
+                    "chunk {:?} ({known} vecinos): {} quads esperados, {} obtenidos",
+                    chunk.position,
+                    expected.len(),
+                    actual.len()
+                )
+            })
+        })
+    }
+
+    #[test]
+    fn binary_mesher_matches_reference_for_opaque_layer() {
+        assert_eq!(first_mismatch_with_reference(MeshLayer::Opaque), None);
+    }
+
+    #[test]
+    fn binary_mesher_matches_reference_for_water_layer() {
+        assert_eq!(first_mismatch_with_reference(MeshLayer::Water), None);
+    }
+
+    #[test]
+    fn binary_mesher_matches_reference_for_collider_layer() {
+        assert_eq!(first_mismatch_with_reference(MeshLayer::Collider), None);
     }
 }
