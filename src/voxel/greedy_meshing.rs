@@ -3,14 +3,15 @@
 //! Optimiza la generación de meshes combinando caras adyacentes del mismo material
 //! en rectángulos más grandes. Reduce 70-95% de triángulos comparado con naive meshing.
 //!
-//! ## Algoritmo:
-//! 1. Para cada eje (X, Y, Z), procesar slices perpendiculares
-//! 2. En cada slice, crear una máscara de caras visibles EN AMBAS DIRECCIONES
-//! 3. Usar greedy algorithm para encontrar rectángulos máximos
-//! 4. Generar quads en lugar de caras individuales
+//! ## Algoritmo (binary greedy meshing):
+//! 1. Codificar el chunk como columnas de bits por eje (32 voxeles = un `u32`),
+//!    con el borde de los vecinos como bits de padding
+//! 2. Caras visibles de una columna entera con una operación: `celda & !vecino`
+//! 3. Repartir las caras en planos binarios por (profundidad, material)
+//! 4. Greedy por plano con `trailing_zeros`/`trailing_ones` → quads
 
 use crate::core::constants::{BASE_CHUNK_SIZE, VOXEL_SIZE};
-use crate::voxel::{voxel_color, BaseChunk, ChunkMap, VoxelType};
+use crate::voxel::{voxel_color, BaseChunk, ChunkMap, VoxelType, VOXEL_TYPE_COUNT};
 use bevy::mesh::Indices;
 use bevy::prelude::*;
 use bevy::render::render_resource::PrimitiveTopology;
@@ -221,43 +222,52 @@ pub fn greedy_mesh_with_borders(
     let mut colors: Vec<[f32; 4]> = Vec::new();
 
     let column_top = compute_column_top(chunk);
+    let (in_layer, hidden) = build_axis_columns(chunk, borders, layer);
 
-    // Procesar cada eje (X, Y, Z) para greedy meshing
+    // Un plano de 32 filas por (profundidad d, material): la fila j guarda en el
+    // bit i si hay cara visible de ese material en (i, j). Separar por material
+    // permite fusionar con operaciones de bits sin mezclar colores. El greedy
+    // vacía cada plano que procesa, así que se reutilizan entre ejes sin limpiar.
+    let mut planes = vec![[0u32; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE * VOXEL_TYPE_COUNT];
+    // Bit t de `used[d]` = el plano (d, material t) tiene caras: evita recorrer
+    // los 24 planos vacíos de cada capa.
+    let mut used = [0u32; BASE_CHUNK_SIZE];
+
     for axis in 0..3 {
-        for d in 0..BASE_CHUNK_SIZE {
-            // Dirección positiva
-            let mask_pos = generate_slice_mask(chunk, borders, axis, d, 1, layer);
-            greedy_mesh_slice(
-                &mask_pos,
+        for direction in [1, -1] {
+            collect_face_planes(
                 chunk,
-                &column_top,
+                &in_layer,
+                &hidden,
                 axis,
-                d,
-                1,
-                &mut positions,
-                &mut normals,
-                &mut indices,
-                &mut colors,
+                direction,
+                &mut planes,
+                &mut used,
             );
 
-            // Dirección negativa
-            let mask_neg = generate_slice_mask(chunk, borders, axis, d, -1, layer);
-            greedy_mesh_slice(
-                &mask_neg,
-                chunk,
-                &column_top,
-                axis,
-                d,
-                -1,
-                &mut positions,
-                &mut normals,
-                &mut indices,
-                &mut colors,
-            );
+            for d in 0..BASE_CHUNK_SIZE {
+                let mut types = std::mem::take(&mut used[d]);
+                while types != 0 {
+                    let t = types.trailing_zeros() as usize;
+                    types &= types - 1;
+                    greedy_mesh_plane(
+                        &mut planes[d * VOXEL_TYPE_COUNT + t],
+                        VoxelType::from_u8(t as u8),
+                        chunk,
+                        &column_top,
+                        axis,
+                        d,
+                        direction,
+                        &mut positions,
+                        &mut normals,
+                        &mut indices,
+                        &mut colors,
+                    );
+                }
+            }
         }
     }
 
-    // Construir mesh final
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
@@ -266,73 +276,114 @@ pub fn greedy_mesh_with_borders(
     mesh
 }
 
-/// Genera máscara de caras visibles para un slice (con verificación de vecinos)
-fn generate_slice_mask(
+/// Columnas binarias del chunk, una por (eje, celda i, celda j) en
+/// `[axis * N² + i + j * N]`, con i/j sobre los ejes u/v. Bit k = celda k a lo
+/// largo del eje.
+///
+/// - `in_layer` (u32): la celda pertenece a la malla de esta capa.
+/// - `hidden` (u64, 34 bits): la celda TAPA una cara vecina. Va desplazada un
+///   bit: el bit 0 y el 33 son el borde copiado de los chunks vecinos, así una
+///   sola operación de bits resuelve también las caras del borde.
+fn build_axis_columns(
     chunk: &BaseChunk,
     borders: &NeighborBorders,
-    axis: usize,
-    d: usize,
-    direction: i32,
     layer: MeshLayer,
-) -> Vec<Option<VoxelType>> {
-    let u = (axis + 1) % 3;
-    let v = (axis + 2) % 3;
+) -> (Vec<u32>, Vec<u64>) {
+    const N: usize = BASE_CHUNK_SIZE;
+    let mut in_layer = vec![0u32; 3 * N * N];
+    let mut hidden = vec![0u64; 3 * N * N];
 
-    let mut mask = vec![None; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
-
-    for j in 0..BASE_CHUNK_SIZE {
-        for i in 0..BASE_CHUNK_SIZE {
-            let mut pos = [0; 3];
-            pos[axis] = d;
-            pos[u] = i;
-            pos[v] = j;
-
-            let x = pos[0];
-            let y = pos[1];
-            let z = pos[2];
-
-            if !cell_in_layer(chunk.voxel_types[x][y][z], layer) {
-                continue;
-            }
-
-            // Calcular posición del vecino
-            let neighbor_x = x as i32 + if axis == 0 { direction } else { 0 };
-            let neighbor_y = y as i32 + if axis == 1 { direction } else { 0 };
-            let neighbor_z = z as i32 + if axis == 2 { direction } else { 0 };
-
-            let is_face_visible = if neighbor_x < 0
-                || neighbor_y < 0
-                || neighbor_z < 0
-                || neighbor_x >= BASE_CHUNK_SIZE as i32
-                || neighbor_y >= BASE_CHUNK_SIZE as i32
-                || neighbor_z >= BASE_CHUNK_SIZE as i32
-            {
-                // Fuera del chunk - verificar el borde copiado del vecino
-                match borders.get(axis, direction, i, j) {
-                    Some(neighbor) => !face_hidden_by(neighbor, layer),
-                    None => face_visible_against_unknown(layer),
+    for x in 0..N {
+        for y in 0..N {
+            for z in 0..N {
+                let vt = chunk.voxel_types[x][y][z];
+                let is_in_layer = cell_in_layer(vt, layer);
+                let is_hidden = face_hidden_by(vt, layer);
+                if !is_in_layer && !is_hidden {
+                    continue;
                 }
-            } else {
-                // Dentro del chunk
-                !face_hidden_by(
-                    chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
-                        [neighbor_z as usize],
-                    layer,
-                )
-            };
-
-            if is_face_visible {
-                mask[i + j * BASE_CHUNK_SIZE] = Some(chunk.voxel_types[x][y][z]);
+                let pos = [x, y, z];
+                for axis in 0..3 {
+                    let col = axis * N * N + pos[(axis + 1) % 3] + pos[(axis + 2) % 3] * N;
+                    if is_in_layer {
+                        in_layer[col] |= 1 << pos[axis];
+                    }
+                    if is_hidden {
+                        hidden[col] |= 1 << (pos[axis] + 1);
+                    }
+                }
             }
         }
     }
 
-    mask
+    for axis in 0..3 {
+        for direction in [-1, 1] {
+            let pad_bit = if direction < 0 { 1 } else { 1 << (N + 1) };
+            for j in 0..N {
+                for i in 0..N {
+                    let is_hidden = match borders.get(axis, direction, i, j) {
+                        Some(neighbor) => face_hidden_by(neighbor, layer),
+                        None => !face_visible_against_unknown(layer),
+                    };
+                    if is_hidden {
+                        hidden[axis * N * N + i + j * N] |= pad_bit;
+                    }
+                }
+            }
+        }
+    }
+
+    (in_layer, hidden)
 }
 
-/// Aplica greedy meshing a un slice usando la máscara
-fn greedy_mesh_slice(
-    mask: &[Option<VoxelType>],
+/// Reparte las caras visibles de (axis, direction) en los planos por material.
+fn collect_face_planes(
+    chunk: &BaseChunk,
+    in_layer: &[u32],
+    hidden: &[u64],
+    axis: usize,
+    direction: i32,
+    planes: &mut [[u32; BASE_CHUNK_SIZE]],
+    used: &mut [u32; BASE_CHUNK_SIZE],
+) {
+    const N: usize = BASE_CHUNK_SIZE;
+    let u = (axis + 1) % 3;
+    let v = (axis + 2) % 3;
+
+    for j in 0..N {
+        for i in 0..N {
+            let col = axis * N * N + i + j * N;
+            // Bit k de `neighbor_hidden` = la celda vecina de k (k+1 o k-1) tapa
+            // la cara. Con el desplazamiento de `hidden`, la celda k±1 vive en el
+            // bit k+1±1: >> 2 para +dir, >> 0 para -dir.
+            let neighbor_hidden = if direction > 0 {
+                (hidden[col] >> 2) as u32
+            } else {
+                hidden[col] as u32
+            };
+            let mut faces = in_layer[col] & !neighbor_hidden;
+
+            while faces != 0 {
+                let d = faces.trailing_zeros() as usize;
+                faces &= faces - 1;
+                let mut pos = [0; 3];
+                pos[axis] = d;
+                pos[u] = i;
+                pos[v] = j;
+                let t = chunk.voxel_types[pos[0]][pos[1]][pos[2]] as usize;
+                planes[d * VOXEL_TYPE_COUNT + t][j] |= 1 << i;
+                used[d] |= 1 << t;
+            }
+        }
+    }
+}
+
+/// Greedy sobre un plano binario de un solo material: toma el primer bit, lo
+/// extiende en U con `trailing_ones` y luego en V mientras las filas siguientes
+/// contengan el mismo tramo. Deja el plano vacío.
+fn greedy_mesh_plane(
+    plane: &mut [u32; BASE_CHUNK_SIZE],
+    voxel_type: VoxelType,
     chunk: &BaseChunk,
     column_top: &[i32],
     axis: usize,
@@ -345,18 +396,28 @@ fn greedy_mesh_slice(
 ) {
     let u = (axis + 1) % 3;
     let v = (axis + 2) % 3;
-
-    let mut processed = vec![false; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
+    // Las caras SUPERIORES de pasto (eje Y, +1) NO se fusionan: cada voxel
+    // recibe su propio tono baked en el vertex color. La madera SÍ se
+    // fusiona: su color base es uniforme por quad y la variación de tono la
+    // aplica el shader de paleta por fragmento (ver palette_extension.wgsl).
+    let is_grass_top = voxel_type == VoxelType::Grass && axis == 1 && direction == 1;
 
     for j in 0..BASE_CHUNK_SIZE {
-        for i in 0..BASE_CHUNK_SIZE {
-            let idx = i + j * BASE_CHUNK_SIZE;
+        while plane[j] != 0 {
+            let i = plane[j].trailing_zeros() as usize;
+            let width = if is_grass_top {
+                1
+            } else {
+                (plane[j] >> i).trailing_ones() as usize
+            };
+            let run = (u32::MAX >> (32 - width)) << i;
+            plane[j] &= !run;
 
-            if processed[idx] || mask[idx].is_none() {
-                continue;
+            let mut height = 1;
+            while !is_grass_top && j + height < BASE_CHUNK_SIZE && plane[j + height] & run == run {
+                plane[j + height] &= !run;
+                height += 1;
             }
-
-            let voxel_type = mask[idx].unwrap();
 
             // Pendiente de la columna del voxel (solo afecta al pasto).
             let slope = if voxel_type == VoxelType::Grass {
@@ -369,66 +430,12 @@ fn greedy_mesh_slice(
                 0.0
             };
 
-            // Las caras SUPERIORES de pasto (eje Y, +1) NO se fusionan: cada voxel
-            // recibe su propio tono baked en el vertex color. La madera SÍ se
-            // fusiona: su color base es uniforme por quad y la variación de tono la
-            // aplica el shader de paleta por fragmento (ver palette_extension.wgsl).
-            let is_grass_top = voxel_type == VoxelType::Grass && axis == 1 && direction == 1;
-            let (width, height) = if is_grass_top {
-                processed[idx] = true;
-                (1, 1)
-            } else {
-                find_max_rect(mask, &mut processed, i, j, voxel_type)
-            };
-
-            // Generar quad
             add_greedy_quad(
                 chunk, axis, d, i, j, width, height, direction, voxel_type, slope, positions,
                 normals, indices, colors,
             );
         }
     }
-}
-
-/// Encuentra el rectángulo máximo que comienza en (start_i, start_j)
-fn find_max_rect(
-    mask: &[Option<VoxelType>],
-    processed: &mut [bool],
-    start_i: usize,
-    start_j: usize,
-    voxel_type: VoxelType,
-) -> (usize, usize) {
-    // Expandir en dirección U (horizontal)
-    let mut width = 1;
-    while start_i + width < BASE_CHUNK_SIZE {
-        let idx = (start_i + width) + start_j * BASE_CHUNK_SIZE;
-        if processed[idx] || mask[idx] != Some(voxel_type) {
-            break;
-        }
-        width += 1;
-    }
-
-    // Expandir en dirección V (vertical)
-    let mut height = 1;
-    'outer: while start_j + height < BASE_CHUNK_SIZE {
-        for w in 0..width {
-            let idx = (start_i + w) + (start_j + height) * BASE_CHUNK_SIZE;
-            if processed[idx] || mask[idx] != Some(voxel_type) {
-                break 'outer;
-            }
-        }
-        height += 1;
-    }
-
-    // Marcar como procesados
-    for h in 0..height {
-        for w in 0..width {
-            let idx = (start_i + w) + (start_j + h) * BASE_CHUNK_SIZE;
-            processed[idx] = true;
-        }
-    }
-
-    (width, height)
 }
 
 /// Agrega un quad optimizado al mesh
@@ -602,5 +609,21 @@ mod tests {
         let mesh = greedy_mesh_with_borders(&chunk, &borders, MeshLayer::Opaque);
 
         assert_eq!(mesh.count_vertices(), 20);
+    }
+
+    #[test]
+    fn faces_of_different_materials_are_not_merged() {
+        let mut chunk = chunk_filled_with(VoxelType::Stone);
+        for y in 0..BASE_CHUNK_SIZE {
+            for z in 0..BASE_CHUNK_SIZE {
+                chunk.voxel_types[BASE_CHUNK_SIZE / 2][y][z] = VoxelType::Dirt;
+            }
+        }
+
+        // Una capa de tierra en x=16 parte en 3 (piedra | tierra | piedra) las 4
+        // caras que la cruzan (±Y, ±Z); ±X siguen enteras → 2 + 4×3 = 14 quads.
+        let mesh = greedy_mesh_basechunk_simple(&chunk);
+
+        assert_eq!(mesh.count_vertices(), 56);
     }
 }

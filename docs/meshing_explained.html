@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chunk Meshing Explained</title>
+<style>
+:root {
+  --bg: #f7f6f2; --card: #ffffff; --fg: #1d1d1b; --muted: #6b6a64; --border: #dedcd4;
+  --accent: #2f6fdb; --accent-soft: #e3ecfb; --good: #2e8b57; --bad: #c2410c;
+  --stone: #8a8f98; --dirt: #9a6b3f; --grass: #5aa845; --air: #eef0f3;
+  --hl: #ffd34d; --code-bg: #f0eee8;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15161a; --card: #1e2026; --fg: #e8e6e1; --muted: #9b9a94; --border: #33353d;
+    --accent: #6ea2ff; --accent-soft: #23314d; --good: #5cc98a; --bad: #ff8a50;
+    --stone: #7d838e; --dirt: #a7764a; --grass: #61b44b; --air: #2a2d34;
+    --hl: #c9a020; --code-bg: #262830;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15161a; --card: #1e2026; --fg: #e8e6e1; --muted: #9b9a94; --border: #33353d;
+  --accent: #6ea2ff; --accent-soft: #23314d; --good: #5cc98a; --bad: #ff8a50;
+  --stone: #7d838e; --dirt: #a7764a; --grass: #61b44b; --air: #2a2d34;
+  --hl: #c9a020; --code-bg: #262830;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 920px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 2rem; margin: 0 0 4px; }
+h2 { margin: 48px 0 8px; font-size: 1.4rem; border-top: 1px solid var(--border); padding-top: 28px; }
+h3 { margin: 24px 0 6px; font-size: 1.05rem; }
+p, li { color: var(--fg); }
+.lede { color: var(--muted); font-size: 1.05rem; margin-top: 0; }
+code { font: 0.88em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre code { background: none; padding: 0; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin: 16px 0; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 720px) { .two { grid-template-columns: 1fr; } }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.tag.old { background: color-mix(in srgb, var(--bad) 15%, transparent); color: var(--bad); }
+.tag.new { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+button {
+  font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--card); color: var(--fg);
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+.muted { color: var(--muted); font-size: 14px; }
+
+/* Thread lanes */
+.lanes { display: grid; gap: 6px; font-size: 14px; }
+.lane { display: grid; grid-template-columns: 96px 1fr; gap: 8px; align-items: center; }
+.lane-name { color: var(--muted); font-weight: 600; font-size: 13px; }
+.blocks { display: flex; gap: 4px; flex-wrap: wrap; }
+.blk { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); }
+.blk.heavy { background: color-mix(in srgb, var(--bad) 18%, transparent); border-color: var(--bad); }
+.blk.light { background: color-mix(in srgb, var(--good) 15%, transparent); border-color: var(--good); }
+.blk.gap { visibility: hidden; }
+
+/* Stats */
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 13px; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Column lab */
+.bits { display: grid; grid-template-columns: 110px repeat(10, 34px); gap: 3px; align-items: center; overflow-x: auto; }
+.bits .lbl { font: 12.5px ui-monospace, Menlo, monospace; color: var(--muted); padding-right: 6px; }
+.bit { height: 30px; display: grid; place-items: center; border-radius: 5px; font: 13px ui-monospace, Menlo, monospace; border: 1px solid var(--border); background: var(--bg); }
+.bit.one { background: var(--accent-soft); color: var(--accent); font-weight: 700; border-color: var(--accent); }
+.bit.pad { border-style: dashed; }
+.bit.face { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good); border-color: var(--good); font-weight: 700; }
+.bit.empty { visibility: hidden; }
+.voxel { height: 34px; border-radius: 5px; cursor: pointer; border: 1px solid var(--border); display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
+.voxel.stone { background: var(--stone); }
+.voxel.air { background: var(--air); color: var(--muted); }
+.voxel.pad { border-style: dashed; font-size: 10px; font-weight: 600; }
+
+/* Greedy lab */
+.palette { display: flex; gap: 6px; flex-wrap: wrap; }
+.swatch { display: flex; gap: 6px; align-items: center; padding: 4px 10px 4px 4px; }
+.swatch i { width: 18px; height: 18px; border-radius: 4px; display: inline-block; border: 1px solid var(--border); }
+.swatch.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.gridwrap { position: relative; width: max-content; margin: 8px 0; }
+.grid { display: grid; grid-template-columns: repeat(8, 32px); gap: 2px; }
+.cell { width: 32px; height: 32px; border-radius: 4px; cursor: pointer; border: none; padding: 0; }
+.cell.processed { outline: 2px solid var(--fg); outline-offset: -2px; opacity: .55; }
+.quad { position: absolute; border: 2.5px solid var(--fg); border-radius: 5px; pointer-events: none; display: grid; place-items: center; font: 700 12px ui-monospace, monospace; color: var(--fg); background: color-mix(in srgb, var(--bg) 25%, transparent); }
+.quad.current { border-color: var(--hl); box-shadow: 0 0 0 3px var(--hl); }
+.planes { font: 13px ui-monospace, Menlo, monospace; }
+.planes .prow { display: flex; gap: 2px; align-items: center; }
+.planes .pj { width: 44px; color: var(--muted); }
+.planes .pb { width: 18px; text-align: center; border-radius: 3px; }
+.planes .pb.run { background: var(--hl); color: #000; font-weight: 700; }
+.planes .pb.one { color: var(--accent); font-weight: 700; }
+.planes .pb.zero { color: var(--muted); opacity: .6; }
+.log { font: 13px ui-monospace, Menlo, monospace; color: var(--muted); min-height: 3.2em; }
+.verdict { font-weight: 600; }
+.verdict.ok { color: var(--good); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>How a chunk becomes a mesh</h1>
+<p class="lede">The old process, the two changes made to it, and why the new one is about 11× faster while producing exactly the same triangles. Code: <code>src/voxel/greedy_meshing.rs</code> and <code>src/voxel/chunk_loading.rs</code>.</p>
+
+<div class="card">
+  <strong>The goal of meshing.</strong> A chunk is 32×32×32 voxels. The GPU doesn't draw voxels; it draws triangles. So for every chunk we must answer:
+  <ol>
+    <li><b>Which faces are visible?</b> A voxel face is only drawn if the neighbor on that side doesn't cover it (stone next to stone = hidden).</li>
+    <li><b>How few rectangles can cover those faces?</b> "Greedy meshing" merges neighbouring faces of the same material into one big rectangle (a <em>quad</em> = 2 triangles).</li>
+  </ol>
+  Both versions answer the same two questions. They only differ in <em>where</em> they run and <em>how</em> they compute it.
+</div>
+
+<!-- ============================================================ -->
+<h2>1. Where the work runs (step 1)</h2>
+<p>Every chunk needs up to three meshes: <b>collider</b> (physics), <b>opaque</b> (what you see), <b>water</b> (translucent). The collider was already built on a background thread. The visible meshes were not, because they need to look at <em>neighbouring</em> chunks, and neighbours live in the ECS (<code>ChunkMap</code> + <code>Query&lt;&amp;BaseChunk&gt;</code>), which only the main thread can read.</p>
+
+<div class="two">
+  <div class="card">
+    <span class="tag old">Before</span>
+    <div class="lanes" style="margin-top:12px">
+      <div class="lane"><span class="lane-name">Worker</span><div class="blocks"><span class="blk">generate voxels</span><span class="blk">collider</span></div></div>
+      <div class="lane"><span class="lane-name">Main thread</span><div class="blocks"><span class="blk gap">generate voxels</span><span class="blk heavy">opaque mesh</span><span class="blk heavy">water mesh</span></div></div>
+    </div>
+    <p class="muted">Up to 24 chunks/frame did their full render meshing on the main thread → frame-time spikes while walking.</p>
+  </div>
+  <div class="card">
+    <span class="tag new">After</span>
+    <div class="lanes" style="margin-top:12px">
+      <div class="lane"><span class="lane-name">Worker</span><div class="blocks"><span class="blk">generate voxels</span><span class="blk">collider</span><span class="blk gap">copy</span><span class="blk">opaque + water mesh</span></div></div>
+      <div class="lane"><span class="lane-name">Main thread</span><div class="blocks"><span class="blk gap">generate voxels collider</span><span class="blk light">copy borders</span><span class="blk gap">opaque + water mesh</span><span class="blk light">insert</span></div></div>
+    </div>
+    <p class="muted">The main thread only copies 6 thin slices and later registers the finished mesh.</p>
+  </div>
+</div>
+
+<h3>The trick: copy just the border, not the whole neighbour</h3>
+<p>To decide if a face on the edge of the chunk is visible, the mesher only ever looks <b>one voxel</b> past the edge. So instead of giving the background thread access to the whole world, we copy the single 32×32 layer of each of the 6 neighbours that touches our chunk. That's <code>NeighborBorders</code>:</p>
+<pre><code>pub struct NeighborBorders([Option&lt;Box&lt;[VoxelType]&gt;&gt;; 6]);
+//                          ^ one slot per face: -X +X -Y +Y -Z +Z
+//                            None = neighbour not loaded yet ("unknown")</code></pre>
+<p><code>NeighborBorders::gather</code> does 6 hash-map lookups (one per neighbour) and copies 6 KB. The old code did a hash-map lookup + ECS query <em>for every border cell</em>: about 6 × 1024 lookups per mesh.</p>
+
+<p>The flow in <code>chunk_loading.rs</code> is now:</p>
+<ol>
+  <li><code>complete_chunk_generation_system</code>: voxels + collider are ready → gather borders, clone the chunk, spawn a <code>ChunkMeshTask</code>. Insert <code>BaseChunk</code> <em>immediately</em> so chunks finishing later can see this one as a neighbour.</li>
+  <li><code>complete_chunk_mesh_system</code>: when the task is done → insert <code>Mesh3d</code>, material, water child.</li>
+</ol>
+<div class="card">
+  <b>Three side effects this needed handling for:</b>
+  <ul>
+    <li><b>No holes:</b> the far LOD backdrop is only removed when the real chunk has a mesh (<code>Without&lt;ChunkMeshTask&gt;</code> in <code>retire_covered_lods_system</code>), not merely when it has voxels.</li>
+    <li><b>No stale mesh:</b> if you break a block in a chunk whose first mesh is still in flight, the remesh waits (<code>Without&lt;ChunkMeshTask&gt;</code> in <code>remesh_dirty_chunks_system</code>). Otherwise the older in-flight mesh would land afterwards and undo your edit.</li>
+    <li><b>Same neighbour semantics:</b> <code>None</code> in a border slot behaves exactly like "neighbour not loaded" did before: opaque draws the face, water skips it.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. The old mesher: one cell at a time</h2>
+<p>For each axis (X, Y, Z), each depth <code>d</code> (0–31), and each direction (+, −), it built a <b>slice</b>: 3 × 32 × 2 = <b>192 slices</b>. For each slice:</p>
+<pre><code>// generate_slice_mask: 1024 cells, each one checked separately
+for j in 0..32 { for i in 0..32 {
+    let me       = chunk.voxel_types[x][y][z];
+    let neighbor = chunk.voxel_types[x+dx][y+dy][z+dz]; // or a cross-chunk lookup
+    mask[i + j*32] = if in_layer(me) &amp;&amp; !hides(neighbor) { Some(me) } else { None };
+}}
+// greedy_mesh_slice: walk the mask, grow rectangles, mark a `processed` Vec&lt;bool&gt;</code></pre>
+<p>That's ~197,000 cell checks, 384 heap allocations (a mask + a processed vec per slice), and ~6,000 cross-chunk lookups per mesh, even when most of the chunk is solid stone or empty air.</p>
+
+<!-- ============================================================ -->
+<h2>3. The new mesher: 32 voxels at once (step 2)</h2>
+<p>A chunk is exactly 32 wide, and a <code>u32</code> has exactly 32 bits. So a whole <b>column</b> of voxels along one axis fits in one integer: bit <code>k</code> = 1 means "cell <code>k</code> is solid". Comparing a column with its neighbour then becomes a single shift + AND for all 32 cells at once.</p>
+
+<h3>3a. Two bitsets per column</h3>
+<p><code>build_axis_columns</code> reads the chunk once and fills, for each of the 3 axes and each of the 32×32 columns:</p>
+<ul>
+  <li><code>in_layer: u32</code>: cell belongs to the mesh we're building (e.g. solid, not water).</li>
+  <li><code>hidden: u64</code>: cell <em>covers</em> a neighbouring face. It holds <b>34 bits</b>: the 32 cells shifted up by one, plus the neighbour chunk's border cell at bit 0 (the −side) and bit 33 (the +side). This padding is why the chunk edge needs no special case.</li>
+</ul>
+<p>Then the visible faces for a whole column:</p>
+<pre><code>// cell k's neighbour at k+1 lives at bit (k+1)+1 → shift by 2
+faces_plus  = in_layer &amp; !((hidden &gt;&gt; 2) as u32);
+// cell k's neighbour at k-1 lives at bit (k-1)+1 = k → no shift
+faces_minus = in_layer &amp; !(hidden as u32);</code></pre>
+
+<div class="card">
+  <span class="tag">Try it: one column (8 cells instead of 32)</span>
+  <p class="muted">Click cells to toggle stone/air. Click the dashed padding cells to toggle what the <em>neighbouring chunk</em> has there. Bit 0 is drawn on the <b>left</b>, so <code>&gt;&gt;</code> moves bits leftwards.</p>
+  <div class="bits" id="colLab"></div>
+  <p class="muted" id="colExplain"></p>
+</div>
+
+<h3>3b. Split faces by material into binary planes</h3>
+<p>The bit trick tells us <em>that</em> a face exists, not which material it is, and we must never merge stone with dirt (different colour). So <code>collect_face_planes</code> walks each set bit (<code>trailing_zeros</code> jumps straight to it; empty air costs nothing) and drops it into a <b>plane</b> for its (depth, material): 32 rows of <code>u32</code>, where row <code>j</code>, bit <code>i</code> = "there is a face at (i, j)". A small <code>used</code> bitmask remembers which planes got anything, so empty ones are skipped.</p>
+
+<h3>3c. Greedy merge with bit operations</h3>
+<p><code>greedy_mesh_plane</code> works on one material's plane:</p>
+<pre><code>let i     = plane[j].trailing_zeros();          // first face in the row
+let width = (plane[j] &gt;&gt; i).trailing_ones();    // how many in a row
+let run   = (u32::MAX &gt;&gt; (32 - width)) &lt;&lt; i;     // bitmask of that run
+plane[j] &amp;= !run;                               // consume it
+while plane[j + h] &amp; run == run {               // next row has the same run?
+    plane[j + h] &amp;= !run; h += 1;               //   → grow the quad downwards
+}</code></pre>
+<p>Clearing bits replaces the old <code>processed</code> array: a consumed face simply isn't in the plane any more. The plane ends empty, so it's reused for the next axis without clearing.</p>
+
+<div class="card">
+  <span class="tag">Try it: old vs new greedy on the same slice</span>
+  <p class="muted">Paint the 8×8 slice, then step through both. They visit faces in a different order (old: cell by cell, all materials mixed; new: one material plane at a time) but always produce the same set of rectangles.</p>
+  <div class="row palette" id="palette"></div>
+  <div class="two">
+    <div>
+      <div class="row"><span class="tag old">Old</span><button id="oldStep">Step</button><button id="oldAll">Run all</button></div>
+      <div class="gridwrap"><div class="grid" id="oldGrid"></div><div id="oldQuads"></div></div>
+      <div class="log" id="oldLog"></div>
+    </div>
+    <div>
+      <div class="row"><span class="tag new">New</span><button id="newStep">Step</button><button id="newAll">Run all</button></div>
+      <div class="gridwrap"><div class="grid" id="newGrid"></div><div id="newQuads"></div></div>
+      <div class="planes" id="newPlane"></div>
+      <div class="log" id="newLog"></div>
+    </div>
+  </div>
+  <div class="row"><button id="resetLab">Reset steps</button><span class="verdict" id="verdict"></span></div>
+</div>
+
+<!-- ============================================================ -->
+<h2>4. What did <em>not</em> change</h2>
+<ul>
+  <li><code>add_greedy_quad</code>: vertex positions, normals, per-quad colour (<code>voxel_color</code> sampled at the cell centre), face shading, winding.</li>
+  <li>Layer rules: <code>cell_in_layer</code>, <code>face_hidden_by</code> (water is hidden by anything non-air), <code>face_visible_against_unknown</code>.</li>
+  <li>Grass tops (Y+) are still never merged: each gets its own 1×1 quad for its own baked colour.</li>
+  <li>The quad scan order inside one material is the same (row by row, grow along U first, then V), which is why the rectangles come out identical.</li>
+</ul>
+
+<h2>5. How it was verified</h2>
+<p>Before deleting the old mesher, a temporary test ran <b>both</b> on real generated chunks and compared every quad bit-for-bit (positions, normals, colours, index winding):</p>
+<table>
+  <tr><th>Check</th><th>Result</th></tr>
+  <tr><td>Chunks compared</td><td class="num">144 (Normal, Desert, Ice, Mangrove × 3 locations × 6 heights, with and without neighbour borders)</td></tr>
+  <tr><td>Layers per chunk</td><td class="num">3 (opaque, water, collider)</td></tr>
+  <tr><td>Quads compared</td><td class="num">61,979, all identical</td></tr>
+  <tr><td>Time per mesh (release)</td><td class="num"><span style="color:var(--bad)">692 µs</span> → <span style="color:var(--good)">60 µs</span> (~11.5×)</td></tr>
+</table>
+<p class="muted">The remaining 60 µs is mostly quad output (colour noise per quad), not face finding. If meshing ever shows up in a profile again, that's where to look next, along with the unmerged grass tops, which are the largest source of quads on flat grassland.</p>
+
+<table style="margin-top:16px">
+  <tr><th>Per mesh</th><th>Old</th><th>New</th></tr>
+  <tr><td>Cross-chunk lookups</td><td class="num">~6,144 (per border cell)</td><td class="num">6 (per neighbour, at gather time)</td></tr>
+  <tr><td>Face checks</td><td class="num">~197,000 single cells</td><td class="num">~6,000 column ops (32 cells each)</td></tr>
+  <tr><td>Heap allocations</td><td class="num">384 small Vecs</td><td class="num">3 buffers</td></tr>
+  <tr><td>Thread</td><td class="num">main</td><td class="num">background (initial load)</td></tr>
+</table>
+
+</main>
+
+<script>
+// ---------------- Column lab ----------------
+(() => {
+  const N = 8;
+  const cells = [1, 1, 0, 1, 1, 1, 0, 0];   // 1 = stone
+  let padL = 1, padR = 0;                     // neighbour chunk border cells
+  const el = document.getElementById('colLab');
+  const explain = document.getElementById('colExplain');
+
+  const bitCell = (v, cls = '') => `<div class="bit ${v ? 'one' : ''} ${cls}">${v}</div>`;
+  const empty = '<div class="bit empty"></div>';
+  const faceCell = (v, sym) => `<div class="bit ${v ? 'face' : ''}">${v ? sym : 0}</div>`;
+
+  function render() {
+    // hidden has 10 bits: [padL, c0..c7, padR]
+    const hidden = [padL, ...cells, padR];
+    const inLayer = cells;
+    const shifted2 = cells.map((_, k) => hidden[k + 2]);   // neighbour at k+1
+    const low = cells.map((_, k) => hidden[k]);            // neighbour at k-1
+    const fPlus = cells.map((c, k) => c & (1 - shifted2[k]));
+    const fMinus = cells.map((c, k) => c & (1 - low[k]));
+
+    let h = '<span class="lbl">voxels</span>';
+    h += `<div class="voxel pad ${padL ? 'stone' : 'air'}" data-pad="L">nbr</div>`;
+    cells.forEach((c, k) => h += `<div class="voxel ${c ? 'stone' : 'air'}" data-k="${k}">${k}</div>`);
+    h += `<div class="voxel pad ${padR ? 'stone' : 'air'}" data-pad="R">nbr</div>`;
+
+    h += '<span class="lbl">in_layer</span>' + empty + inLayer.map(b => bitCell(b)).join('') + empty;
+    h += '<span class="lbl">hidden (34→10)</span>' + hidden.map((b, i) => bitCell(b, i === 0 || i === N + 1 ? 'pad' : '')).join('');
+    h += '<span class="lbl">hidden &gt;&gt; 2</span>' + empty + shifted2.map(b => bitCell(b)).join('') + empty;
+    h += '<span class="lbl">faces +</span>' + empty + fPlus.map(b => faceCell(b, '▶')).join('') + empty;
+    h += '<span class="lbl">hidden (low)</span>' + empty + low.map(b => bitCell(b)).join('') + empty;
+    h += '<span class="lbl">faces −</span>' + empty + fMinus.map(b => faceCell(b, '◀')).join('') + empty;
+    el.innerHTML = h;
+
+    const nPlus = fPlus.reduce((a, b) => a + b, 0), nMinus = fMinus.reduce((a, b) => a + b, 0);
+    explain.innerHTML = `Row <code>hidden &gt;&gt; 2</code> puts, under each cell, whether the cell to its <b>right</b> covers it. ` +
+      `<code>faces + = in_layer &amp; !that</code> → ${nPlus} visible +face(s). Same for the left side with no shift → ${nMinus} −face(s). ` +
+      `In the real code each row is one 64-bit integer, so this is ~4 instructions for 32 cells.`;
+  }
+
+  el.addEventListener('click', e => {
+    const t = e.target.closest('.voxel');
+    if (!t) return;
+    if (t.dataset.pad === 'L') padL ^= 1;
+    else if (t.dataset.pad === 'R') padR ^= 1;
+    else cells[+t.dataset.k] ^= 1;
+    render();
+  });
+  render();
+})();
+
+// ---------------- Greedy lab ----------------
+(() => {
+  const N = 8, CELL = 32, GAP = 2;
+  const MATS = [
+    { id: 0, name: 'air', color: 'var(--air)' },
+    { id: 1, name: 'stone', color: 'var(--stone)' },
+    { id: 2, name: 'dirt', color: 'var(--dirt)' },
+    { id: 3, name: 'grass', color: 'var(--grass)' },
+  ];
+  const START = [
+    '11110022',
+    '11110022',
+    '11333322',
+    '11333300',
+    '22333300',
+    '22000011',
+    '22011111',
+    '00011111',
+  ];
+  const grid = START.map(r => [...r].map(Number));
+  let brush = 1;
+
+  const pal = document.getElementById('palette');
+  pal.innerHTML = MATS.map(m => `<button class="swatch ${m.id === brush ? 'active' : ''}" data-m="${m.id}"><i style="background:${m.color}"></i>${m.name}</button>`).join('');
+  pal.addEventListener('click', e => {
+    const b = e.target.closest('.swatch'); if (!b) return;
+    brush = +b.dataset.m;
+    pal.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', +s.dataset.m === brush));
+  });
+
+  function* oldGreedy() {
+    const processed = grid.map(r => r.map(() => false));
+    let visits = 0;
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      visits++;
+      if (processed[j][i] || !grid[j][i]) continue;
+      const t = grid[j][i];
+      let w = 1;
+      while (i + w < N && !processed[j][i + w] && grid[j][i + w] === t) { w++; visits++; }
+      let h = 1;
+      outer: while (j + h < N) {
+        for (let x = 0; x < w; x++) { visits++; if (processed[j + h][i + x] || grid[j + h][i + x] !== t) break outer; }
+        h++;
+      }
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) processed[j + y][i + x] = true;
+      yield { i, j, w, h, t, processed: processed.map(r => r.slice()), visits };
+    }
+  }
+
+  const tz = v => { let n = 0; while (n < 32 && !((v >>> n) & 1)) n++; return n; };
+  const to = v => { let n = 0; while ((v >>> n) & 1) n++; return n; };
+
+  function* newGreedy() {
+    const types = [...new Set(grid.flat().filter(t => t))].sort();
+    let ops = 0;
+    for (const t of types) {
+      const plane = grid.map(r => r.reduce((b, c, i) => c === t ? b | (1 << i) : b, 0));
+      for (let j = 0; j < N; j++) {
+        while (plane[j]) {
+          const before = plane.slice();
+          const i = tz(plane[j]);
+          const w = to(plane[j] >>> i);
+          const run = (((1 << w) - 1) << i) >>> 0;
+          plane[j] &= ~run; ops += 4;
+          let h = 1;
+          while (j + h < N && (plane[j + h] & run) === run) { plane[j + h] &= ~run; h++; ops += 2; }
+          ops++;
+          yield { i, j, w, h, t, run, row: j, plane: before, ops };
+        }
+      }
+    }
+  }
+
+  const els = {
+    old: { grid: document.getElementById('oldGrid'), quads: document.getElementById('oldQuads'), log: document.getElementById('oldLog') },
+    new: { grid: document.getElementById('newGrid'), quads: document.getElementById('newQuads'), log: document.getElementById('newLog') },
+  };
+  const planeEl = document.getElementById('newPlane');
+  const verdict = document.getElementById('verdict');
+  let state;
+
+  function reset() {
+    state = {
+      old: { gen: oldGreedy(), quads: [], done: false, last: null },
+      new: { gen: newGreedy(), quads: [], done: false, last: null },
+    };
+    render();
+  }
+
+  function step(which) {
+    const s = state[which];
+    if (s.done) return;
+    const r = s.gen.next();
+    if (r.done) { s.done = true; } else { s.quads.push(r.value); s.last = r.value; }
+    render();
+  }
+  function runAll(which) { while (!state[which].done) step(which); }
+
+  const matName = t => MATS[t].name;
+
+  function renderGrid(which) {
+    const s = state[which], e = els[which];
+    const processed = which === 'old' && s.last ? s.last.processed : null;
+    e.grid.innerHTML = grid.map((r, j) => r.map((c, i) =>
+      `<button class="cell ${processed && processed[j][i] ? 'processed' : ''}" data-i="${i}" data-j="${j}" style="background:${MATS[c].color}" aria-label="cell ${i},${j}"></button>`
+    ).join('')).join('');
+    e.quads.innerHTML = s.quads.map((q, n) => {
+      const cur = q === s.last && !s.done ? 'current' : '';
+      const x = q.i * (CELL + GAP), y = q.j * (CELL + GAP);
+      const w = q.w * CELL + (q.w - 1) * GAP, h = q.h * CELL + (q.h - 1) * GAP;
+      return `<div class="quad ${cur}" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px">${n + 1}</div>`;
+    }).join('');
+  }
+
+  function render() {
+    renderGrid('old'); renderGrid('new');
+    const o = state.old, n = state.new;
+    els.old.log.innerHTML = o.last
+      ? `quad ${o.quads.length}: ${matName(o.last.t)} at (${o.last.i},${o.last.j}) ${o.last.w}×${o.last.h}<br>cells checked so far: ${o.last.visits}${o.done ? ' · done' : ''}`
+      : 'Scans cell by cell; dark-outlined cells = processed.';
+    els.new.log.innerHTML = n.last
+      ? `quad ${n.quads.length}: ${matName(n.last.t)} at (${n.last.i},${n.last.j}) ${n.last.w}×${n.last.h}<br>bit ops so far: ${n.last.ops}${n.done ? ' · done' : ''}`
+      : 'Builds one bit plane per material, then merges with bit ops.';
+
+    if (n.last && !n.done) {
+      const q = n.last;
+      planeEl.innerHTML = `<div class="muted" style="margin:6px 0">${matName(q.t)} plane (bit 0 on the left), before this step. Highlight = <code>run</code>:</div>` +
+        q.plane.map((row, j) => {
+          let bits = '';
+          for (let i = 0; i < N; i++) {
+            const on = (row >>> i) & 1;
+            const inRun = j >= q.j && j < q.j + q.h && i >= q.i && i < q.i + q.w;
+            bits += `<span class="pb ${inRun ? 'run' : on ? 'one' : 'zero'}">${on}</span>`;
+          }
+          return `<div class="prow"><span class="pj">row ${j}</span>${bits}</div>`;
+        }).join('');
+    } else {
+      planeEl.innerHTML = '';
+    }
+
+    if (o.done && n.done) {
+      const key = q => `${q.t}:${q.i},${q.j},${q.w}x${q.h}`;
+      const a = o.quads.map(key).sort().join('|'), b = n.quads.map(key).sort().join('|');
+      verdict.className = 'verdict' + (a === b ? ' ok' : '');
+      verdict.textContent = a === b
+        ? `Same ${o.quads.length} rectangles from both: ${o.last.visits} cell checks vs ${n.last.ops} bit ops.`
+        : 'Different results (this should never happen).';
+    } else {
+      verdict.textContent = '';
+    }
+  }
+
+  function paint(e) {
+    const c = e.target.closest('.cell'); if (!c) return;
+    grid[+c.dataset.j][+c.dataset.i] = brush;
+    reset();
+  }
+  els.old.grid.addEventListener('click', paint);
+  els.new.grid.addEventListener('click', paint);
+  document.getElementById('oldStep').onclick = () => step('old');
+  document.getElementById('newStep').onclick = () => step('new');
+  document.getElementById('oldAll').onclick = () => runAll('old');
+  document.getElementById('newAll').onclick = () => runAll('new');
+  document.getElementById('resetLab').onclick = reset;
+  reset();
+})();
+</script>
+</body>
+</html>
