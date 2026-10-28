@@ -8,8 +8,9 @@ use crate::{
     physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
-        BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, PaletteExtension,
-        SpatialHashGrid, TerrainGenerator, VoxelDiffs, mesh_lod_chunk,
+        BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, MeshLayer,
+        NeighborBorders, PaletteExtension, SpatialHashGrid, TerrainGenerator, VoxelDiffs,
+        greedy_mesh_with_borders, mesh_lod_chunk,
     },
 };
 use bevy::{
@@ -228,6 +229,11 @@ pub struct ChunkGenerationTask {
     pub chunk_pos: IVec3,
 }
 
+/// Mallado de render (opaco + agua opcional) corriendo en un hilo de fondo. El
+/// chunk ya tiene `BaseChunk` y collider; le falta el `Mesh3d`.
+#[derive(Component)]
+pub struct ChunkMeshTask(Task<(Mesh, Option<Mesh>)>);
+
 /// Destruye el mundo y reinicia los recursos de chunks.
 ///
 /// Se ejecuta al volver al menú principal (desde InGame o Paused) para que una
@@ -437,7 +443,7 @@ pub fn load_chunks_system(
                     let chunk_diffs = voxel_diffs.chunks.get(&chunk_pos).cloned();
 
                     let task = thread_pool.spawn(async move {
-                        // El mallado de RENDER (con vecinos) se hace en
+                        // El mallado de RENDER (con vecinos) se lanza desde
                         // complete_chunk_generation_system. Aquí, en el hilo de fondo,
                         // construimos el COLLIDER con un mesh simple solo-colisionable
                         // (sin vecinos) → saca el trabajo caro del hilo principal.
@@ -523,8 +529,6 @@ fn spawn_column_lod(
 /// Sistema que completa la generación de chunks cuando las tareas terminan
 pub fn complete_chunk_generation_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    chunk_materials: Res<ChunkMaterials>,
     mut load_queue: ResMut<ChunkLoadQueue>,
     mut task_query: Query<(Entity, &mut ChunkGenerationTask)>,
     chunk_map: Res<ChunkMap>,
@@ -532,8 +536,6 @@ pub fn complete_chunk_generation_system(
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
 ) {
-    use crate::voxel::{greedy_mesh_basechunk, greedy_mesh_basechunk_water};
-
     // Posición del jugador en chunks: para integrar primero los huecos cercanos.
     let player_chunk = player_query
         .single()
@@ -569,41 +571,32 @@ pub fn complete_chunk_generation_system(
         if let Some((_chunk_pos, base_chunk, collider)) =
             future::block_on(future::poll_once(&mut task.task))
         {
-            // Solo el mesh de RENDER (con vecinos) se hace aquí; el collider ya
-            // vino construido desde el hilo de fondo.
-            let mesh = greedy_mesh_basechunk(&base_chunk, &chunk_map, &base_chunks);
+            // El mallado de RENDER necesita los vecinos, que solo se conocen ahora.
+            // Se copia su capa de contacto (barato) y el mallado en sí va a otra
+            // tarea de fondo; `complete_chunk_mesh_system` lo recoge.
+            let borders = NeighborBorders::gather(base_chunk.position, &chunk_map, &base_chunks);
+            let chunk_copy = base_chunk.clone();
+            let mesh_task = AsyncComputeTaskPool::get().spawn(async move {
+                let mesh = greedy_mesh_with_borders(&chunk_copy, &borders, MeshLayer::Opaque);
+                // El pase del agua solo se paga si el chunk TIENE agua: en un bioma
+                // seco devolvería una malla vacía tras todo el trabajo.
+                let water = chunk_copy
+                    .has_water()
+                    .then(|| greedy_mesh_with_borders(&chunk_copy, &borders, MeshLayer::Water))
+                    .filter(|m| m.count_vertices() > 0);
+                (mesh, water)
+            });
 
-            // Malla translúcida del agua. El pase completo (3 ejes × 32 slices,
-            // con consulta de vecinos) solo se paga si el chunk TIENE agua: en un
-            // bioma seco devolvería una malla vacía tras todo el trabajo, y esto
-            // corre para hasta MAX_CHUNK_COMPLETIONS_PER_FRAME chunks por frame
-            // en el hilo principal.
-            let water_handle = base_chunk
-                .has_water()
-                .then(|| greedy_mesh_basechunk_water(&base_chunk, &chunk_map, &base_chunks))
-                .filter(|m| m.count_vertices() > 0)
-                .map(|m| meshes.add(m));
-
+            // El BaseChunk entra YA (no al terminar el mesh) para que los chunks
+            // que se integren después lo vean como vecino.
             let mut ec = commands.entity(entity);
             ec.insert((
-                Mesh3d(meshes.add(mesh)),
-                MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
                 Transform::default(),
                 base_chunk,
-                ChunkLOD::Ultra,
+                ChunkMeshTask(mesh_task),
             ));
             if let Some(collider) = collider {
                 ec.insert((RigidBody::Fixed, collider));
-            }
-            // El agua es una entidad hija (mismo espacio-mundo): se despawnea en
-            // cascada con el chunk al descargarse. Sin collider: se atraviesa.
-            if let Some(water_handle) = water_handle {
-                ec.with_child((
-                    WaterMesh,
-                    Mesh3d(water_handle),
-                    MeshMaterial3d(chunk_materials.water_handle()),
-                    Transform::default(),
-                ));
             }
             ec.remove::<ChunkGenerationTask>();
 
@@ -621,6 +614,39 @@ pub fn complete_chunk_generation_system(
             "Chunks: {} loaded, {} generating, {} in queue",
             load_queue.total_loaded, pending, in_queue
         );
+    }
+}
+
+/// Inserta el mesh de render (y el agua) de los chunks cuya tarea de mallado
+/// terminó. En el hilo principal solo queda registrar los assets.
+pub fn complete_chunk_mesh_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    chunk_materials: Res<ChunkMaterials>,
+    mut task_query: Query<(Entity, &mut ChunkMeshTask)>,
+) {
+    for (entity, mut task) in &mut task_query {
+        let Some((mesh, water)) = future::block_on(future::poll_once(&mut task.0)) else {
+            continue;
+        };
+
+        let mut ec = commands.entity(entity);
+        ec.insert((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(chunk_materials.real_handle(ChunkLOD::Ultra)),
+            ChunkLOD::Ultra,
+        ));
+        // El agua es una entidad hija (mismo espacio-mundo): se despawnea en
+        // cascada con el chunk al descargarse. Sin collider: se atraviesa.
+        if let Some(water) = water {
+            ec.with_child((
+                WaterMesh,
+                Mesh3d(meshes.add(water)),
+                MeshMaterial3d(chunk_materials.water_handle()),
+                Transform::default(),
+            ));
+        }
+        ec.remove::<ChunkMeshTask>();
     }
 }
 
@@ -775,7 +801,7 @@ pub fn retire_covered_lods_system(
     mut commands: Commands,
     mut column_lods: ResMut<ColumnLods>,
     chunk_map: Res<ChunkMap>,
-    base_chunks: Query<&BaseChunk>,
+    meshed_chunks: Query<(), (With<BaseChunk>, Without<ChunkMeshTask>)>,
     player_query: Query<&Transform, With<Player>>,
     world_seed: Res<WorldSeed>,
     world_kind: Res<WorldKind>,
@@ -819,7 +845,7 @@ pub fn retire_covered_lods_system(
         let covered = chunk_map
             .chunks
             .get(&surface_pos)
-            .is_some_and(|&e| base_chunks.get(e).is_ok());
+            .is_some_and(|&e| meshed_chunks.contains(e));
         if covered {
             commands.entity(lod_entity).despawn();
             retired.push(column);

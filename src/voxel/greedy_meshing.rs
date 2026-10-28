@@ -60,14 +60,14 @@ fn slope_at(column_top: &[i32], x: usize, z: usize) -> f32 {
 /// Mesh simple (sin vecinos), para RENDER inicial. Usado al arrancar cuando no
 /// todos los chunks están cargados.
 pub fn greedy_mesh_basechunk_simple(chunk: &BaseChunk) -> Mesh {
-    mesh_simple_inner(chunk, MeshLayer::Opaque)
+    greedy_mesh_with_borders(chunk, &NeighborBorders::default(), MeshLayer::Opaque)
 }
 
 /// Mesh simple del AGUA (sin vecinos), para los chunks del arranque. Igual que
 /// `greedy_mesh_basechunk_water` pero sin consultar el `ChunkMap`, que en `setup`
 /// todavía no existe.
 pub fn greedy_mesh_basechunk_water_simple(chunk: &BaseChunk) -> Mesh {
-    mesh_simple_inner(chunk, MeshLayer::Water)
+    greedy_mesh_with_borders(chunk, &NeighborBorders::default(), MeshLayer::Water)
 }
 
 /// Mesh simple SOLO-COLISIONABLE (sin vecinos, ignora el follaje). Se usa para
@@ -75,118 +75,67 @@ pub fn greedy_mesh_basechunk_water_simple(chunk: &BaseChunk) -> Mesh {
 /// puede correr dentro de la tarea async de generación. Las caras extra en los
 /// bordes del chunk son inofensivas para la colisión.
 pub fn greedy_mesh_basechunk_collider_simple(chunk: &BaseChunk) -> Mesh {
-    mesh_simple_inner(chunk, MeshLayer::Collider)
+    greedy_mesh_with_borders(chunk, &NeighborBorders::default(), MeshLayer::Collider)
 }
 
-fn mesh_simple_inner(chunk: &BaseChunk, layer: MeshLayer) -> Mesh {
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals: Vec<[f32; 3]> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let mut colors: Vec<[f32; 4]> = Vec::new();
+/// Capa de voxeles de cada uno de los 6 chunks vecinos que toca este chunk.
+/// Es una COPIA, no una referencia al ECS: así el mallado con vecinos puede
+/// correr en un hilo de fondo. `None` = vecino desconocido (no cargado o aún
+/// generándose).
+#[derive(Default)]
+pub struct NeighborBorders([Option<Box<[VoxelType]>>; 6]);
 
-    let column_top = compute_column_top(chunk);
+impl NeighborBorders {
+    /// Copia la capa de contacto de cada vecino que ya tenga voxeles en el ECS.
+    pub fn gather(chunk_pos: IVec3, chunk_map: &ChunkMap, chunks: &Query<&BaseChunk>) -> Self {
+        let mut borders = Self::default();
+        for axis in 0..3 {
+            for direction in [-1, 1] {
+                let mut offset = IVec3::ZERO;
+                offset[axis] = direction;
+                let Some(neighbor) = chunk_map
+                    .chunks
+                    .get(&(chunk_pos + offset))
+                    .and_then(|&entity| chunks.get(entity).ok())
+                else {
+                    continue;
+                };
 
-    // Procesar cada eje (X, Y, Z) para greedy meshing
-    for axis in 0..3 {
-        for d in 0..BASE_CHUNK_SIZE {
-            // Dirección positiva
-            let mask_pos = generate_slice_mask_simple(chunk, axis, d, 1, layer);
-            greedy_mesh_slice(
-                &mask_pos,
-                chunk,
-                &column_top,
-                axis,
-                d,
-                1,
-                &mut positions,
-                &mut normals,
-                &mut indices,
-                &mut colors,
-            );
-
-            // Dirección negativa
-            let mask_neg = generate_slice_mask_simple(chunk, axis, d, -1, layer);
-            greedy_mesh_slice(
-                &mask_neg,
-                chunk,
-                &column_top,
-                axis,
-                d,
-                -1,
-                &mut positions,
-                &mut normals,
-                &mut indices,
-                &mut colors,
-            );
+                // El vecino en -dir nos toca con su última capa; el de +dir, con la primera.
+                let d = if direction < 0 {
+                    BASE_CHUNK_SIZE - 1
+                } else {
+                    0
+                };
+                let u = (axis + 1) % 3;
+                let v = (axis + 2) % 3;
+                let mut layer = vec![VoxelType::Air; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
+                for j in 0..BASE_CHUNK_SIZE {
+                    for i in 0..BASE_CHUNK_SIZE {
+                        let mut pos = [0; 3];
+                        pos[axis] = d;
+                        pos[u] = i;
+                        pos[v] = j;
+                        layer[i + j * BASE_CHUNK_SIZE] =
+                            neighbor.voxel_types[pos[0]][pos[1]][pos[2]];
+                    }
+                }
+                borders.0[face_index(axis, direction)] = Some(layer.into_boxed_slice());
+            }
         }
+        borders
     }
 
-    // Construir mesh final
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.insert_indices(Indices::U32(indices));
-    mesh
+    /// Voxel al otro lado de la cara (axis, direction) en la celda (i, j) del slice.
+    fn get(&self, axis: usize, direction: i32, i: usize, j: usize) -> Option<VoxelType> {
+        self.0[face_index(axis, direction)]
+            .as_ref()
+            .map(|layer| layer[i + j * BASE_CHUNK_SIZE])
+    }
 }
 
-/// Genera máscara de caras visibles para un slice (versión simple sin vecinos)
-fn generate_slice_mask_simple(
-    chunk: &BaseChunk,
-    axis: usize,
-    d: usize,
-    direction: i32, // +1 o -1
-    layer: MeshLayer,
-) -> Vec<Option<VoxelType>> {
-    let u = (axis + 1) % 3;
-    let v = (axis + 2) % 3;
-
-    let mut mask = vec![None; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE];
-
-    for j in 0..BASE_CHUNK_SIZE {
-        for i in 0..BASE_CHUNK_SIZE {
-            let mut pos = [0; 3];
-            pos[axis] = d;
-            pos[u] = i;
-            pos[v] = j;
-
-            let x = pos[0];
-            let y = pos[1];
-            let z = pos[2];
-
-            // ¿Pertenece a esta malla? (opaco = sólido no-agua; agua; collider)
-            if !cell_in_layer(chunk.voxel_types[x][y][z], layer) {
-                continue;
-            }
-
-            // Verificar vecino en la dirección especificada
-            let neighbor_x = x as i32 + if axis == 0 { direction } else { 0 };
-            let neighbor_y = y as i32 + if axis == 1 { direction } else { 0 };
-            let neighbor_z = z as i32 + if axis == 2 { direction } else { 0 };
-
-            let is_face_visible = if neighbor_x < 0
-                || neighbor_y < 0
-                || neighbor_z < 0
-                || neighbor_x >= BASE_CHUNK_SIZE as i32
-                || neighbor_y >= BASE_CHUNK_SIZE as i32
-                || neighbor_z >= BASE_CHUNK_SIZE as i32
-            {
-                face_visible_against_unknown(layer) // Borde del chunk, sin vecino
-            } else {
-                !face_hidden_by(
-                    chunk.voxel_types[neighbor_x as usize][neighbor_y as usize]
-                        [neighbor_z as usize],
-                    layer,
-                )
-            };
-
-            if is_face_visible {
-                mask[i + j * BASE_CHUNK_SIZE] = Some(chunk.voxel_types[x][y][z]);
-            }
-        }
-    }
-
-    mask
+fn face_index(axis: usize, direction: i32) -> usize {
+    axis * 2 + (direction > 0) as usize
 }
 
 /// Qué capa de malla se está construyendo. El agua es translúcida, así que se
@@ -244,7 +193,8 @@ pub fn greedy_mesh_basechunk(
     chunk_map: &ChunkMap,
     chunks: &Query<&BaseChunk>,
 ) -> Mesh {
-    mesh_basechunk_inner(chunk, chunk_map, chunks, MeshLayer::Opaque)
+    let borders = NeighborBorders::gather(chunk.position, chunk_map, chunks);
+    greedy_mesh_with_borders(chunk, &borders, MeshLayer::Opaque)
 }
 
 /// Mesh translúcido del AGUA (con verificación de vecinos, sin costuras entre chunks).
@@ -253,15 +203,16 @@ pub fn greedy_mesh_basechunk_water(
     chunk_map: &ChunkMap,
     chunks: &Query<&BaseChunk>,
 ) -> Mesh {
-    mesh_basechunk_inner(chunk, chunk_map, chunks, MeshLayer::Water)
+    let borders = NeighborBorders::gather(chunk.position, chunk_map, chunks);
+    greedy_mesh_with_borders(chunk, &borders, MeshLayer::Water)
 }
 
-/// Greedy meshing con verificación de vecinos. `layer` decide qué voxeles entran
-/// (opaco / agua / colisión).
-fn mesh_basechunk_inner(
+/// Greedy meshing contra una copia de los bordes vecinos. No toca el ECS, así que
+/// puede correr en un hilo de fondo. `layer` decide qué voxeles entran (opaco /
+/// agua / colisión).
+pub fn greedy_mesh_with_borders(
     chunk: &BaseChunk,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&BaseChunk>,
+    borders: &NeighborBorders,
     layer: MeshLayer,
 ) -> Mesh {
     let mut positions: Vec<[f32; 3]> = Vec::new();
@@ -275,7 +226,7 @@ fn mesh_basechunk_inner(
     for axis in 0..3 {
         for d in 0..BASE_CHUNK_SIZE {
             // Dirección positiva
-            let mask_pos = generate_slice_mask(chunk, chunk_map, chunks, axis, d, 1, layer);
+            let mask_pos = generate_slice_mask(chunk, borders, axis, d, 1, layer);
             greedy_mesh_slice(
                 &mask_pos,
                 chunk,
@@ -290,7 +241,7 @@ fn mesh_basechunk_inner(
             );
 
             // Dirección negativa
-            let mask_neg = generate_slice_mask(chunk, chunk_map, chunks, axis, d, -1, layer);
+            let mask_neg = generate_slice_mask(chunk, borders, axis, d, -1, layer);
             greedy_mesh_slice(
                 &mask_neg,
                 chunk,
@@ -318,8 +269,7 @@ fn mesh_basechunk_inner(
 /// Genera máscara de caras visibles para un slice (con verificación de vecinos)
 fn generate_slice_mask(
     chunk: &BaseChunk,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&BaseChunk>,
+    borders: &NeighborBorders,
     axis: usize,
     d: usize,
     direction: i32,
@@ -357,10 +307,11 @@ fn generate_slice_mask(
                 || neighbor_y >= BASE_CHUNK_SIZE as i32
                 || neighbor_z >= BASE_CHUNK_SIZE as i32
             {
-                // Fuera del chunk - verificar chunk vecino
-                is_face_visible_cross_chunk(
-                    chunk, chunk_map, chunks, x, y, z, axis, direction, layer,
-                )
+                // Fuera del chunk - verificar el borde copiado del vecino
+                match borders.get(axis, direction, i, j) {
+                    Some(neighbor) => !face_hidden_by(neighbor, layer),
+                    None => face_visible_against_unknown(layer),
+                }
             } else {
                 // Dentro del chunk
                 !face_hidden_by(
@@ -591,56 +542,6 @@ fn add_greedy_quad(
     }
 }
 
-/// Verifica si una cara es visible en chunk vecino
-fn is_face_visible_cross_chunk(
-    chunk: &BaseChunk,
-    chunk_map: &ChunkMap,
-    chunks: &Query<&BaseChunk>,
-    x: usize,
-    y: usize,
-    z: usize,
-    axis: usize,
-    direction: i32,
-    layer: MeshLayer,
-) -> bool {
-    let mut neighbor_chunk_offset = IVec3::ZERO;
-    neighbor_chunk_offset[axis as usize] = direction;
-
-    let neighbor_chunk_pos = chunk.position + neighbor_chunk_offset;
-
-    if let Some(&neighbor_entity) = chunk_map.chunks.get(&neighbor_chunk_pos) {
-        if let Ok(neighbor_chunk) = chunks.get(neighbor_entity) {
-            // Posición local en chunk vecino
-            let local_x = if axis == 0 && direction < 0 {
-                BASE_CHUNK_SIZE - 1
-            } else if axis == 0 && direction > 0 {
-                0
-            } else {
-                x
-            };
-            let local_y = if axis == 1 && direction < 0 {
-                BASE_CHUNK_SIZE - 1
-            } else if axis == 1 && direction > 0 {
-                0
-            } else {
-                y
-            };
-            let local_z = if axis == 2 && direction < 0 {
-                BASE_CHUNK_SIZE - 1
-            } else if axis == 2 && direction > 0 {
-                0
-            } else {
-                z
-            };
-
-            return !face_hidden_by(neighbor_chunk.voxel_types[local_x][local_y][local_z], layer);
-        }
-    }
-
-    // Sin chunk vecino (no cargado o aún generándose): el vecino es desconocido.
-    face_visible_against_unknown(layer)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,7 +560,10 @@ mod tests {
     fn water_emits_no_faces_against_an_unknown_neighbor() {
         let chunk = chunk_filled_with(VoxelType::Water);
 
-        assert_eq!(greedy_mesh_basechunk_water_simple(&chunk).count_vertices(), 0);
+        assert_eq!(
+            greedy_mesh_basechunk_water_simple(&chunk).count_vertices(),
+            0
+        );
     }
 
     #[test]
@@ -673,7 +577,10 @@ mod tests {
 
         // Un único quad (4 vértices): la capa de aire deja ver solo la superficie,
         // y el greedy la fusiona en un rectángulo de 32x32.
-        assert_eq!(greedy_mesh_basechunk_water_simple(&chunk).count_vertices(), 4);
+        assert_eq!(
+            greedy_mesh_basechunk_water_simple(&chunk).count_vertices(),
+            4
+        );
     }
 
     #[test]
@@ -682,5 +589,18 @@ mod tests {
 
         // 6 caras de chunk, cada una fusionada en un quad de 4 vértices.
         assert_eq!(greedy_mesh_basechunk_simple(&chunk).count_vertices(), 24);
+    }
+
+    #[test]
+    fn a_solid_neighbor_border_hides_the_shared_face() {
+        let chunk = chunk_filled_with(VoxelType::Stone);
+        let mut borders = NeighborBorders::default();
+        borders.0[face_index(0, 1)] =
+            Some(vec![VoxelType::Stone; BASE_CHUNK_SIZE * BASE_CHUNK_SIZE].into_boxed_slice());
+
+        // Sin la cara +X: quedan 5 quads.
+        let mesh = greedy_mesh_with_borders(&chunk, &borders, MeshLayer::Opaque);
+
+        assert_eq!(mesh.count_vertices(), 20);
     }
 }

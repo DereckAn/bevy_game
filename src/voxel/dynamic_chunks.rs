@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Chunk base de 32³ (usa heap para evitar stack overflow)
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct BaseChunk {
     pub voxel_types: Box<[[[VoxelType; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]; BASE_CHUNK_SIZE]>,
     pub position: IVec3,

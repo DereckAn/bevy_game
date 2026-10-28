@@ -3,7 +3,7 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
-    chunk_loading::{build_chunk_collider, ChunkMaterials, WaterMesh},
+    chunk_loading::{build_chunk_collider, ChunkMaterials, ChunkMeshTask, WaterMesh},
     greedy_meshing::{greedy_mesh_basechunk, greedy_mesh_basechunk_water},
     tools::{Tool, ToolType},
     BaseChunk, VoxelType, VOXEL_TYPE_COUNT,
@@ -499,7 +499,9 @@ pub fn remesh_dirty_chunks_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     chunk_materials: Res<ChunkMaterials>,
-    dirty: Query<(Entity, Option<&Children>), With<DirtyChunk>>,
+    // Sin `ChunkMeshTask`: si el mesh inicial sigue en vuelo, al llegar pisaría
+    // este remallado con datos viejos. El chunk espera sucio hasta que llegue.
+    dirty: Query<(Entity, Option<&Children>), (With<DirtyChunk>, Without<ChunkMeshTask>)>,
     chunks: Query<&BaseChunk>,
     water_children: Query<(), With<WaterMesh>>,
     chunk_map: Res<ChunkMap>,
