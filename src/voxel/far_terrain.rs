@@ -2,8 +2,8 @@
 //!
 //! Por ahora UNA tesela estática de nivel 0 en la banda LOD, para comprobar el
 //! shader (`assets/shaders/far_terrain.wgsl`, port de `raymarch::trace`) contra
-//! la malla LOD: F4 oculta las teselas LOD y deja la lejana sola. Color plano de
-//! depuración; la iluminación y la niebla llegan en la fase 3.
+//! la malla LOD: F4 oculta las teselas LOD y deja la lejana sola. Color, luz y
+//! niebla iguales que el terreno cercano (paleta compartida + PBR de Bevy).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
@@ -18,7 +18,7 @@ use bevy::shader::ShaderRef;
 
 use crate::core::{GameState, WorldKind, WorldSeed};
 use crate::voxel::raymarch::{TileHeights, MIP_COUNT, TILE_CELLS};
-use crate::voxel::TerrainGenerator;
+use crate::voxel::{voxel_color, TerrainGenerator, VoxelType};
 
 const SHADER_PATH: &str = "shaders/far_terrain.wgsl";
 /// Celda del nivel 0 (m): 4 voxels.
@@ -53,15 +53,23 @@ pub struct FarTileUniform {
     pub origin: Vec4,
     /// x = fondo de la caja, y = techo de la caja (celdas).
     pub bounds: Vec4,
+    /// Material de la superficie: rgb = color base LINEAL (blanco para el pasto,
+    /// cuyo verde pone la paleta), w = discriminante de `VoxelType` (0..255),
+    /// igual que el vertex color del terreno cercano.
+    // NOTE: uno por tesela porque hoy `WorldKind` es global; pasar a textura
+    // por celda cuando lleguen los biomas en mosaico.
+    pub surface: Vec4,
 }
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 pub struct FarTileMaterial {
-    #[uniform(0)]
+    // Bindings 100+: `pbr_functions` importa `pbr_bindings`, que declara los
+    // del StandardMaterial desde el 0 en este mismo grupo.
+    #[uniform(100)]
     pub tile: FarTileUniform,
     /// `R32Float` 64×64 con la cadena de máximos en sus mips (se lee con
     /// `textureLoad`, sin sampler: R32Float no es filtrable).
-    #[texture(1, sample_type = "float", filterable = false)]
+    #[texture(101, sample_type = "float", filterable = false)]
     pub heights: Handle<Image>,
 }
 
@@ -110,10 +118,15 @@ fn spawn_test_far_tile(
     let center =
         TEST_TILE_ORIGIN + Vec3::new(size * 0.5, (tile.bottom + top) * 0.5 * cell, size * 0.5);
 
+    // Misma superficie que el LOD (`LodChunk::generate_surface`).
+    let surface_type = VoxelType::from_depth(1.0, 0.0, *world_kind);
+    let [r, g, b, _] = voxel_color(surface_type);
+
     let material = materials.add(FarTileMaterial {
         tile: FarTileUniform {
             origin: TEST_TILE_ORIGIN.extend(cell),
             bounds: Vec4::new(tile.bottom, top, 0.0, 0.0),
+            surface: Vec4::new(r, g, b, surface_type as u8 as f32),
         },
         heights: images.add(heights_image(&tile)),
     });

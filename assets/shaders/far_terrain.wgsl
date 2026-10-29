@@ -5,23 +5,27 @@
 // Se dibujan las caras traseras de la caja de la tesela; el shader calcula la
 // entrada del rayo y escribe la profundidad real del impacto.
 
-#import bevy_pbr::forward_io::VertexOutput
-#import bevy_pbr::mesh_view_bindings::view
+#import bevy_pbr::{
+    forward_io::VertexOutput,
+    mesh_view_bindings::view,
+    pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
+    pbr_functions::{apply_pbr_lighting, calculate_view, main_pass_post_lighting_processing},
+}
+#import voxel::palette::{palette_color, voxel_cell}
 
 struct FarTile {
     origin: vec4<f32>, // xyz = esquina mínima (m), w = tamaño de celda (m)
     bounds: vec4<f32>, // x = fondo, y = techo de la caja (celdas)
+    surface: vec4<f32>, // rgb = color base lineal, w = id de VoxelType
 };
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> tile: FarTile;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var heights: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> tile: FarTile;
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var heights: texture_2d<f32>;
 
 const TILE_CELLS: i32 = 64;
 const MIP_COUNT: i32 = 7;
 const MAX_STEPS: i32 = 512;
 const INF: f32 = 3.4e38;
-// Color plano de depuración (lineal) para distinguir la tesela del LOD.
-const DEBUG_COLOR: vec3<f32> = vec3<f32>(0.45, 0.25, 0.6);
 
 struct FragmentOutput {
     @location(0) color: vec4<f32>,
@@ -164,16 +168,32 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
     let world_hit = cam + dir * (hit.t * cell_m);
     let clip = view.clip_from_world * vec4<f32>(world_hit, 1.0);
 
-    // Mismo sombreado por cara que el mallador cercano (cima 1.0, lados 0.75, base 0.5).
+    // Mismo color que el terreno cercano: base × sombreado por cara (cima 1.0,
+    // lados 0.75, base 0.5) y paleta de la celda de voxel del impacto.
     var shade = 0.75;
     if (hit.normal.y > 0.5) {
         shade = 1.0;
     } else if (hit.normal.y < -0.5) {
         shade = 0.5;
     }
+    let id = u32(tile.surface.w);
+    let color = palette_color(tile.surface.rgb * shade, id, voxel_cell(world_hit, hit.normal));
+
+    // Misma luz y niebla que un StandardMaterial por defecto (el del terreno
+    // cercano es blanco + vertex color). Sin sombras: NotShadowReceiver, y a
+    // esta distancia las cascadas (50 m) ya no llegan.
+    var pbr_input = pbr_input_new();
+    pbr_input.material.base_color = vec4<f32>(color, 1.0);
+    pbr_input.material.flags |= STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
+    pbr_input.frag_coord = in.position;
+    pbr_input.world_position = vec4<f32>(world_hit, 1.0);
+    pbr_input.world_normal = hit.normal;
+    pbr_input.N = hit.normal;
+    pbr_input.is_orthographic = view.clip_from_view[3].w == 1.0;
+    pbr_input.V = calculate_view(pbr_input.world_position, pbr_input.is_orthographic);
 
     var out: FragmentOutput;
-    out.color = vec4<f32>(DEBUG_COLOR * shade, 1.0);
+    out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
     out.depth = clip.z / clip.w;
     return out;
 }
