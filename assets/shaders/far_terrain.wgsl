@@ -177,7 +177,13 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
         shade = 0.5;
     }
     let id = u32(tile.surface.w);
-    let color = palette_color(tile.surface.rgb * shade, id, voxel_cell(world_hit, hit.normal));
+    var color = palette_color(tile.surface.rgb * shade, id, voxel_cell(world_hit, hit.normal));
+    if (tile.bounds.w > 0.5) {
+        // F6: tinte por nivel (rojo → amarillo → verde → cian → azul → magenta…).
+        let hue = f32(u32(tile.bounds.z)) / 6.0;
+        let tint = clamp(abs(fract(hue + vec3<f32>(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+        color = mix(color, tint * shade * 0.5, 0.6);
+    }
 
     // Misma luz y niebla que un StandardMaterial por defecto (el del terreno
     // cercano es blanco + vertex color). Sin sombras: NotShadowReceiver, y a

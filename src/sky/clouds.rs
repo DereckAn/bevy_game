@@ -16,9 +16,9 @@ use bevy::shader::ShaderRef;
 use super::time_of_day::{sun_direction, TimeOfDay};
 
 const SHADER_PATH: &str = "shaders/clouds.wgsl";
-/// Radio del domo. Dentro del far plane por defecto (1000) y muy por fuera del
-/// radio de carga de terreno (~205 m), así el terreno siempre lo ocluye.
-const DOME_RADIUS: f32 = 800.0;
+/// Radio del domo. Dentro del far plane de la cámara (50 km) y por fuera del
+/// terreno lejano (~30 km), así el terreno siempre lo ocluye.
+const DOME_RADIUS: f32 = 40_000.0;
 
 /// Marca el domo de nubes (lo movemos con la cámara y le pasamos uniforms).
 #[derive(Component)]

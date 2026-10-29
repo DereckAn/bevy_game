@@ -58,8 +58,8 @@ pub fn spawn_sun(mut commands: Commands) {
             ..default()
         },
         // Por defecto: 4 cascadas hasta 150 m, y cada chunk dentro se vuelve a
-        // dibujar en cada cascada. Acabar justo antes de la niebla (90 m) evita
-        // ese coste donde la sombra ya casi no se distingue.
+        // dibujar en cada cascada. Acabar a 50 m evita ese coste donde la sombra
+        // ya casi no se distingue.
         CascadeShadowConfigBuilder {
             num_cascades: 2,
             maximum_distance: 50.0,
@@ -74,23 +74,25 @@ pub fn spawn_sun(mut commands: Commands) {
 /// aparece. `Atmosphere` exige HDR, que se añade solo vía sus componentes
 /// requeridos (`Hdr`, `AtmosphereSettings` con `scene_units_to_m = 1.0`, que es
 /// justo la escala del juego: 1 unidad = 1 metro).
-pub fn setup_sky_camera(
-    mut commands: Commands,
-    cameras: Query<Entity, Added<Camera3d>>,
-) {
+pub fn setup_sky_camera(mut commands: Commands, cameras: Query<Entity, Added<Camera3d>>) {
     for entity in &cameras {
         commands.entity(entity).insert((
             Atmosphere::EARTH,
+            // El terreno lejano llega a ~30 km; el far plane por defecto (1 km)
+            // lo recortaría. Solo afecta al culling: la proyección de Bevy es
+            // reverse-Z infinita, no se pierde precisión de profundidad.
+            Projection::Perspective(PerspectiveProjection {
+                far: 50_000.0,
+                ..default()
+            }),
             Tonemapping::TonyMcMapface,
             Bloom::NATURAL,
-            // La niebla oculta el pop-in de chunks (radio de carga ~205 m) y da
-            // profundidad. Su color lo actualiza `update_day_night`.
+            // Niebla de distancia (perspectiva aérea): da profundidad sin tapar el
+            // terreno lejano, que ya rellena el horizonte más allá de los chunks.
+            // Su color lo actualiza `update_day_night`.
             DistanceFog {
                 color: Color::srgb(0.62, 0.72, 0.84),
-                falloff: FogFalloff::Linear {
-                    start: 90.0,
-                    end: 190.0,
-                },
+                falloff: FogFalloff::from_visibility(12_000.0),
                 ..default()
             },
         ));

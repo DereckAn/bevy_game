@@ -13,6 +13,9 @@ pub const TILE_CELLS: usize = 64;
 pub const MIP_COUNT: usize = TILE_CELLS.trailing_zeros() as usize + 1;
 /// Tope de iteraciones por rayo: el shader necesita acotar el coste por píxel.
 const MAX_STEPS: u32 = 512;
+/// Holgura (celdas) bajo la superficie más baja del borde: un vecino de nivel
+/// más grueso redondea su altura hasta 1 celda propia, más 1 de margen.
+const BORDER_MARGIN: f32 = 2.0;
 
 /// Alturas de una tesela con su cadena de máximos.
 pub struct TileHeights {
@@ -55,6 +58,14 @@ impl TileHeights {
             mips.push(next);
         }
         Self { mips, bottom }
+    }
+
+    /// Baja el fondo de la caja hasta `border_min` (altura más baja de los
+    /// vecinos junto al borde) − margen. Así los laterales de las columnas de
+    /// esta tesela llegan hasta la superficie del vecino y no queda una rendija
+    /// visible entre teselas o niveles a distinta altura.
+    pub fn lower_bottom_to(&mut self, border_min: f32) {
+        self.bottom = self.bottom.min(border_min - BORDER_MARGIN);
     }
 
     fn top(&self) -> f32 {
@@ -331,6 +342,15 @@ mod tests {
         let flat = TileHeights::new(vec![10.0; TILE_CELLS * TILE_CELLS]);
         let edge = TILE_CELLS as f32;
         assert_eq!(trace(&flat, Vec3::new(edge, 20.0, 10.5), Vec3::NEG_Y), None);
+    }
+
+    #[test]
+    fn high_tile_side_reaches_down_to_lower_neighbour() {
+        let mut high = TileHeights::new(vec![50.0; TILE_CELLS * TILE_CELLS]);
+        high.lower_bottom_to(10.0);
+        // Rayo horizontal justo sobre la superficie del vecino bajo (x < 0).
+        let hit = trace(&high, Vec3::new(-5.0, 10.5, 20.5), Vec3::X);
+        assert_eq!(hit.map(|h| h.normal), Some(IVec3::NEG_X));
     }
 
     #[test]
