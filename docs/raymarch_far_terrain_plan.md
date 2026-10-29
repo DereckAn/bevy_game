@@ -112,16 +112,18 @@ No cutoff radius and no depth offset. A radius can't match near coverage
 sloped LOD triangles (their height difference grows with slope). Instead every
 chunk column has **exactly one owner**:
 
-- **Near owns a column** when it is render-ready there: the column has a LOD in
-  `ColumnLods`, or its surface Real chunk is meshed (the same test
-  `retire_covered_lods_system` uses), and that entity has existed for ≥ 1
-  rendered frame (mesh uploaded).
+- **Near owns a column** when it is render-ready there: the column has a
+  *visible* LOD in `ColumnLods`, or its surface Real chunk is meshed (shared
+  helper `column_surface_chunk_y`, also used by `retire_covered_lods_system`),
+  for **two consecutive frames** (its mesh has been uploaded). Losing
+  ownership is immediate (the safe direction: far draws).
 - **Far owns every other column**, including ones still loading and everything
   beyond the world edge, so there is never a hole.
-- **Coverage mask:** an `R8Unorm` texture of chunk columns around the player
-  (144², one texel per column, origin in a uniform), shared by all far tiles.
-  Updated when coverage changes (LOD spawn/retire, Real chunk ready, eviction),
-  not every frame.
+- **Coverage mask:** an `Rg32Sint` texture of 144² chunk columns indexed
+  toroidally (`chunk.rem_euclid(144)`), each texel storing its owning column
+  (or `i32::MIN`), so no origin uniform and no aliasing. Computed every frame
+  after the chunk systems, extracted with the frame (`ExtractResource`) so it
+  matches that frame's near entities, written to the GPU only when it changes.
 - **In the shader:** at level 0 a cell in a near-owned column is **air** (the
   ray passes through it). The max-mip ignores coverage, so skipping stays
   conservative (it may descend more than needed, never skips a surface). The

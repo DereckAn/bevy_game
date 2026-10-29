@@ -10,6 +10,11 @@
 //! teselas que se solapan (nuevas + las viejas a las que reemplazan) se
 //! intercambia en un mismo frame, y solo cuando todas sus nuevas están
 //! preparadas en la GPU: nunca hay hueco ni doble cobertura.
+//!
+//! Con el terreno cercano no hay solape: cada columna de chunk la dibuja uno
+//! solo. La máscara `NearCoverage` marca las que ya dibuja el cercano (LOD o
+//! chunk Real de superficie en pantalla) y el shader las trata como aire; el
+//! resto, incluido lo que aún carga o queda fuera del mundo, lo dibuja el lejano.
 //! F6 tiñe las teselas por nivel.
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -21,21 +26,28 @@ use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey, PreparedMaterial};
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::ErasedRenderAssets;
+use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::mesh::RenderMesh;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, Face, RenderPipelineDescriptor, ShaderType,
-    SpecializedMeshPipelineError, TextureDimension, TextureFormat,
+    AsBindGroup, Extent3d, Face, Origin3d, RenderPipelineDescriptor, ShaderType,
+    SpecializedMeshPipelineError, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect,
+    TextureDimension, TextureFormat,
 };
+use bevy::render::renderer::RenderQueue;
+use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::shader::ShaderRef;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use futures_lite::future;
 
-use crate::core::{BASE_CHUNK_SIZE, GameState, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldKind, WorldSeed};
+use crate::core::{GameState, WorldKind, WorldSeed};
 use crate::player::Player;
 use crate::voxel::raymarch::{TileHeights, MIP_COUNT, TILE_CELLS};
-use crate::voxel::{voxel_color, TerrainGenerator, VoxelType, CHUNK_LOAD_RADIUS};
+use crate::voxel::{
+    column_surface_chunk_y, update_frustum_culling, voxel_color, BaseChunk, ChunkMap, ChunkMeshTask,
+    ColumnLods, LodChunk, TerrainGenerator, VoxelType, CHUNK_UNLOAD_RADIUS,
+};
 
 const SHADER_PATH: &str = "shaders/far_terrain.wgsl";
 /// Celda del nivel 0 (m): 4 voxels. El nivel k usa `0.4 × 2^k`.
@@ -47,6 +59,15 @@ const LEVELS: usize = 8;
 const RING_RADIUS: i32 = 10;
 /// Teselas generándose a la vez: el pool asíncrono lo comparte la carga de chunks.
 const MAX_TASKS_IN_FLIGHT: usize = 32;
+/// Lado de la máscara de cobertura cercana (columnas de chunk), indexada
+/// toroidalmente por `chunk.rem_euclid(MASK_SIZE)`: debe abarcar todo el campo
+/// cercano (LODs hasta `CHUNK_UNLOAD_RADIUS`) sin que dos columnas compartan texel.
+const MASK_SIZE: i32 = 144;
+const _: () = assert!(MASK_SIZE > 2 * CHUNK_UNLOAD_RADIUS + 1);
+/// Texel de columna que NO dibuja el cercano (ninguna columna real tiene esta x).
+const NOT_NEAR: IVec2 = IVec2::splat(i32::MIN);
+/// Columnas de chunk por tesela de nivel 0 (25.6 m / 3.2 m).
+const LEVEL0_TILE_CHUNKS: i32 = 8;
 
 pub struct FarTerrainPlugin;
 
@@ -57,23 +78,31 @@ impl Plugin for FarTerrainPlugin {
             .init_resource::<FarTiles>()
             .init_resource::<FarTint>()
             .insert_resource(readiness.clone())
+            .init_resource::<NearCoverage>()
+            .add_plugins(ExtractResourcePlugin::<NearCoverage>::default())
             .add_systems(
                 Update,
                 (
                     update_far_rings,
                     stream_far_tiles,
                     swap_far_tiles,
-                    hide_far_tiles_under_near_field,
+                    update_near_coverage,
                     toggle_far_tint,
                 )
                     .chain()
+                    // La cobertura se calcula con el estado de chunks ya final del frame.
+                    .after(update_frustum_culling)
                     .run_if(in_state(GameState::InGame)),
             )
             .add_systems(OnEnter(GameState::MainMenu), teardown_far_tiles);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .insert_resource(readiness)
-                .add_systems(Render, mark_ready_far_tiles.in_set(RenderSystems::Cleanup));
+            render_app.insert_resource(readiness).add_systems(
+                Render,
+                (
+                    upload_near_coverage.in_set(RenderSystems::PrepareResources),
+                    mark_ready_far_tiles.in_set(RenderSystems::Cleanup),
+                ),
+            );
         }
     }
 }
@@ -123,6 +152,39 @@ impl Readiness {
     }
 }
 
+/// Columnas de chunk que dibuja el terreno cercano, en una textura toroidal de
+/// `MASK_SIZE`² (cada texel guarda su columna dueña, o `NOT_NEAR`). Se extrae al
+/// mundo de render junto con el resto del frame, así la máscara que usa el
+/// shader corresponde exactamente a las entidades cercanas de ese frame.
+#[derive(Resource, Clone, ExtractResource)]
+struct NearCoverage {
+    texels: Vec<IVec2>,
+    /// Sube cada vez que cambian los texels; el mundo de render solo escribe la
+    /// textura cuando ve una generación nueva.
+    generation: u64,
+    image: Handle<Image>,
+}
+
+impl FromWorld for NearCoverage {
+    fn from_world(world: &mut World) -> Self {
+        let texels = vec![NOT_NEAR; (MASK_SIZE * MASK_SIZE) as usize];
+        let mut image = Image::new(
+            Extent3d {
+                width: MASK_SIZE as u32,
+                height: MASK_SIZE as u32,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            texel_bytes(&texels),
+            TextureFormat::Rg32Sint,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        image.texture_descriptor.label = Some("near_coverage");
+        let image = world.resource_mut::<Assets<Image>>().add(image);
+        Self { texels, generation: 0, image }
+    }
+}
+
 /// F6: teñir las teselas por nivel (depuración).
 #[derive(Resource, Default)]
 struct FarTint(bool);
@@ -153,6 +215,9 @@ pub struct FarTileMaterial {
     /// `textureLoad`, sin sampler: R32Float no es filtrable).
     #[texture(101, sample_type = "float", filterable = false)]
     pub heights: Handle<Image>,
+    /// Máscara compartida de columnas que dibuja el terreno cercano (`NearCoverage`).
+    #[texture(102, sample_type = "s_int")]
+    pub near_mask: Handle<Image>,
 }
 
 impl Material for FarTileMaterial {
@@ -227,6 +292,7 @@ fn stream_far_tiles(
     world_kind: Res<WorldKind>,
     tint: Res<FarTint>,
     readiness: Res<FarReadiness>,
+    coverage: Res<NearCoverage>,
 ) {
     let (seed, kind) = (world_seed.0, *world_kind);
     let pool = AsyncComputeTaskPool::get();
@@ -255,6 +321,7 @@ fn stream_far_tiles(
             &tile,
             surface_type,
             tint.0,
+            coverage.image.clone(),
         );
         readiness.0.lock().unwrap().watching.push((material, mesh));
         far.tiles.insert(key, TileEntry { entity, material, is_live: false });
@@ -313,38 +380,124 @@ fn swap_far_tiles(
     }
 }
 
-/// Provisional hasta la máscara de cobertura (fase 5, plan §1.6): oculta las
-/// teselas vivas de nivel 0 que caen enteras dentro del campo cercano (LOD +
-/// chunks reales, con un chunk de margen) y dentro del mundo, para que no se
-/// dibujen encima del terreno cercano.
-fn hide_far_tiles_under_near_field(
-    player: Query<&Transform, With<Player>>,
+/// Calcula qué columnas de chunk dibuja ya el terreno cercano y oculta las
+/// teselas de nivel 0 que quedan enteras bajo él (su shader no pintaría nada,
+/// pero escribir `frag_depth` desactiva el early-z y lo pagaría igual).
+///
+/// Una columna es del cercano si tiene un LOD visible o su chunk Real de
+/// superficie está mallado (la misma regla que retira LODs). Ganar una columna
+/// exige verla cubierta dos frames seguidos —su malla ya subió a la GPU—;
+/// perderla es inmediato: ante la duda dibuja el lejano.
+#[allow(clippy::too_many_arguments)]
+fn update_near_coverage(
+    mut coverage: ResMut<NearCoverage>,
+    mut covered_last_frame: Local<HashSet<IVec2>>,
+    mut surface_cache: Local<(Option<(i32, WorldKind)>, HashMap<IVec2, i32>)>,
+    column_lods: Res<ColumnLods>,
+    lod_visibility: Query<&Visibility, With<LodChunk>>,
+    chunk_map: Res<ChunkMap>,
+    meshed_chunks: Query<(), (With<BaseChunk>, Without<ChunkMeshTask>)>,
+    world_seed: Res<WorldSeed>,
+    world_kind: Res<WorldKind>,
     far: Res<FarTiles>,
-    mut visibility: Query<&mut Visibility, With<FarTile>>,
+    mut visibility: Query<&mut Visibility, (With<FarTile>, Without<LodChunk>)>,
 ) {
-    let Ok(transform) = player.single() else {
-        return;
-    };
-    let chunk_m = BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
-    let near_radius = (CHUNK_LOAD_RADIUS - 1) as f32 * chunk_m;
-    let world_half = WORLD_CHUNK_RADIUS as f32 * chunk_m;
-    let player_xz = transform.translation.xz();
+    // La altura de superficie no cambia en toda la partida: se cachea por columna.
+    let (cache_world, surface_y) = &mut *surface_cache;
+    if *cache_world != Some((world_seed.0, *world_kind)) {
+        *cache_world = Some((world_seed.0, *world_kind));
+        surface_y.clear();
+    }
+    let mut terrain_gen: Option<TerrainGenerator> = None;
+
+    let mut covered: HashSet<IVec2> = column_lods
+        .columns
+        .iter()
+        .filter(|(_, entity)| lod_visibility.get(**entity).is_ok_and(|v| *v != Visibility::Hidden))
+        .map(|(column, _)| *column)
+        .collect();
+    for (pos, entity) in &chunk_map.chunks {
+        let column = pos.xz();
+        if covered.contains(&column) || !meshed_chunks.contains(*entity) {
+            continue;
+        }
+        let surface = *surface_y.entry(column).or_insert_with(|| {
+            let generator =
+                terrain_gen.get_or_insert_with(|| TerrainGenerator::new(world_seed.0, *world_kind));
+            column_surface_chunk_y(column, generator)
+        });
+        if pos.y == surface {
+            covered.insert(column);
+        }
+    }
+    let owned: HashSet<IVec2> = covered.intersection(&covered_last_frame).copied().collect();
+    *covered_last_frame = covered;
+
+    let mut texels = vec![NOT_NEAR; (MASK_SIZE * MASK_SIZE) as usize];
+    for &column in &owned {
+        texels[mask_index(column)] = column;
+    }
+    if texels != coverage.texels {
+        coverage.texels = texels;
+        coverage.generation += 1;
+    }
+
     for (key, tile) in &far.tiles {
         if key.level != 0 || !tile.is_live {
             continue;
         }
-        let min = key.idx.as_vec2() * tile_m(0);
-        let corners = [min, min + Vec2::X * tile_m(0), min + Vec2::Y * tile_m(0), min + tile_m(0)];
-        let is_covered = corners.iter().all(|c| {
-            c.distance(player_xz) <= near_radius && c.abs().max_element() <= world_half
+        let first = key.idx * LEVEL0_TILE_CHUNKS;
+        let is_fully_near = (0..LEVEL0_TILE_CHUNKS * LEVEL0_TILE_CHUNKS).all(|i| {
+            owned.contains(&(first + IVec2::new(i % LEVEL0_TILE_CHUNKS, i / LEVEL0_TILE_CHUNKS)))
         });
-        let wanted = if is_covered { Visibility::Hidden } else { Visibility::Inherited };
+        let wanted = if is_fully_near { Visibility::Hidden } else { Visibility::Inherited };
         if let Ok(mut tile_visibility) = visibility.get_mut(tile.entity) {
             if *tile_visibility != wanted {
                 *tile_visibility = wanted;
             }
         }
     }
+}
+
+/// Mundo de render: escribe la máscara en su textura cuando hay una generación
+/// nueva (la `GpuImage` se crea una vez; aquí solo se reescriben sus texels).
+fn upload_near_coverage(
+    coverage: Res<NearCoverage>,
+    images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
+    mut written: Local<u64>,
+) {
+    if *written == coverage.generation {
+        return;
+    }
+    let Some(gpu_image) = images.get(&coverage.image) else {
+        return;
+    };
+    queue.write_texture(
+        TexelCopyTextureInfo {
+            texture: &gpu_image.texture,
+            mip_level: 0,
+            origin: Origin3d::ZERO,
+            aspect: TextureAspect::All,
+        },
+        &texel_bytes(&coverage.texels),
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(MASK_SIZE as u32 * 8),
+            rows_per_image: None,
+        },
+        gpu_image.size,
+    );
+    *written = coverage.generation;
+}
+
+fn mask_index(column: IVec2) -> usize {
+    let texel = column.rem_euclid(IVec2::splat(MASK_SIZE));
+    (texel.x + texel.y * MASK_SIZE) as usize
+}
+
+fn texel_bytes(texels: &[IVec2]) -> Vec<u8> {
+    texels.iter().flat_map(|c| [c.x.to_le_bytes(), c.y.to_le_bytes()]).flatten().collect()
 }
 
 fn toggle_far_tint(
@@ -369,6 +522,7 @@ fn teardown_far_tiles(
     mut commands: Commands,
     mut far: ResMut<FarTiles>,
     readiness: Res<FarReadiness>,
+    mut coverage: ResMut<NearCoverage>,
     tiles: Query<Entity, With<FarTile>>,
 ) {
     for entity in &tiles {
@@ -377,6 +531,8 @@ fn teardown_far_tiles(
     // Soltar las tareas en vuelo las cancela.
     *far = FarTiles::default();
     *readiness.0.lock().unwrap() = Readiness::default();
+    coverage.texels.fill(NOT_NEAR);
+    coverage.generation += 1;
 }
 
 fn cell_m(level: usize) -> f32 {
@@ -520,6 +676,7 @@ fn spawn_tile(
     tile: &TileHeights,
     surface_type: VoxelType,
     is_tinted: bool,
+    near_mask: Handle<Image>,
 ) -> (Entity, AssetId<FarTileMaterial>, AssetId<Mesh>) {
     let cell = cell_m(key.level);
     let size = tile_m(key.level);
@@ -535,6 +692,7 @@ fn spawn_tile(
             surface: Vec4::new(r, g, b, surface_type as u8 as f32),
         },
         heights: images.add(heights_image(tile)),
+        near_mask,
     });
     let mesh = meshes.add(Cuboid::new(size, (top - tile.bottom) * cell, size));
     let ids = (material.id(), mesh.id());

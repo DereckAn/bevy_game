@@ -857,6 +857,18 @@ fn world_pos_to_chunk_pos(world_pos: Vec3) -> IVec3 {
 /// async, así nunca aparece un hueco. También descarga los LOD fuera de rango.
 ///
 /// Corre cada frame (la cobertura Real puede completarse con el jugador quieto).
+/// Y del chunk Real de la SUPERFICIE de una columna (altura en el centro de su
+/// huella). Una columna está cubierta por chunks Real cuando ese chunk está
+/// mallado; lo usan la retirada de LODs y la máscara del terreno lejano.
+pub fn column_surface_chunk_y(column: IVec2, terrain_gen: &mut TerrainGenerator) -> i32 {
+    let chunk_m = BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+    let half = BASE_CHUNK_SIZE as i32 / 2;
+    let world_x = (column.x * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
+    let world_z = (column.y * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
+    let surface_m = terrain_gen.biome_gen.generate_height(world_x, world_z);
+    (surface_m / chunk_m).floor() as i32
+}
+
 pub fn retire_covered_lods_system(
     mut commands: Commands,
     mut column_lods: ResMut<ColumnLods>,
@@ -872,8 +884,6 @@ pub fn retire_covered_lods_system(
     let player_chunk = world_pos_to_chunk_pos(player_transform.translation);
     let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
 
-    let chunk_m = BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
-    let half = BASE_CHUNK_SIZE as i32 / 2;
     let unload_sq = CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS;
     let real_sq = REAL_RADIUS * REAL_RADIUS;
 
@@ -895,11 +905,7 @@ pub fn retire_covered_lods_system(
             continue;
         }
 
-        // Chunk Real de la SUPERFICIE de la columna (centro de su huella).
-        let world_x = (column.x * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
-        let world_z = (column.y * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
-        let surface_m = terrain_gen.biome_gen.generate_height(world_x, world_z);
-        let surface_y = (surface_m / chunk_m).floor() as i32;
+        let surface_y = column_surface_chunk_y(column, &mut terrain_gen);
         let surface_pos = IVec3::new(column.x, surface_y, column.y);
 
         let covered = chunk_map

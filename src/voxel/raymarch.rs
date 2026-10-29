@@ -85,6 +85,19 @@ impl TileHeights {
 /// salida: recalcularlo desde la posición en coma flotante puede dejarlo en el
 /// mismo nodo cuando el rayo sale justo por un borde (bucle infinito).
 pub fn trace(tile: &TileHeights, origin: Vec3, dir: Vec3) -> Option<Hit> {
+    trace_with_air(tile, origin, dir, |_| false)
+}
+
+/// `trace` con columnas que cuentan como aire (`is_air(cell)`): las que ya
+/// dibuja el terreno cercano. Los mips siguen incluyendo su altura, así que el
+/// salto de nodos es conservador: baja más de lo necesario, nunca se salta una
+/// superficie.
+pub fn trace_with_air(
+    tile: &TileHeights,
+    origin: Vec3,
+    dir: Vec3,
+    is_air: impl Fn(UVec2) -> bool,
+) -> Option<Hit> {
     let (mut t, t_far, mut axis) = box_span(tile, origin, dir)?;
     let last = TILE_CELLS as i32 - 1;
     let entry = origin + dir * t;
@@ -98,7 +111,8 @@ pub fn trace(tile: &TileHeights, origin: Vec3, dir: Vec3) -> Option<Hit> {
         let size = 1i32 << level;
         let node = cell >> level as i32;
         let (t_exit, exit_axis) = node_exit(origin, dir, node, size, t_far);
-        let h = tile.height(level, node);
+        let is_air_column = level == 0 && is_air(node.as_uvec2());
+        let h = if is_air_column { f32::NEG_INFINITY } else { tile.height(level, node) };
         if lowest_y(origin, dir, t, t_exit) > h {
             if exit_axis == 1 {
                 return None;
@@ -237,10 +251,19 @@ mod tests {
     /// Oráculo independiente de `trace`: intersección rayo-caja contra CADA
     /// columna (sin caja de tesela, sin recorrido, sin helpers compartidos);
     /// devuelve el `t` del primer impacto.
-    fn first_hit_by_column_boxes(tile: &TileHeights, origin: Vec3, dir: Vec3) -> Option<f32> {
+    fn first_hit_by_column_boxes(
+        tile: &TileHeights,
+        origin: Vec3,
+        dir: Vec3,
+        is_air: &impl Fn(UVec2) -> bool,
+    ) -> Option<f32> {
         (0..TILE_CELLS * TILE_CELLS)
             .filter_map(|i| {
-                let (x, z) = ((i % TILE_CELLS) as f32, (i / TILE_CELLS) as f32);
+                let cell = UVec2::new((i % TILE_CELLS) as u32, (i / TILE_CELLS) as u32);
+                if is_air(cell) {
+                    return None;
+                }
+                let (x, z) = (cell.x as f32, cell.y as f32);
                 let min = [x, tile.bottom, z];
                 let max = [x + 1.0, tile.mips[0][i], z + 1.0];
                 let (mut near, mut far) = (0.0f32, f32::INFINITY);
@@ -267,9 +290,18 @@ mod tests {
     /// ¿`trace` encuentra la misma primera superficie que el oráculo? Tolerancia
     /// absoluta + relativa (a 10⁴ celdas el ulp de f32 ya es ~10⁻³).
     fn agrees_with_column_boxes(tile: &TileHeights, origin: Vec3, dir: Vec3) -> bool {
+        agrees_with_column_boxes_with_air(tile, origin, dir, |_| false)
+    }
+
+    fn agrees_with_column_boxes_with_air(
+        tile: &TileHeights,
+        origin: Vec3,
+        dir: Vec3,
+        is_air: impl Fn(UVec2) -> bool,
+    ) -> bool {
         match (
-            trace(tile, origin, dir),
-            first_hit_by_column_boxes(tile, origin, dir),
+            trace_with_air(tile, origin, dir, &is_air),
+            first_hit_by_column_boxes(tile, origin, dir, &is_air),
         ) {
             (None, None) => true,
             (Some(hit), Some(t)) => (hit.t - t).abs() <= 1e-3 + 1e-5 * t,
@@ -342,6 +374,33 @@ mod tests {
         let flat = TileHeights::new(vec![10.0; TILE_CELLS * TILE_CELLS]);
         let edge = TILE_CELLS as f32;
         assert_eq!(trace(&flat, Vec3::new(edge, 20.0, 10.5), Vec3::NEG_Y), None);
+    }
+
+    #[test]
+    fn ray_down_onto_near_owned_column_passes_through() {
+        let tile = test_tile();
+        let is_air = |cell: UVec2| cell == UVec2::new(10, 20);
+        let hit = trace_with_air(&tile, Vec3::new(10.5, 100.0, 20.5), Vec3::NEG_Y, is_air);
+        assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn skipping_near_owned_columns_finds_same_first_surface_as_every_column_box() {
+        // Media tesela (x < 24) la dibuja el terreno cercano.
+        let tile = test_tile();
+        let mismatches: Vec<_> = sweep_rays()
+            .into_iter()
+            .filter(|&(o, d)| !agrees_with_column_boxes_with_air(&tile, o, d, |cell| cell.x < 24))
+            .collect();
+        assert!(mismatches.is_empty(), "{} rays differ, first: {:?}", mismatches.len(), mismatches.first());
+    }
+
+    #[test]
+    fn grazing_ray_across_mostly_near_owned_tile_resolves_within_step_cap() {
+        let tile = test_tile();
+        let origin = Vec3::new(-1.0, 3.0, -0.7);
+        let dir = (Vec3::new(64.5, 1.0, 63.8) - origin).normalize();
+        assert!(agrees_with_column_boxes_with_air(&tile, origin, dir, |cell| cell.x + cell.y < 120));
     }
 
     #[test]

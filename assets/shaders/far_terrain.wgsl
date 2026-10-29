@@ -21,11 +21,16 @@ struct FarTile {
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> tile: FarTile;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var heights: texture_2d<f32>;
+// Columnas de chunk que dibuja el terreno cercano: textura toroidal de
+// MASK_SIZE², cada texel guarda su columna dueña (o i32::MIN si es del lejano).
+@group(#{MATERIAL_BIND_GROUP}) @binding(102) var near_mask: texture_2d<i32>;
 
 const TILE_CELLS: i32 = 64;
 const MIP_COUNT: i32 = 7;
 const MAX_STEPS: i32 = 512;
 const INF: f32 = 3.4e38;
+const MASK_SIZE: i32 = 144; // = far_terrain::MASK_SIZE
+const CHUNK_M: f32 = 3.2;   // BASE_CHUNK_SIZE × VOXEL_SIZE
 
 struct FragmentOutput {
     @location(0) color: vec4<f32>,
@@ -44,6 +49,18 @@ fn miss() -> Hit {
 
 fn height_at(level: i32, node: vec2<i32>) -> f32 {
     return textureLoad(heights, node, level).r;
+}
+
+// ¿Dibuja ya el terreno cercano la columna de chunk de esta celda? Solo el
+// nivel 0 llega al campo cercano (los anillos de fuera empiezan más allá).
+fn is_near_owned(cell: vec2<i32>) -> bool {
+    if (u32(tile.bounds.z) != 0u) {
+        return false;
+    }
+    let centre = tile.origin.xz + (vec2<f32>(cell) + 0.5) * tile.origin.w;
+    let chunk = vec2<i32>(floor(centre / CHUNK_M));
+    let texel = ((chunk % MASK_SIZE) + MASK_SIZE) % MASK_SIZE;
+    return all(textureLoad(near_mask, texel, 0).xy == chunk);
 }
 
 fn cell_index(p: f32, d: f32) -> i32 {
@@ -114,7 +131,12 @@ fn trace(o: vec3<f32>, d: vec3<f32>) -> Hit {
             t_exit = t_far;
             exit_axis = 1;
         }
-        let h = height_at(level, node);
+        // Columna del cercano = aire (`trace_with_air`). Los mips siguen
+        // contando su altura: el salto de nodos queda conservador.
+        var h = height_at(level, node);
+        if (level == 0 && is_near_owned(node)) {
+            h = -INF;
+        }
         let lowest = min(o.y + d.y * t, o.y + d.y * t_exit);
         if (lowest > h) {
             if (exit_axis == 1) {
