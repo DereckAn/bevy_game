@@ -7,6 +7,9 @@
 // (retrocediendo medio voxel por la normal), se hashea a un índice de tono y se
 // escala el brillo del color base. `hash01` y `step_multiplier` replican las de
 // `src/voxel/palette.rs` para que el resultado sea idéntico voxel a voxel.
+//
+// El pasto no usa paleta: su verde (parches de ruido + grano + altura) se calcula
+// aquí por celda, así sus caras superiores se fusionan como cualquier material.
 
 #import bevy_pbr::{
     pbr_fragment::pbr_input_from_standard_material,
@@ -27,7 +30,7 @@ var<private> SPREADS: array<vec4<f32>, 24> = array<vec4<f32>, 24>(
     vec4<f32>(0.60, 1.35, 6.0, 0.0), // 2  Stone
     vec4<f32>(0.70, 1.25, 5.0, 0.0), // 3  Wood
     vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 4  Metal
-    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 5  Grass (color baked en CPU)
+    vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 5  Grass (verde propio: grass_color)
     vec4<f32>(0.88, 1.10, 4.0, 0.0), // 6  Sand
     vec4<f32>(0.80, 1.15, 4.0, 0.0), // 7  Leaves
     vec4<f32>(0.0, 0.0, 0.0, 0.0),   // 8  Foliage
@@ -68,6 +71,49 @@ fn step_multiplier(i: u32, steps: u32, dark: f32, light: f32) -> f32 {
     return 1.0 + t * (light - 1.0);
 }
 
+// Parches del pasto: escala del ruido (una celda cada ~0.2 m), contraste del fbm
+// y peso del grano por voxel.
+const GRASS_NOISE_SCALE: f32 = 5.0;
+const GRASS_CONTRAST: f32 = 1.8;
+const GRASS_GRAIN: f32 = 0.25;
+// Tinte por altura: de exuberante a seco entre estas alturas (m).
+const GRASS_HEIGHT_LOW: f32 = 8.0;
+const GRASS_HEIGHT_HIGH: f32 = 80.0;
+// Verdes extremos en RGB LINEAL (sRGB (0.08,0.22,0.08) y (0.45,0.65,0.30)).
+const GRASS_DARK: vec3<f32> = vec3<f32>(0.00719, 0.03968, 0.00719);
+const GRASS_LIGHT: vec3<f32> = vec3<f32>(0.17064, 0.38006, 0.07324);
+const GRASS_ID: u32 = 5u;
+
+// Value noise 2D: hash en rejilla entera + smoothstep → parches suaves.
+fn value_noise(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = p - i;
+    let x0 = i32(i.x);
+    let z0 = i32(i.y);
+    let s = f * f * (3.0 - 2.0 * f);
+    let a = mix(hash01(x0, z0), hash01(x0 + 1, z0), s.x);
+    let b = mix(hash01(x0, z0 + 1), hash01(x0 + 1, z0 + 1), s.x);
+    return mix(a, b, s.y);
+}
+
+// Verde del pasto en el centro de la celda `cell` (coordenadas de voxel).
+fn grass_color(cell: vec3<f32>) -> vec3<f32> {
+    let center = (cell + 0.5) * VOXEL_SIZE;
+    // Rotar ~0.5 rad para que la rejilla del ruido no se alinee con la de voxels
+    // (evita el patrón en diamante del value noise).
+    let r = vec2<f32>(
+        center.x * 0.87758256 - center.z * 0.47942554,
+        center.x * 0.47942554 + center.z * 0.87758256,
+    ) * GRASS_NOISE_SCALE;
+    let fbm = (value_noise(r) + 0.5 * value_noise(r * 2.0)) / 1.5;
+    let patches = clamp((fbm - 0.5) * GRASS_CONTRAST + 0.5, 0.0, 1.0);
+    let grain = hash01(i32(cell.x), i32(cell.z));
+    let n = patches * (1.0 - GRASS_GRAIN) + grain * GRASS_GRAIN;
+    let height = clamp((center.y - GRASS_HEIGHT_LOW) / (GRASS_HEIGHT_HIGH - GRASS_HEIGHT_LOW), 0.0, 1.0);
+    let t = clamp(n + height * 0.30, 0.0, 1.0);
+    return mix(GRASS_DARK, GRASS_LIGHT, t);
+}
+
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
@@ -77,9 +123,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let id = min(u32(round(in.color.a * 255.0)), 23u);
     let spread = SPREADS[id]; // (dark_mul, light_mul, steps, 0)
     let steps = u32(spread.z);
-    if (steps >= 1u) {
-        // Centro de la celda sólida: retrocede medio voxel por la normal, trunca.
-        let cell = floor((in.world_position.xyz - in.world_normal * (VOXEL_SIZE * 0.5)) / VOXEL_SIZE);
+    // Centro de la celda sólida: retrocede medio voxel por la normal, trunca.
+    let cell = floor((in.world_position.xyz - in.world_normal * (VOXEL_SIZE * 0.5)) / VOXEL_SIZE);
+    if (id == GRASS_ID) {
+        // El vertex color del pasto es blanco × sombreado por cara.
+        pbr_input.material.base_color = vec4<f32>(pbr_input.material.base_color.rgb * grass_color(cell), pbr_input.material.base_color.a);
+    } else if (steps >= 1u) {
         let h = hash01(i32(cell.x) + i32(cell.y) * 31, i32(cell.z));
         let idx = min(u32(h * f32(steps)), steps - 1u);
         let mul = step_multiplier(idx, steps, spread.x, spread.y);

@@ -44,12 +44,6 @@ impl BaseChunk {
         chunk
     }
 
-    /// Un voxel es sólido si no es aire. Reemplaza a `get_density() <= 0.0`:
-    /// `voxel_types` ya contiene exactamente esa información.
-    pub fn is_solid(&self, x: usize, y: usize, z: usize) -> bool {
-        self.voxel_types[x][y][z] != VoxelType::Air
-    }
-
     /// ¿Hay algún voxel de agua en el chunk? Un escaneo lineal (32³ comparaciones
     /// de un byte) para descartar el pase de mallado del agua, que es órdenes de
     /// magnitud más caro y en un bioma seco siempre devuelve una malla vacía.

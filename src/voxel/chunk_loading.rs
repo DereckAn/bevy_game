@@ -533,6 +533,9 @@ fn spawn_column_lod(
                 Transform::from_xyz(0.0, -LOD_DROP, 0.0),
                 lod_chunk,
                 ChunkLOD::from_distance(distance_chunks as f32),
+                // Las teselas LOD quedan fuera del alcance de sombras (80 m), pero
+                // las cascadas igual las dibujaban como proyectoras
+                bevy::light::NotShadowCaster,
             ))
             .id(),
     )

@@ -61,8 +61,8 @@ pub fn spawn_sun(mut commands: Commands) {
         // dibujar en cada cascada. Acabar justo antes de la niebla (90 m) evita
         // ese coste donde la sombra ya casi no se distingue.
         CascadeShadowConfigBuilder {
-            num_cascades: 3,
-            maximum_distance: 80.0,
+            num_cascades: 2,
+            maximum_distance: 50.0,
             ..default()
         }
         .build(),

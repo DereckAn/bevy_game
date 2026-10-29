@@ -51,6 +51,9 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Voxel game".to_string(),
+                // Sin vsync al perfilar: con el tope de refresco los cambios de coste GPU no se ven en los FPS
+                #[cfg(feature = "tracy")]
+                present_mode: bevy::window::PresentMode::AutoNoVsync,
                 ..default()
             }),
             // El cursor arranca visible (estamos en MainMenu); el estado

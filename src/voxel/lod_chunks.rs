@@ -167,16 +167,9 @@ pub fn mesh_lod_chunk(lod_chunk: &LodChunk, seed: i32, kind: WorldKind) -> Mesh 
             let p2 = Vec3::new(x1, h11, z1);
             let p3 = Vec3::new(x0, h01, z1);
 
-            // Color de la celda: tipo de superficie muestreado en su centro, mismo
-            // campo de ruido que el terreno cercano (encaja sin costura de color).
-            let center_h = (h00 + h10 + h11 + h01) * 0.25;
-            let color = voxel_color(
-                lod_chunk.surface_types[index],
-                x0 + voxel_step * 0.5,
-                center_h,
-                z0 + voxel_step * 0.5,
-                0.0,
-            );
+            // Mismo material de paleta que el terreno cercano: el shader pinta el
+            // pasto desde la posición mundial, así encaja sin costura de color.
+            let color = voxel_color(lod_chunk.surface_types[index]);
 
             // Dos triángulos (winding CCW visto desde +Y → cara frontal hacia arriba).
             add_terrain_tri(
