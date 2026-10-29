@@ -14,6 +14,7 @@ pub mod biomes;
 pub mod chunk_loading;
 pub mod destruction;
 pub mod dynamic_chunks;
+pub mod far_terrain;
 pub mod frustum_culling;
 pub mod greedy_meshing;
 pub mod lod_chunks;

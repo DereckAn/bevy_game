@@ -61,10 +61,12 @@ fn main() {
             ..default()
         })) // Añade plugins básicos (ventana, input, render, etc.)
         .add_plugins(MaterialPlugin::<crate::voxel::ChunkMaterial>::default()) // Material de chunks con paleta
+        .add_systems(Startup, crate::voxel::load_palette_library) // WGSL compartido por los shaders de terreno
         .add_plugins(PhysicsPlugin) // Añade nuestro plugin de física (Rapier)
         .add_plugins(UIPlugin) // Anade el plugin de ui 
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
         .add_plugins(SkyPlugin) // Añade el cielo (atmósfera, ciclo día/noche, nubes)
+        .add_plugins(voxel::far_terrain::FarTerrainPlugin) // Terreno lejano trazado por rayos (prototipo)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
         .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque

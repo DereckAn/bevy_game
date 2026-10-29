@@ -28,3 +28,17 @@ impl MaterialExtension for PaletteExtension {
         SHADER_PATH.into()
     }
 }
+
+/// Librería WGSL de la paleta (`voxel::palette`), importada por este shader y
+/// por el del terreno lejano. Un `#import` solo resuelve si el shader está
+/// cargado, así que se guarda su handle para que no se descargue.
+#[derive(Resource)]
+pub struct PaletteShaderLibrary {
+    _handle: Handle<Shader>,
+}
+
+pub fn load_palette_library(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(PaletteShaderLibrary {
+        _handle: asset_server.load("shaders/voxel_palette.wgsl"),
+    });
+}
