@@ -5,6 +5,8 @@
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 
+use crate::voxel::{BaseChunk, LodChunk};
+
 /// Plugin que configura todas las herramientas de debug y profiling
 pub struct DebugPlugin;
 
@@ -17,6 +19,11 @@ impl Plugin for DebugPlugin {
             // Sistema para mostrar FPS en pantalla
             .add_systems(Startup, setup_fps_display)
             .add_systems(Update, update_fps_display);
+
+        // Al cambiar a la ventana de Tracy, Bevy limitaría el juego a 60 Hz y
+        // falsearía la traza
+        #[cfg(feature = "tracy")]
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
     }
 }
 
@@ -44,6 +51,9 @@ fn setup_fps_display(mut commands: Commands) {
 fn update_fps_display(
     diagnostics: Res<DiagnosticsStore>,           // Acceso a las métricas del sistema
     mut query: Query<&mut Text, With<FpsText>>,   // Query para encontrar el texto de FPS
+    real_chunks: Query<(), With<BaseChunk>>,
+    lod_chunks: Query<(), With<LodChunk>>,
+    meshes: Query<&ViewVisibility, With<Mesh3d>>,
 ) {
     // Intentar obtener el texto de FPS
     if let Ok(mut text) = query.single_mut() {
@@ -65,5 +75,16 @@ fn update_fps_display(
             // Agregar frame time al texto
             **text = format!("{}\nFrame Time: {:.2}ms", **text, frame_time * 1000.0);
         }
+
+        // Cuántas mallas hay y cuántas pasan el culling: aproxima los draw calls
+        let visible = meshes.iter().filter(|v| v.get()).count();
+        **text = format!(
+            "{}\nChunks: {} real, {} LOD\nMeshes: {} visible / {} total",
+            **text,
+            real_chunks.count(),
+            lod_chunks.count(),
+            visible,
+            meshes.iter().count(),
+        );
     }
 }

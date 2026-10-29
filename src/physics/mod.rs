@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
 // Re-exportar componentes de Rapier que usamos
-pub use bevy_rapier3d::prelude::{Collider, RigidBody};
+pub use bevy_rapier3d::prelude::Collider;
 
 // Re-exportar nuestras funciones personalizadas
 pub use rapier_integration::{

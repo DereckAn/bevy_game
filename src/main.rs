@@ -24,7 +24,7 @@ use ui::UIPlugin;
 use bevy::prelude::*;
 use core::{GameSettings, WorldSeed, WorldKind}; // Importa recursos globales desde nuestro módulo core
 use debug::DebugPlugin;
-use physics::{PhysicsPlugin, RigidBody}; // Importa componentes de física
+use physics::PhysicsPlugin;
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use sky::SkyPlugin; // Importa SkyPlugin (atmósfera, día/noche, nubes)
 use voxel::{
@@ -166,7 +166,7 @@ fn setup(
 
         // El collider sale de la capa COLISIONABLE, NO del mesh de render (que
         // incluye follaje y agua, atravesables). `None` = chunk sin geometría
-        // sólida; se spawnea igual, solo sin cuerpo rígido.
+        // sólida; se spawnea igual, solo sin collider.
         let collider = build_chunk_collider(&base_chunk);
 
         // Agua translúcida: entidad hija, sin collider (se atraviesa y se nada).
@@ -185,7 +185,7 @@ fn setup(
         ));
 
         if let Some(collider) = collider {
-            ec.insert((RigidBody::Fixed, collider));
+            ec.insert(collider);
         }
         if let Some(water_mesh) = water_mesh {
             ec.with_child((

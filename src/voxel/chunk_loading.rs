@@ -5,7 +5,7 @@
 
 use crate::{
     core::{BASE_CHUNK_SIZE, SEA_LEVEL_M, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed, WorldKind},
-    physics::{Collider, RigidBody, create_terrain_collider},
+    physics::{Collider, create_terrain_collider},
     player::Player,
     voxel::{
         BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, MeshLayer,
@@ -447,6 +447,7 @@ pub fn load_chunks_system(
                         // complete_chunk_generation_system. Aquí, en el hilo de fondo,
                         // construimos el COLLIDER con un mesh simple solo-colisionable
                         // (sin vecinos) → saca el trabajo caro del hilo principal.
+                        let _span = info_span!("chunk_generate").entered();
                         let mut base_chunk = BaseChunk::new(chunk_pos, seed, kind);
 
                         if let Some(diffs) = &chunk_diffs {
@@ -577,6 +578,7 @@ pub fn complete_chunk_generation_system(
             let borders = NeighborBorders::gather(base_chunk.position, &chunk_map, &base_chunks);
             let chunk_copy = base_chunk.clone();
             let mesh_task = AsyncComputeTaskPool::get().spawn(async move {
+                let _span = info_span!("chunk_mesh").entered();
                 let mesh = greedy_mesh_with_borders(&chunk_copy, &borders, MeshLayer::Opaque);
                 // El pase del agua solo se paga si el chunk TIENE agua: en un bioma
                 // seco devolvería una malla vacía tras todo el trabajo.
@@ -595,8 +597,10 @@ pub fn complete_chunk_generation_system(
                 base_chunk,
                 ChunkMeshTask(mesh_task),
             ));
+            // Collider sin RigidBody = estático para Rapier; con `RigidBody::Fixed`
+            // Rapier hacía writeback de miles de cuerpos inmóviles cada frame.
             if let Some(collider) = collider {
-                ec.insert((RigidBody::Fixed, collider));
+                ec.insert(collider);
             }
             ec.remove::<ChunkGenerationTask>();
 

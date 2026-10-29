@@ -12,6 +12,10 @@ rand = "0.8"
 rayon = "1.11.0"
 futures-lite = "2.5.0"
 
+# `cargo run --release --features tracy` y conectar el visor Tracy 0.14.x (`brew install tracy`)
+[features]
+tracy = ["bevy/trace_tracy"]
+
 # Compilación rápida en desarrollo
 [profile.dev]
 opt-level = 1
