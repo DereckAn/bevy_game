@@ -6,6 +6,8 @@ pub mod physics;
 pub mod debug;
 pub mod ui;
 pub mod vegetation;
+pub mod enemy;
+
 
 // Re-exporta los plugins principales para facilitar el uso
 pub use player::PlayerPlugin;

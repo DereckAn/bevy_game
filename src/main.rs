@@ -15,6 +15,7 @@ mod player; // Declara el módulo 'player' (busca src/player/mod.rs)
 mod sky; // Declara el módulo 'sky' (busca src/sky/mod.rs)
 mod voxel; // Declara el módulo 'voxel' (busca src/voxel/mod.rs) // Declara el módulo 'debug' (busca src/debug/mod.rs)
 mod vegetation; // Declara el módulo 'vegetation' (busca src/vegetation/mod.rs)
+mod enemy; // Declara el módulo 'enemy' (busca src/enemy/mod.rs)
 
 // ============================================================================
 // IMPORTS (TRAER CÓDIGO DE OTROS MÓDULOS)
@@ -35,6 +36,7 @@ use voxel::{
     teardown_world, unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
     update_frustum_culling, update_voxel_breaking_system, TerrainGenerator, VoxelDiffs,
 };
+use enemy::EnemyPlugin;
 
 use crate::core::GameState;
 
@@ -62,6 +64,7 @@ fn main() {
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
         .add_plugins(SkyPlugin) // Añade el cielo (atmósfera, ciclo día/noche, nubes)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
+        .add_plugins(EnemyPlugin) 
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
         .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque
         .insert_resource(WorldKind::default()) // Mundo por defecto: Normal (lo fija el menú)
