@@ -8,7 +8,7 @@ mod time_of_day;
 
 use bevy::prelude::*;
 
-pub use clouds::CloudMaterial;
+pub use clouds::{CloudDome, CloudMaterial};
 pub use time_of_day::TimeOfDay;
 
 use clouds::{despawn_cloud_dome, spawn_cloud_dome, update_cloud_material};

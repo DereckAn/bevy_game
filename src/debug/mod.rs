@@ -4,7 +4,10 @@
 
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::pbr::Atmosphere;
+use bevy::post_process::bloom::Bloom;
 
+use crate::sky::CloudDome;
 use crate::voxel::{BaseChunk, LodChunk};
 
 /// Plugin que configura todas las herramientas de debug y profiling
@@ -18,7 +21,10 @@ impl Plugin for DebugPlugin {
             
             // Sistema para mostrar FPS en pantalla
             .add_systems(Startup, setup_fps_display)
-            .add_systems(Update, update_fps_display);
+            .add_systems(Update, update_fps_display)
+            // Interruptores para aislar qué gasta GPU: comparar FPS mirando al mismo sitio
+            .init_resource::<GpuToggles>()
+            .add_systems(Update, (toggle_gpu_features, hide_new_lod_tiles));
 
         // Al cambiar a la ventana de Tracy, Bevy limitaría el juego a 60 Hz y
         // falsearía la traza
@@ -87,4 +93,70 @@ fn update_fps_display(
             meshes.iter().count(),
         );
     }
+}
+/// Estado de los interruptores de diagnóstico de GPU (F3/F4/F5).
+#[derive(Resource)]
+struct GpuToggles {
+    shadows: bool,
+    lod_tiles: bool,
+    sky_effects: bool,
+}
+
+impl Default for GpuToggles {
+    fn default() -> Self {
+        Self { shadows: true, lod_tiles: true, sky_effects: true }
+    }
+}
+
+/// F3: sombras del sol. F4: teselas LOD. F5: atmósfera, bloom y nubes.
+fn toggle_gpu_features(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut toggles: ResMut<GpuToggles>,
+    mut commands: Commands,
+    mut lights: Query<&mut DirectionalLight>,
+    mut lod_tiles: Query<&mut Visibility, (With<LodChunk>, Without<CloudDome>)>,
+    mut clouds: Query<&mut Visibility, (With<CloudDome>, Without<LodChunk>)>,
+    cameras: Query<Entity, With<Camera3d>>,
+) {
+    if keys.just_pressed(KeyCode::F3) {
+        toggles.shadows = !toggles.shadows;
+        for mut light in &mut lights {
+            light.shadows_enabled = toggles.shadows;
+        }
+        info!("Sombras: {}", toggles.shadows);
+    }
+    if keys.just_pressed(KeyCode::F4) {
+        toggles.lod_tiles = !toggles.lod_tiles;
+        for mut visibility in &mut lod_tiles {
+            *visibility = visibility_for(toggles.lod_tiles);
+        }
+        info!("Teselas LOD: {}", toggles.lod_tiles);
+    }
+    if keys.just_pressed(KeyCode::F5) {
+        toggles.sky_effects = !toggles.sky_effects;
+        for mut visibility in &mut clouds {
+            *visibility = visibility_for(toggles.sky_effects);
+        }
+        for camera in &cameras {
+            if toggles.sky_effects {
+                commands.entity(camera).insert((Atmosphere::EARTH, Bloom::NATURAL));
+            } else {
+                commands.entity(camera).remove::<(Atmosphere, Bloom)>();
+            }
+        }
+        info!("Atmósfera/bloom/nubes: {}", toggles.sky_effects);
+    }
+}
+
+/// Las teselas LOD que se crean con F4 activo nacen visibles; se ocultan aquí.
+fn hide_new_lod_tiles(toggles: Res<GpuToggles>, mut new_tiles: Query<&mut Visibility, Added<LodChunk>>) {
+    if !toggles.lod_tiles {
+        for mut visibility in &mut new_tiles {
+            *visibility = Visibility::Hidden;
+        }
+    }
+}
+
+fn visibility_for(is_on: bool) -> Visibility {
+    if is_on { Visibility::Inherited } else { Visibility::Hidden }
 }

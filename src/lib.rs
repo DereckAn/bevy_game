@@ -4,6 +4,7 @@ pub mod voxel;
 pub mod player;
 pub mod physics;
 pub mod debug;
+pub mod sky;
 pub mod ui;
 pub mod vegetation;
 

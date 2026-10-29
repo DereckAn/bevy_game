@@ -76,7 +76,7 @@ pub fn spawn_sun(mut commands: Commands) {
 /// justo la escala del juego: 1 unidad = 1 metro).
 pub fn setup_sky_camera(
     mut commands: Commands,
-    cameras: Query<Entity, (With<Camera3d>, Without<Atmosphere>)>,
+    cameras: Query<Entity, Added<Camera3d>>,
 ) {
     for entity in &cameras {
         commands.entity(entity).insert((
