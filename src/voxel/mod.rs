@@ -24,6 +24,10 @@ pub mod lod_system;
 #[allow(dead_code)]
 pub mod palette;
 pub mod palette_material;
+// Referencia en Rust del trazado del terreno lejano; el render usará su port a
+// WGSL, así que en el binario aún no lo llama nadie.
+#[allow(dead_code)]
+pub mod raymarch;
 pub mod spatial_hash;
 pub mod tools;
 pub mod voxel_color;
