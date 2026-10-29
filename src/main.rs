@@ -28,13 +28,13 @@ use physics::PhysicsPlugin;
 use player::PlayerPlugin; // Importa PlayerPlugin desde nuestro módulo player
 use sky::SkyPlugin; // Importa SkyPlugin (atmósfera, día/noche, nubes)
 use voxel::{
-    BaseChunk, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, ColumnLods, SpatialHashGrid,
+    BaseChunk, ChunkCollider, ChunkLOD, ChunkLoadQueue, ChunkMap, ChunkMaterials, ColumnLods, SpatialHashGrid,
     WaterMesh, build_chunk_collider, complete_chunk_generation_system, complete_chunk_mesh_system,
     evict_real_to_lod_system,
     greedy_mesh_basechunk_simple, greedy_mesh_basechunk_water_simple, load_chunks_system,
     remesh_dirty_chunks_system, retire_covered_lods_system, start_voxel_breaking_system,
     teardown_world, unload_chunks_system, update_chunk_load_queue, update_chunk_lod_system,
-    update_frustum_culling, update_voxel_breaking_system, TerrainGenerator, VoxelDiffs,
+    update_chunk_colliders_system, update_frustum_culling, update_voxel_breaking_system, TerrainGenerator, VoxelDiffs,
 };
 
 use crate::core::GameState;
@@ -100,6 +100,7 @@ fn main() {
                 // Transiciones Real ↔ LOD por columna, sin huecos (load-before-unload)
                 retire_covered_lods_system,
                 evict_real_to_lod_system,
+                update_chunk_colliders_system,
                 // Optimización: Frustum culling
                 update_frustum_culling,
             )
@@ -185,7 +186,7 @@ fn setup(
         ));
 
         if let Some(collider) = collider {
-            ec.insert(collider);
+            ec.insert(ChunkCollider(collider));
         }
         if let Some(water_mesh) = water_mesh {
             ec.with_child((

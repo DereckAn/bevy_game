@@ -3,7 +3,7 @@
 //! Premite al jugador romper voxels usando herramientas.
 
 use super::{
-    chunk_loading::{build_chunk_collider, ChunkMaterials, ChunkMeshTask, WaterMesh},
+    chunk_loading::{build_chunk_collider, ChunkCollider, ChunkMaterials, ChunkMeshTask, WaterMesh},
     greedy_meshing::{greedy_mesh_basechunk, greedy_mesh_basechunk_water},
     tools::{Tool, ToolType},
     BaseChunk, VoxelType, VOXEL_TYPE_COUNT,
@@ -525,12 +525,14 @@ pub fn remesh_dirty_chunks_system(
 
         // El collider sale de la capa COLISIONABLE, NO del mesh de render: este
         // incluye follaje y (en el manglar) agua, que deben poder atravesarse.
+        // `update_chunk_colliders_system` lleva el cambio a Rapier si el chunk
+        // está activo.
         match build_chunk_collider(chunk) {
             Some(collider) => {
-                commands.entity(entity).insert(collider);
+                commands.entity(entity).insert(ChunkCollider(collider));
             }
             None => {
-                commands.entity(entity).remove::<Collider>();
+                commands.entity(entity).remove::<(ChunkCollider, Collider)>();
             }
         }
 

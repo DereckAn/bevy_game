@@ -5,7 +5,7 @@
 
 use crate::{
     core::{BASE_CHUNK_SIZE, SEA_LEVEL_M, VOXEL_SIZE, WORLD_CHUNK_RADIUS, WorldSeed, WorldKind},
-    physics::{Collider, create_terrain_collider},
+    physics::{Collider, RigidBody, create_terrain_collider},
     player::Player,
     voxel::{
         BaseChunk, ChunkLOD, ChunkMap, ChunkMaterial, LodChunk, LodLevel, MeshLayer,
@@ -182,6 +182,17 @@ impl ChunkMaterials {
         self.water.clone()
     }
 }
+
+/// Radio (en chunks, métrica de Chebyshev) alrededor de cada cuerpo dinámico en
+/// el que los chunks tienen collider activo en Rapier.
+const PHYSICS_CHUNK_RADIUS: i32 = 2;
+
+/// Collider de un chunk, guardado fuera de Rapier. Solo los chunks cerca de un
+/// cuerpo dinámico reciben un `Collider` real (ver `update_chunk_colliders_system`):
+/// con miles de colliders, la broad phase de Rapier pagaba cada frame por pares
+/// chunk-chunk que nunca colisionan.
+#[derive(Component)]
+pub struct ChunkCollider(pub Collider);
 
 /// Marca la entidad HIJA que lleva la malla translúcida de agua de un chunk.
 /// Permite volver a encontrarla para reconstruirla cuando el chunk se remalla
@@ -600,7 +611,7 @@ pub fn complete_chunk_generation_system(
             // Collider sin RigidBody = estático para Rapier; con `RigidBody::Fixed`
             // Rapier hacía writeback de miles de cuerpos inmóviles cada frame.
             if let Some(collider) = collider {
-                ec.insert(collider);
+                ec.insert(ChunkCollider(collider));
             }
             ec.remove::<ChunkGenerationTask>();
 
@@ -681,6 +692,48 @@ pub fn unload_chunks_system(
             }
             commands.entity(entity).despawn();
         }
+    }
+}
+
+/// Activa en Rapier los colliders de los chunks cercanos a cualquier cuerpo
+/// dinámico (jugadores, drops; en multijugador también los remotos) y desactiva
+/// el resto. Un `ChunkCollider` cambiado (voxel roto) se vuelve a insertar.
+pub fn update_chunk_colliders_system(
+    mut commands: Commands,
+    chunk_map: Res<ChunkMap>,
+    bodies: Query<(&RigidBody, &GlobalTransform)>,
+    chunk_colliders: Query<(Ref<ChunkCollider>, Has<Collider>)>,
+    active: Query<(Entity, &BaseChunk), (With<ChunkCollider>, With<Collider>)>,
+) {
+    let mut wanted = HashSet::new();
+    for (body, transform) in &bodies {
+        if *body != RigidBody::Dynamic {
+            continue;
+        }
+        let center = world_pos_to_chunk_pos(transform.translation());
+        let r = PHYSICS_CHUNK_RADIUS;
+        for x in -r..=r {
+            for y in -r..=r {
+                for z in -r..=r {
+                    wanted.insert(center + IVec3::new(x, y, z));
+                }
+            }
+        }
+    }
+
+    for pos in &wanted {
+        let Some(&entity) = chunk_map.chunks.get(pos) else { continue };
+        let Ok((chunk_collider, has_collider)) = chunk_colliders.get(entity) else { continue };
+        if !has_collider || chunk_collider.is_changed() {
+            commands.entity(entity).insert(chunk_collider.0.clone());
+        }
+    }
+
+    // HACK(DereckAn): una sola baja por frame. parry 0.25 (bevy_rapier 0.32) entra
+    // en pánico con varias bajas sin un refit entre medias si el árbol se reduce a
+    // una raíz parcial; arreglado en parry 0.28, que exige Bevy 0.18 (dimforge/parry#409).
+    if let Some((entity, _)) = active.iter().find(|(_, chunk)| !wanted.contains(&chunk.position)) {
+        commands.entity(entity).remove::<Collider>();
     }
 }
 
@@ -937,5 +990,65 @@ pub fn evict_real_to_lod_system(
         chunk_map.chunks.remove(&pos);
         spatial_hash.remove(pos);
         load_queue.to_unload.push((pos, entity));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// Mundo con un cuerpo dinámico en el origen y dos chunks con collider
+    /// guardado: uno junto al cuerpo y otro lejos. Devuelve (cerca, lejos).
+    fn world_with_body_and_chunks() -> (World, Entity, Entity) {
+        let mut world = World::new();
+        let mut chunk_map = ChunkMap { chunks: HashMap::new() };
+        let mut spawn_chunk = |world: &mut World, pos: IVec3| {
+            let entity = world
+                .spawn((BaseChunk::new(pos, 0, WorldKind::Normal), ChunkCollider(Collider::ball(1.0))))
+                .id();
+            chunk_map.chunks.insert(pos, entity);
+            entity
+        };
+        let near = spawn_chunk(&mut world, IVec3::new(1, 0, 0));
+        let far = spawn_chunk(&mut world, IVec3::new(PHYSICS_CHUNK_RADIUS + 1, 0, 0));
+        world.insert_resource(chunk_map);
+        world.spawn((RigidBody::Dynamic, GlobalTransform::default()));
+        (world, near, far)
+    }
+
+    #[test]
+    fn chunk_near_a_dynamic_body_gets_a_rapier_collider() {
+        let (mut world, near, _) = world_with_body_and_chunks();
+
+        world.run_system_once(update_chunk_colliders_system).unwrap();
+
+        assert!(world.entity(near).contains::<Collider>());
+    }
+
+    #[test]
+    fn chunk_far_from_every_dynamic_body_loses_its_rapier_collider() {
+        let (mut world, _, far) = world_with_body_and_chunks();
+        world.entity_mut(far).insert(Collider::ball(1.0));
+
+        world.run_system_once(update_chunk_colliders_system).unwrap();
+
+        assert!(!world.entity(far).contains::<Collider>());
+    }
+
+    #[test]
+    fn at_most_one_rapier_collider_is_removed_per_frame() {
+        let (mut world, _, far) = world_with_body_and_chunks();
+        let farther = IVec3::new(PHYSICS_CHUNK_RADIUS + 2, 0, 0);
+        let farther = world
+            .spawn((BaseChunk::new(farther, 0, WorldKind::Normal), ChunkCollider(Collider::ball(1.0))))
+            .id();
+        world.entity_mut(far).insert(Collider::ball(1.0));
+        world.entity_mut(farther).insert(Collider::ball(1.0));
+
+        world.run_system_once(update_chunk_colliders_system).unwrap();
+
+        let still_active = [far, farther].map(|e| world.entity(e).contains::<Collider>());
+        assert_eq!(still_active.iter().filter(|&&has| has).count(), 1);
     }
 }

@@ -9,6 +9,7 @@
 use std::f32::consts::TAU;
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::pbr::{Atmosphere, DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -56,6 +57,15 @@ pub fn spawn_sun(mut commands: Commands) {
             shadows_enabled: true,
             ..default()
         },
+        // Por defecto: 4 cascadas hasta 150 m, y cada chunk dentro se vuelve a
+        // dibujar en cada cascada. Acabar justo antes de la niebla (90 m) evita
+        // ese coste donde la sombra ya casi no se distingue.
+        CascadeShadowConfigBuilder {
+            num_cascades: 3,
+            maximum_distance: 80.0,
+            ..default()
+        }
+        .build(),
         Transform::default(),
     ));
 }
