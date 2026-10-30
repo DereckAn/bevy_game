@@ -77,6 +77,8 @@ pub struct FarTerrainPlugin;
 
 impl Plugin for FarTerrainPlugin {
     fn build(&self, app: &mut App) {
+        #[cfg(feature = "tracy")]
+        app.add_systems(Last, report_far_workload);
         let readiness = FarReadiness::default();
         let near_readiness = NearReadiness::default();
         app.add_plugins(MaterialPlugin::<FarTileMaterial>::default())
@@ -468,7 +470,13 @@ fn update_near_coverage(
     far: Res<FarTiles>,
     mut visibility: Query<&mut Visibility, (With<FarTile>, Without<MeshMaterial3d<ChunkMaterial>>)>,
 ) {
-    let mut near = near_readiness.0.lock().unwrap();
+    let mut near = {
+        #[cfg(feature = "tracy")]
+        let _wait = info_span!("near_coverage_lock_wait").entered();
+        near_readiness.0.lock().unwrap()
+    };
+    #[cfg(feature = "tracy")]
+    let build_span = info_span!("near_coverage_ownership_build").entered();
     let mut candidates = Vec::new();
     let mut is_drawable = |entity: Entity, needs_visible: bool| {
         let Ok((mesh, material, entity_visibility)) = drawables.get(entity) else {
@@ -503,6 +511,10 @@ fn update_near_coverage(
     );
     near.candidates = candidates;
     drop(near);
+    #[cfg(feature = "tracy")]
+    drop(build_span);
+    #[cfg(feature = "tracy")]
+    let _mask = info_span!("near_coverage_mask_and_visibility").entered();
 
     let mut texels = vec![NOT_NEAR; (MASK_SIZE * MASK_SIZE) as usize];
     for &column in &owned {
@@ -541,7 +553,13 @@ fn mark_ready_near_entities(
     view_pipelines: Res<SpecializedMaterialPipelineCache>,
     pipeline_cache: Res<PipelineCache>,
 ) {
-    let mut readiness = readiness.0.lock().unwrap();
+    let mut readiness = {
+        #[cfg(feature = "tracy")]
+        let _wait = info_span!("near_render_lock_wait").entered();
+        readiness.0.lock().unwrap()
+    };
+    #[cfg(feature = "tracy")]
+    let _work = info_span!("near_render_readiness_work").entered();
     let NearReady { candidates, ready } = &mut *readiness;
     let views: Vec<&SpecializedMaterialViewPipelineCache> = view_pipelines.values().collect();
     let compiled_materials: Vec<HashSet<AssetId<ChunkMaterial>>> = views
@@ -737,6 +755,8 @@ fn plan_swaps(
 }
 
 fn generate_tile(key: TileKey, seed: i32, kind: WorldKind) -> TileHeights {
+    #[cfg(feature = "tracy")]
+    let _span = info_span!("far_tile_generate").entered();
     let cell = cell_m(key.level);
     let origin = key.idx.as_vec2() * tile_m(key.level);
     let mut terrain_gen = TerrainGenerator::new(seed, kind);
@@ -839,6 +859,19 @@ fn heights_image(tile: &TileHeights) -> Image {
     image.texture_descriptor.mip_level_count = MIP_COUNT as u32;
     image.data = Some(tile.mips.iter().flatten().flat_map(|h| h.to_le_bytes()).collect());
     image
+}
+
+/// Sample counts without acquiring the shared render-readiness locks.
+#[cfg(feature = "tracy")]
+fn report_far_workload(time: Res<Time<Real>>, far: Res<FarTiles>, mut last: Local<f64>) {
+    let now = time.elapsed_secs_f64();
+    if now - *last < 1.0 {
+        return;
+    }
+    *last = now;
+    let live = far.tiles.values().filter(|tile| tile.is_live).count();
+    info!("PROFILE far: desired={} queued={} generating={} live={} waiting={}",
+        far.desired.len(), far.queue.len(), far.pending.len(), live, far.tiles.len() - live);
 }
 
 #[cfg(test)]

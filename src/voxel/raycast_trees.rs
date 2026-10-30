@@ -101,6 +101,8 @@ fn attach_trees(
 }
 
 fn tree_mesh(chunk: &LodChunk, seed: i32, kind: WorldKind) -> Option<Mesh> {
+    #[cfg(feature = "tracy")]
+    let _span = info_span!("lod_tree_proxy_build").entered();
     if chunk.lod_level == LodLevel::Minimal {
         return None;
     }

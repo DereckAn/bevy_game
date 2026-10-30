@@ -2,6 +2,9 @@
 // DEBUG Y PROFILING TOOLS
 // ============================================================================
 
+#[cfg(feature = "tracy")]
+mod profiling;
+
 use bevy::prelude::*;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::pbr::Atmosphere;
@@ -29,7 +32,10 @@ impl Plugin for DebugPlugin {
         // Al cambiar a la ventana de Tracy, Bevy limitaría el juego a 60 Hz y
         // falsearía la traza
         #[cfg(feature = "tracy")]
-        app.insert_resource(bevy::winit::WinitSettings::continuous());
+        {
+            app.insert_resource(bevy::winit::WinitSettings::continuous());
+            profiling::install(app);
+        }
     }
 }
 
@@ -79,7 +85,7 @@ fn update_fps_display(
             .and_then(|ft| ft.smoothed())                 // Obtener valor suavizado
         {
             // Agregar frame time al texto
-            **text = format!("{}\nFrame Time: {:.2}ms", **text, frame_time * 1000.0);
+            **text = format!("{}\nFrame Time: {:.2}ms", **text, frame_time);
         }
 
         // Cuántas mallas hay y cuántas pasan el culling: aproxima los draw calls

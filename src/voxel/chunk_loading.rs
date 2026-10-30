@@ -503,6 +503,8 @@ fn spawn_column_lod(
     seed: i32,
     kind: WorldKind,
 ) -> Option<Entity> {
+    #[cfg(feature = "tracy")]
+    let _span = info_span!("column_lod_build").entered();
     let lod_level = LodLevel::from_distance(distance_chunks);
     let mut lod_chunk = LodChunk::new(chunk_pos, lod_level);
     let mut terrain_gen = TerrainGenerator::new(seed, kind);
@@ -732,6 +734,8 @@ pub fn update_chunk_colliders_system(
 /// (sin vecinos, ignora el follaje). Pensado para correr en el hilo de fondo.
 /// `None` si el chunk no tiene geometría colisionable.
 pub fn build_chunk_collider(chunk: &BaseChunk) -> Option<Collider> {
+    #[cfg(feature = "tracy")]
+    let _span = info_span!("chunk_collider_build").entered();
     let mesh = crate::voxel::greedy_mesh_basechunk_collider_simple(chunk);
     (mesh.count_vertices() > 0).then(|| create_terrain_collider(&mesh))
 }
