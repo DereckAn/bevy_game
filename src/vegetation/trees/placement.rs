@@ -118,6 +118,21 @@ fn hash_cell(cell_x: i32, cell_z: i32, seed: i32) -> u32 {
 /// o `None`. Función PURA de `(cell, seed)`: cualquier chunk que pregunte por la
 /// misma celda obtiene el mismo resultado → árboles consistentes en los bordes.
 pub fn tree_in_cell(cell_x: i32, cell_z: i32, seed: i32, kind: WorldKind) -> Option<TreeInstance> {
+    // Mapa de pruebas: cada celda toma las especies de uno de los 4 mundos, y si
+    // no sale árbol prueba otra vez con otra sal → todas mezcladas y más densas.
+    if kind == WorldKind::Test {
+        const KINDS: [WorldKind; 4] = [
+            WorldKind::Normal,
+            WorldKind::Desert,
+            WorldKind::Ice,
+            WorldKind::Mangrove,
+        ];
+        let pick = |salt: i32| KINDS[(hash_cell(cell_x, cell_z, seed ^ salt) % 4) as usize];
+        let second_seed = seed ^ 0x7a3c_51e9;
+        return tree_in_cell(cell_x, cell_z, seed, pick(0x1b87_3593))
+            .or_else(|| tree_in_cell(cell_x, cell_z, second_seed, pick(0x4cf5_ad43)));
+    }
+
     let h = hash_cell(cell_x, cell_z, seed);
 
     // Bits 0–11 → probabilidad. Si no pasa, no hay árbol en esta celda.
@@ -351,7 +366,9 @@ pub fn place_trees(chunk: &mut BaseChunk, biome: &mut BiomeGenerator, seed: i32)
             // Los mangles solo crecen en la franja de marea: la orilla y la tierra
             // baja junto al agua (así la copa emerge sobre el agua). Fuera de ella
             // (agua profunda o tierra alta interior) se descartan.
+            // En el mapa de pruebas no hay costa: crecen en cualquier suelo.
             if tree.kind == TreeKind::Mangrove
+                && kind != WorldKind::Test
                 && (surface_m < SEA_LEVEL_M - 0.5 || surface_m > SEA_LEVEL_M + 1.2)
             {
                 continue;
@@ -459,6 +476,7 @@ pub fn tree_ceiling_for_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::WorldSeed;
 
     /// El bioma manglar tiene que plantar robles realistas de verdad: entre el
     /// filtro de probabilidad y el bloque de `OAK_BLOCK_CELLS`² es fácil que la
@@ -508,5 +526,39 @@ mod tests {
             rng_seed: 1,
         };
         assert!(widest.canopy_reach() <= MAX_CANOPY_RADIUS);
+    }
+
+    /// El mapa de pruebas debe mezclar las especies de los 4 mundos.
+    #[test]
+    fn test_map_plants_every_species() {
+        let trees: Vec<_> = (-40..40)
+            .flat_map(|cx| (-40..40).map(move |cz| (cx, cz)))
+            .filter_map(|(cx, cz)| tree_in_cell(cx, cz, WorldSeed::TEST.0, WorldKind::Test))
+            .map(|t| t.kind)
+            .collect();
+        let all = [
+            TreeKind::Small,
+            TreeKind::Pine,
+            TreeKind::Oak,
+            TreeKind::Bush,
+            TreeKind::Cactus,
+            TreeKind::SnowyPine,
+            TreeKind::WhiteBirch,
+            TreeKind::Mangrove,
+            TreeKind::RealisticOak,
+        ];
+        assert!(all.iter().all(|kind| trees.contains(kind)));
+    }
+
+    /// Más árboles que el mundo normal con la misma semilla.
+    #[test]
+    fn test_map_is_denser_than_normal() {
+        let count = |kind| {
+            (-40..40)
+                .flat_map(|cx| (-40..40).map(move |cz| (cx, cz)))
+                .filter_map(|(cx, cz)| tree_in_cell(cx, cz, WorldSeed::TEST.0, kind))
+                .count()
+        };
+        assert!(count(WorldKind::Test) > count(WorldKind::Normal));
     }
 }

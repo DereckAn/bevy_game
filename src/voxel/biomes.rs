@@ -155,7 +155,7 @@ impl BiomeGenerator {
                 DESERT_MAX_AMPLITUDE,
                 DESERT_MOUNTAIN_DETAIL,
             ),
-            WorldKind::Ice => (
+            WorldKind::Ice | WorldKind::Test => (
                 ICE_VALLEY_BASE,
                 ICE_MOUNTAIN_BASE,
                 ICE_MIN_AMPLITUDE,

@@ -849,7 +849,7 @@ pub fn real_chunk_y_range(kind: WorldKind) -> std::ops::RangeInclusive<i32> {
         WorldKind::Desert => 6,
         WorldKind::Normal => 4,
         // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
-        WorldKind::Ice => 20,
+        WorldKind::Ice | WorldKind::Test => 20,
         // Manglar: los islotes son bajos (~2.5 m) pero los robles realistas de la
         // tierra seca llegan a ~10 m, así que su copa cae en el chunk y=4. Con
         // techo 3 saldrían decapitados en plano a y=127 voxels.

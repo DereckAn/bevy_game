@@ -42,7 +42,7 @@ pub fn place_grass(chunk: &mut BaseChunk, seed: i32, kind: WorldKind) {
     // El tufo crece sobre pasto (normal) o sobre arena (desierto), con densidades
     // distintas: el desierto es mucho más disperso.
     let (surface_needed, density, foliage) = match kind {
-        WorldKind::Normal => (VoxelType::Grass, GRASS_DENSITY, VoxelType::Foliage),
+        WorldKind::Normal | WorldKind::Test => (VoxelType::Grass, GRASS_DENSITY, VoxelType::Foliage),
         WorldKind::Desert => (
             VoxelType::Sand,
             DESERT_GRASS_DENSITY,

@@ -1,6 +1,6 @@
 //! Sistema de menu pricipal
 
-use crate::core::{GameState, WorldKind};
+use crate::core::{GameState, WorldKind, WorldSeed};
 use bevy::prelude::*;
 
 /// Componente marcador para entidades del menu pricipal
@@ -80,6 +80,7 @@ pub fn setup_main_menu(mut commands: Commands) {
                     create_menu_button(parent, "DESERT", MenuAction::Play(WorldKind::Desert));
                     create_menu_button(parent, "ICE", MenuAction::Play(WorldKind::Ice));
                     create_menu_button(parent, "MANGROVE", MenuAction::Play(WorldKind::Mangrove));
+                    create_menu_button(parent, "TEST", MenuAction::Play(WorldKind::Test));
                     create_menu_button(parent, "SETTINGS", MenuAction::Settings);
                 });
         });
@@ -141,6 +142,7 @@ pub fn menu_button_system(
     >,
     mut next_state: ResMut<NextState<GameState>>,
     mut world_kind: ResMut<WorldKind>,
+    mut world_seed: ResMut<WorldSeed>,
 ) {
     for (interaction, mut color, menu_action) in &mut interaction_query {
         match *interaction {
@@ -152,6 +154,9 @@ pub fn menu_button_system(
                     MenuAction::Play(kind) => {
                         info!("Iniciando juego ... ");
                         *world_kind = *kind;
+                        if *kind == WorldKind::Test {
+                            *world_seed = WorldSeed::TEST;
+                        }
                         next_state.set(GameState::InGame);
                     }
                     MenuAction::Settings => {

@@ -471,7 +471,7 @@ impl VoxelType {
             return VoxelType::Air;
         }
         match kind {
-            WorldKind::Normal => {
+            WorldKind::Normal | WorldKind::Test => {
                 if depth_below_surface < 0.1 {
                     VoxelType::Grass // Capa superior (~1 voxel)
                 } else if depth_below_surface < 0.5 {

@@ -43,6 +43,10 @@ impl WorldSeed {
     pub fn random() -> Self {
         Self(rand::random::<i32>())
     }
+
+    /// Semilla fija del mapa de pruebas: el mismo mundo en cada partida, para
+    /// que las capturas de Tracy sean comparables entre versiones.
+    pub const TEST: Self = Self(1337);
 }
 /// Qué mundo/bioma se está generando.
 ///
@@ -65,4 +69,9 @@ pub enum WorldKind {
     /// Manglar: costa plana a nivel del mar, lagunas y ríos de agua, fango/arena,
     /// mangles de raíces zancudas.
     Mangrove,
+
+    /// Mapa de pruebas de rendimiento (semilla fija `WorldSeed::TEST`): relieve
+    /// del helado, suelo del normal y TODAS las especies de árbol mezcladas,
+    /// más densas. Pensado para cargar el juego al máximo de forma repetible.
+    Test,
 }
