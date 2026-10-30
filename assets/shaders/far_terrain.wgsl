@@ -51,10 +51,14 @@ fn height_at(level: i32, node: vec2<i32>) -> f32 {
     return textureLoad(heights, node, level).r;
 }
 
-// ¿Dibuja ya el terreno cercano la columna de chunk de esta celda? Solo el
-// nivel 0 llega al campo cercano (los anillos de fuera empiezan más allá).
+// ¿Dibuja ya el terreno cercano la columna de chunk de esta celda? Exacto en
+// los niveles cuya celda cabe en un chunk (0–3, hasta 3.2 m), que son los que
+// pueden tocar el campo cercano, también mientras una tesela vieja de nivel
+// 1–3 sigue viva esperando su reemplazo. Los niveles ≥ 4 empiezan a ≥ 1.6 km del
+// jugador: solo llegarían al campo cercano (224 m) viajando ~1.4 km antes de
+// que termine un intercambio.
 fn is_near_owned(cell: vec2<i32>) -> bool {
-    if (u32(tile.bounds.z) != 0u) {
+    if (tile.origin.w > CHUNK_M) {
         return false;
     }
     let centre = tile.origin.xz + (vec2<f32>(cell) + 0.5) * tile.origin.w;

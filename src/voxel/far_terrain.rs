@@ -23,18 +23,21 @@ use std::sync::{Arc, Mutex};
 use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::pbr::{MaterialPipeline, MaterialPipelineKey, PreparedMaterial};
+use bevy::pbr::{
+    MaterialPipeline, MaterialPipelineKey, PreparedMaterial, SpecializedMaterialPipelineCache,
+};
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::ErasedRenderAssets;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::mesh::RenderMesh;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, Face, Origin3d, RenderPipelineDescriptor, ShaderType,
+    AsBindGroup, Extent3d, Face, Origin3d, PipelineCache, RenderPipelineDescriptor, ShaderType,
     SpecializedMeshPipelineError, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect,
     TextureDimension, TextureFormat,
 };
 use bevy::render::renderer::RenderQueue;
+use bevy::render::sync_world::MainEntity;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::shader::ShaderRef;
@@ -45,8 +48,8 @@ use crate::core::{GameState, WorldKind, WorldSeed};
 use crate::player::Player;
 use crate::voxel::raymarch::{TileHeights, MIP_COUNT, TILE_CELLS};
 use crate::voxel::{
-    column_surface_chunk_y, update_frustum_culling, voxel_color, BaseChunk, ChunkMap, ChunkMeshTask,
-    ColumnLods, LodChunk, TerrainGenerator, VoxelType, CHUNK_UNLOAD_RADIUS,
+    real_chunk_y_range, update_frustum_culling, voxel_color, ChunkMap, ChunkMaterial, ColumnLods,
+    EmptyChunk, TerrainGenerator, VoxelType, CHUNK_UNLOAD_RADIUS,
 };
 
 const SHADER_PATH: &str = "shaders/far_terrain.wgsl";
@@ -74,10 +77,12 @@ pub struct FarTerrainPlugin;
 impl Plugin for FarTerrainPlugin {
     fn build(&self, app: &mut App) {
         let readiness = FarReadiness::default();
+        let near_readiness = NearReadiness::default();
         app.add_plugins(MaterialPlugin::<FarTileMaterial>::default())
             .init_resource::<FarTiles>()
             .init_resource::<FarTint>()
             .insert_resource(readiness.clone())
+            .insert_resource(near_readiness.clone())
             .init_resource::<NearCoverage>()
             .add_plugins(ExtractResourcePlugin::<NearCoverage>::default())
             .add_systems(
@@ -96,13 +101,16 @@ impl Plugin for FarTerrainPlugin {
             )
             .add_systems(OnEnter(GameState::MainMenu), teardown_far_tiles);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.insert_resource(readiness).add_systems(
-                Render,
-                (
-                    upload_near_coverage.in_set(RenderSystems::PrepareResources),
-                    mark_ready_far_tiles.in_set(RenderSystems::Cleanup),
-                ),
-            );
+            render_app
+                .insert_resource(readiness)
+                .insert_resource(near_readiness)
+                .add_systems(
+                    Render,
+                    (
+                        upload_near_coverage.in_set(RenderSystems::PrepareResources),
+                        (mark_ready_far_tiles, mark_ready_near_entities).in_set(RenderSystems::Cleanup),
+                    ),
+                );
         }
     }
 }
@@ -183,6 +191,26 @@ impl FromWorld for NearCoverage {
         let image = world.resource_mut::<Assets<Image>>().add(image);
         Self { texels, generation: 0, image }
     }
+}
+
+/// Qué entidades del terreno cercano (LOD o chunk Real) se pueden dibujar YA con
+/// su malla actual: el mundo principal propone candidatos, el de render confirma.
+#[derive(Resource, Clone, Default)]
+struct NearReadiness(Arc<Mutex<NearReady>>);
+
+#[derive(Default)]
+struct NearReady {
+    candidates: Vec<NearDrawable>,
+    /// Pares (entidad, malla): una malla nueva (remallado tras cavar) vuelve a
+    /// necesitar confirmación.
+    ready: HashSet<(Entity, AssetId<Mesh>)>,
+}
+
+#[derive(Clone, Copy)]
+struct NearDrawable {
+    entity: Entity,
+    mesh: AssetId<Mesh>,
+    material: AssetId<ChunkMaterial>,
 }
 
 /// F6: teñir las teselas por nivel (depuración).
@@ -384,54 +412,64 @@ fn swap_far_tiles(
 /// teselas de nivel 0 que quedan enteras bajo él (su shader no pintaría nada,
 /// pero escribir `frag_depth` desactiva el early-z y lo pagaría igual).
 ///
-/// Una columna es del cercano si tiene un LOD visible o su chunk Real de
-/// superficie está mallado (la misma regla que retira LODs). Ganar una columna
-/// exige verla cubierta dos frames seguidos —su malla ya subió a la GPU—;
-/// perderla es inmediato: ante la duda dibuja el lejano.
+/// Una columna es del cercano si su LOD se puede dibujar, o si TODOS los chunks
+/// Real de su rango vertical están vacíos o se pueden dibujar ("se puede
+/// dibujar" = visible y confirmado por `mark_ready_near_entities` con su malla
+/// actual). Mientras no, la dibuja el lejano: en la carga eso puede solaparse
+/// con los chunks ya listos de la columna, pero nunca deja un hueco.
 #[allow(clippy::too_many_arguments)]
 fn update_near_coverage(
     mut coverage: ResMut<NearCoverage>,
-    mut covered_last_frame: Local<HashSet<IVec2>>,
-    mut surface_cache: Local<(Option<(i32, WorldKind)>, HashMap<IVec2, i32>)>,
+    near_readiness: Res<NearReadiness>,
     column_lods: Res<ColumnLods>,
-    lod_visibility: Query<&Visibility, With<LodChunk>>,
     chunk_map: Res<ChunkMap>,
-    meshed_chunks: Query<(), (With<BaseChunk>, Without<ChunkMeshTask>)>,
-    world_seed: Res<WorldSeed>,
+    drawables: Query<(&Mesh3d, &MeshMaterial3d<ChunkMaterial>, &Visibility)>,
+    empty_chunks: Query<(), With<EmptyChunk>>,
     world_kind: Res<WorldKind>,
     far: Res<FarTiles>,
-    mut visibility: Query<&mut Visibility, (With<FarTile>, Without<LodChunk>)>,
+    mut visibility: Query<&mut Visibility, (With<FarTile>, Without<MeshMaterial3d<ChunkMaterial>>)>,
 ) {
-    // La altura de superficie no cambia en toda la partida: se cachea por columna.
-    let (cache_world, surface_y) = &mut *surface_cache;
-    if *cache_world != Some((world_seed.0, *world_kind)) {
-        *cache_world = Some((world_seed.0, *world_kind));
-        surface_y.clear();
-    }
-    let mut terrain_gen: Option<TerrainGenerator> = None;
+    let mut near = near_readiness.0.lock().unwrap();
+    let mut candidates = Vec::new();
+    let mut is_drawable = |entity: Entity| {
+        let Ok((mesh, material, entity_visibility)) = drawables.get(entity) else {
+            return false;
+        };
+        if *entity_visibility == Visibility::Hidden {
+            return false;
+        }
+        let is_ready = near.ready.contains(&(entity, mesh.id()));
+        if !is_ready {
+            candidates.push(NearDrawable { entity, mesh: mesh.id(), material: material.id() });
+        }
+        is_ready
+    };
 
-    let mut covered: HashSet<IVec2> = column_lods
+    let mut owned: HashSet<IVec2> = column_lods
         .columns
         .iter()
-        .filter(|(_, entity)| lod_visibility.get(**entity).is_ok_and(|v| *v != Visibility::Hidden))
+        .filter(|(_, entity)| is_drawable(**entity))
         .map(|(column, _)| *column)
         .collect();
+    let y_range = real_chunk_y_range(*world_kind);
+    let column_chunks = y_range.clone().count();
+    let mut complete_chunks: HashMap<IVec2, usize> = HashMap::new();
     for (pos, entity) in &chunk_map.chunks {
-        let column = pos.xz();
-        if covered.contains(&column) || !meshed_chunks.contains(*entity) {
-            continue;
-        }
-        let surface = *surface_y.entry(column).or_insert_with(|| {
-            let generator =
-                terrain_gen.get_or_insert_with(|| TerrainGenerator::new(world_seed.0, *world_kind));
-            column_surface_chunk_y(column, generator)
-        });
-        if pos.y == surface {
-            covered.insert(column);
+        // Sin atajo para columnas con LOD: sus chunks Real deben ir quedando
+        // confirmados para que, al retirarse el LOD, la columna siga cubierta.
+        if y_range.contains(&pos.y) && (empty_chunks.contains(*entity) || is_drawable(*entity)) {
+            *complete_chunks.entry(pos.xz()).or_default() += 1;
         }
     }
-    let owned: HashSet<IVec2> = covered.intersection(&covered_last_frame).copied().collect();
-    *covered_last_frame = covered;
+    owned.extend(
+        complete_chunks
+            .into_iter()
+            .filter(|&(_, count)| count == column_chunks)
+            .map(|(column, _)| column),
+    );
+    near.candidates = candidates;
+    near.ready.retain(|&(entity, mesh)| drawables.get(entity).is_ok_and(|(m, _, _)| m.id() == mesh));
+    drop(near);
 
     let mut texels = vec![NOT_NEAR; (MASK_SIZE * MASK_SIZE) as usize];
     for &column in &owned {
@@ -455,6 +493,34 @@ fn update_near_coverage(
             if *tile_visibility != wanted {
                 *tile_visibility = wanted;
             }
+        }
+    }
+}
+
+/// Mundo de render, al final del frame: confirma los candidatos cercanos cuya
+/// malla y material están preparados y cuya pipeline está compilada en cada
+/// vista que ya los especializó. Uno que ninguna vista especializó no se está
+/// dibujando (fuera de cámara), así que bastan sus assets.
+fn mark_ready_near_entities(
+    readiness: Res<NearReadiness>,
+    meshes: Res<RenderAssets<RenderMesh>>,
+    materials: Res<ErasedRenderAssets<PreparedMaterial>>,
+    view_pipelines: Res<SpecializedMaterialPipelineCache>,
+    pipeline_cache: Res<PipelineCache>,
+) {
+    let mut readiness = readiness.0.lock().unwrap();
+    let NearReady { candidates, ready } = &mut *readiness;
+    for drawable in candidates.drain(..) {
+        let main_entity = MainEntity::from(drawable.entity);
+        let is_pipeline_ready = view_pipelines.values().all(|view| {
+            view.get(&main_entity)
+                .is_none_or(|(_, id)| pipeline_cache.get_render_pipeline(*id).is_some())
+        });
+        if meshes.get(drawable.mesh).is_some()
+            && materials.get(drawable.material).is_some()
+            && is_pipeline_ready
+        {
+            ready.insert((drawable.entity, drawable.mesh));
         }
     }
 }
@@ -830,6 +896,21 @@ mod tests {
         let (from, to) = (Vec2::ZERO, Vec2::new(7000.0, -3000.0));
         let points = grid_around(Vec2::ZERO, 25_000.0, 150);
         assert_eq!(coverage_errors_during_move(from, to, &points, 40), 0);
+    }
+
+    #[test]
+    fn unmasked_levels_stay_out_of_near_field_during_a_1_km_move() {
+        // Las teselas de nivel ≥ 4 no usan la máscara (su celda abarca varios
+        // chunks). Aunque una vieja siga viva tras moverse 1 km sin que termine
+        // ningún intercambio, no debe tocar el campo cercano (224 m).
+        let old = desired_tiles(&level_anchors(PLAYER));
+        let player = PLAYER + Vec2::new(1000.0, 0.0);
+        let distance_to = |key: &TileKey| {
+            let min = key.idx.as_vec2() * tile_m(key.level);
+            player.clamp(min, min + tile_m(key.level)).distance(player)
+        };
+        let closest = old.iter().filter(|k| k.level >= 4).map(distance_to).fold(f32::INFINITY, f32::min);
+        assert!(closest > 224.0, "closest unmasked tile at {closest} m");
     }
 
     #[test]

@@ -112,11 +112,14 @@ No cutoff radius and no depth offset. A radius can't match near coverage
 sloped LOD triangles (their height difference grows with slope). Instead every
 chunk column has **exactly one owner**:
 
-- **Near owns a column** when it is render-ready there: the column has a
-  *visible* LOD in `ColumnLods`, or its surface Real chunk is meshed (shared
-  helper `column_surface_chunk_y`, also used by `retire_covered_lods_system`),
-  for **two consecutive frames** (its mesh has been uploaded). Losing
-  ownership is immediate (the safe direction: far draws).
+- **Near owns a column** when it can actually be drawn there: its LOD is
+  drawable, or **every** Real chunk of the loader's vertical range
+  (`real_chunk_y_range`) is an `EmptyChunk` or drawable. "Drawable" = not
+  `Hidden`, and confirmed by the render world for its *current* mesh: mesh and
+  material prepared, and the specialized pipeline compiled in every view that
+  has specialized it (`SpecializedMaterialPipelineCache`). A remesh (new mesh
+  asset) needs confirming again. Until then far draws: while a column loads
+  that can overlap its already-drawn chunks, but never leaves a hole.
 - **Far owns every other column**, including ones still loading and everything
   beyond the world edge, so there is never a hole.
 - **Coverage mask:** an `Rg32Sint` texture of 144² chunk columns indexed
@@ -124,14 +127,21 @@ chunk column has **exactly one owner**:
   (or `i32::MIN`), so no origin uniform and no aliasing. Computed every frame
   after the chunk systems, extracted with the frame (`ExtractResource`) so it
   matches that frame's near entities, written to the GPU only when it changes.
-- **In the shader:** at level 0 a cell in a near-owned column is **air** (the
-  ray passes through it). The max-mip ignores coverage, so skipping stays
+- **In the shader:** a cell in a near-owned column is **air** (the ray passes
+  through it) on every level whose cell fits in one chunk column (levels 0–3,
+  ≤ 3.2 m), so an old level 1–3 tile still live during a swap is masked too.
+  Levels ≥ 4 start ≥ 1.6 km from the player; reaching the near field (224 m)
+  would take ~1.4 km of travel before one swap finishes (tested). The max-mip ignores coverage, so skipping stays
   conservative (it may descend more than needed, never skips a surface). The
   Rust `trace` gets the same `is_air(cell)` hook, with tests.
 - No overlap → no depth fight. At an ownership border the two surfaces can sit
-  at different heights; the far side's column walls close the step when far is
-  higher; when near is higher, the open step faces away from the camera
-  (the camera is always inside the near field).
+  at different heights. Far higher: the far column's wall closes the step.
+  Near higher: there is no wall, but the slit can't be seen from above near
+  ground: a ray that reaches it from the near side is below the near surface
+  just before the border, so it crossed that surface from above and hit its
+  upward front face first. **Exception:** a camera standing over far-owned
+  ground facing near-owned ground (columns around the player still loading
+  at startup) can see that slit until they load.
 - **Cost:** writing `frag_depth` disables early-z, so far boxes behind near
   terrain still run the shader. Tiles whose 8×8 columns are all near-owned are
   set `Visibility::Hidden`, and shown again as soon as one column loses
@@ -141,10 +151,9 @@ chunk column has **exactly one owner**:
 
 **Gaps between tiles.** A tile's own `min height − margin` can sit above a
 lower neighbour's surface (sharp drop across a tile or level border), leaving
-a see-through slit. The box bottom must be conservative: the min over the tile
-**and a one-cell border ring** sampled at the coarser neighbour's cell size,
-minus one coarse cell. Phase 4 adds a test with sharp height differences
-between levels.
+a see-through slit. The box bottom is the min over the tile **and the actual
+column centres of every possible neighbour** (finer, same, coarser level)
+minus 2 cells (tested with a sharp drop at a finer neighbour).
 
 ### 1.7 Streaming
 

@@ -305,19 +305,7 @@ pub fn update_chunk_load_queue(
 
     load_queue.last_player_chunk = player_chunk;
 
-    // Rango vertical: -1 hasta +4 chunks (mejor rendimiento). El desierto tiene
-    // dunas más altas (~19.5 m), así que sube el techo para no recortarlas plano.
-    let y_min = -1;
-    let y_max = match *world_kind {
-        WorldKind::Desert => 6,
-        WorldKind::Normal => 4,
-        // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
-        WorldKind::Ice => 20,
-        // Manglar: los islotes son bajos (~2.5 m) pero los robles realistas de la
-        // tierra seca llegan a ~10 m, así que su copa cae en el chunk y=4. Con
-        // techo 3 saldrían decapitados en plano a y=127 voxels.
-        WorldKind::Mangrove => 4,
-    };
+    let y_range = real_chunk_y_range(*world_kind);
 
     // OPTIMIZACIÓN: Generar el círculo y encolar lo que falta en UNA sola pasada.
     // El triple bucle visita cada (cx,cy,cz) exactamente una vez, así que no hay
@@ -326,7 +314,7 @@ pub fn update_chunk_load_queue(
     let radius_sq = CHUNK_LOAD_RADIUS * CHUNK_LOAD_RADIUS;
     let mut to_load_vec: Vec<(IVec3, ChunkType)> = Vec::new();
 
-    for cy in y_min..=y_max {
+    for cy in y_range {
         // Usar simetría del círculo para reducir cálculos
         for cx in -CHUNK_LOAD_RADIUS..=CHUNK_LOAD_RADIUS {
             // Calcular el rango Z válido para este X (usando la ecuación del círculo)
@@ -851,24 +839,31 @@ fn world_pos_to_chunk_pos(world_pos: Vec3) -> IVec3 {
     )
 }
 
+/// Chunks Y que se cargan por columna Real. Toda posición del rango acaba como
+/// `BaseChunk` mallado o `EmptyChunk`; el terreno lejano usa eso para saber
+/// cuándo una columna está completa.
+pub fn real_chunk_y_range(kind: WorldKind) -> std::ops::RangeInclusive<i32> {
+    // -1 hasta +4 chunks (mejor rendimiento). El desierto tiene dunas más altas
+    // (~19.5 m), así que sube el techo para no recortarlas plano.
+    let y_max = match kind {
+        WorldKind::Desert => 6,
+        WorldKind::Normal => 4,
+        // Montañas heladas muy altas (~60 m): sube el techo para no recortar picos.
+        WorldKind::Ice => 20,
+        // Manglar: los islotes son bajos (~2.5 m) pero los robles realistas de la
+        // tierra seca llegan a ~10 m, así que su copa cae en el chunk y=4. Con
+        // techo 3 saldrían decapitados en plano a y=127 voxels.
+        WorldKind::Mangrove => 4,
+    };
+    -1..=y_max
+}
+
 /// Mitad "LOD → Real" de la transición, sin huecos: RETIRA el backdrop LOD de una
 /// columna solo cuando el terreno Real ya la cubre (su chunk de superficie existe
 /// y está mallado). Hasta entonces el LOD sigue visible mientras el Real se genera
 /// async, así nunca aparece un hueco. También descarga los LOD fuera de rango.
 ///
 /// Corre cada frame (la cobertura Real puede completarse con el jugador quieto).
-/// Y del chunk Real de la SUPERFICIE de una columna (altura en el centro de su
-/// huella). Una columna está cubierta por chunks Real cuando ese chunk está
-/// mallado; lo usan la retirada de LODs y la máscara del terreno lejano.
-pub fn column_surface_chunk_y(column: IVec2, terrain_gen: &mut TerrainGenerator) -> i32 {
-    let chunk_m = BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
-    let half = BASE_CHUNK_SIZE as i32 / 2;
-    let world_x = (column.x * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
-    let world_z = (column.y * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
-    let surface_m = terrain_gen.biome_gen.generate_height(world_x, world_z);
-    (surface_m / chunk_m).floor() as i32
-}
-
 pub fn retire_covered_lods_system(
     mut commands: Commands,
     mut column_lods: ResMut<ColumnLods>,
@@ -884,6 +879,8 @@ pub fn retire_covered_lods_system(
     let player_chunk = world_pos_to_chunk_pos(player_transform.translation);
     let mut terrain_gen = TerrainGenerator::new(world_seed.0, *world_kind);
 
+    let chunk_m = BASE_CHUNK_SIZE as f32 * VOXEL_SIZE;
+    let half = BASE_CHUNK_SIZE as i32 / 2;
     let unload_sq = CHUNK_UNLOAD_RADIUS * CHUNK_UNLOAD_RADIUS;
     let real_sq = REAL_RADIUS * REAL_RADIUS;
 
@@ -905,7 +902,11 @@ pub fn retire_covered_lods_system(
             continue;
         }
 
-        let surface_y = column_surface_chunk_y(column, &mut terrain_gen);
+        // Chunk Real de la SUPERFICIE de la columna (centro de su huella).
+        let world_x = (column.x * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
+        let world_z = (column.y * BASE_CHUNK_SIZE as i32 + half) as f32 * VOXEL_SIZE;
+        let surface_m = terrain_gen.biome_gen.generate_height(world_x, world_z);
+        let surface_y = (surface_m / chunk_m).floor() as i32;
         let surface_pos = IVec3::new(column.x, surface_y, column.y);
 
         let covered = chunk_map
