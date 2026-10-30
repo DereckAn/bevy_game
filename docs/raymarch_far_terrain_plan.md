@@ -113,13 +113,16 @@ sloped LOD triangles (their height difference grows with slope). Instead every
 chunk column has **exactly one owner**:
 
 - **Near owns a column** when it can actually be drawn there: its LOD is
-  drawable, or **every** Real chunk of the loader's vertical range
-  (`real_chunk_y_range`) is an `EmptyChunk` or drawable. "Drawable" = not
-  `Hidden`, and confirmed by the render world for its *current* mesh: mesh and
-  material prepared, and the specialized pipeline compiled in every view that
-  has specialized it (`SpecializedMaterialPipelineCache`). A remesh (new mesh
-  asset) needs confirming again. Until then far draws: while a column loads
-  that can overlap its already-drawn chunks, but never leaves a hole.
+  drawable and not hidden (F4), or **every** Real chunk of the loader's
+  vertical range (`real_chunk_y_range`) is an `EmptyChunk` or drawable. Real
+  chunk `Visibility` is ignored: the camera culler hides and re-shows chunks
+  as the camera turns, and that must not flip ownership. "Drawable" is
+  recomputed **every frame** by the render world for the entity's *current*
+  mesh: mesh and material prepared, and in every view its specialized
+  pipeline compiled — or, if that view hasn't specialized it yet (off camera),
+  another entity with the same material compiled there. Until then far draws:
+  while a column loads that can overlap its already-drawn chunks, but never
+  leaves a hole.
 - **Far owns every other column**, including ones still loading and everything
   beyond the world edge, so there is never a hole.
 - **Coverage mask:** an `Rg32Sint` texture of 144² chunk columns indexed
@@ -136,18 +139,19 @@ chunk column has **exactly one owner**:
   Rust `trace` gets the same `is_air(cell)` hook, with tests.
 - No overlap → no depth fight. At an ownership border the two surfaces can sit
   at different heights. Far higher: the far column's wall closes the step.
-  Near higher: there is no wall, but the slit can't be seen from above near
-  ground: a ray that reaches it from the near side is below the near surface
-  just before the border, so it crossed that surface from above and hit its
-  upward front face first. **Exception:** a camera standing over far-owned
-  ground facing near-owned ground (columns around the player still loading
-  at startup) can see that slit until they load.
+  Near higher: Real chunks emit their boundary faces against unknown
+  neighbours (closed walls); LOD tiles carry **outward skirts** 4 m deep on
+  every edge (hidden under neighbouring LODs, backface-culled from inside the
+  near field) that close the step when the neighbour column is far-drawn and
+  lower. 4 m covers the far/LOD height difference (drop 0.3 + rounding 0.2 +
+  slope × 0.2) for slopes up to ~17:1.
 - **Cost:** writing `frag_depth` disables early-z, so far boxes behind near
   terrain still run the shader. Tiles whose 8×8 columns are all near-owned are
   set `Visibility::Hidden`, and shown again as soon as one column loses
   coverage.
 - **Ready before retire:** far tiles are swapped only when the replacement is
-  render-ready (textures uploaded, material prepared), not merely spawned.
+  render-ready (textures uploaded, material prepared) and the shared far-tile
+  pipeline is compiled in every view, not merely spawned.
 
 **Gaps between tiles.** A tile's own `min height − margin` can sit above a
 lower neighbour's surface (sharp drop across a tile or level border), leaving

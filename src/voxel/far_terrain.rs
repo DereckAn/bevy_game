@@ -25,6 +25,7 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{
     MaterialPipeline, MaterialPipelineKey, PreparedMaterial, SpecializedMaterialPipelineCache,
+    SpecializedMaterialViewPipelineCache,
 };
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::ErasedRenderAssets;
@@ -150,7 +151,14 @@ struct FarReadiness(Arc<Mutex<Readiness>>);
 #[derive(Default)]
 struct Readiness {
     watching: Vec<(AssetId<FarTileMaterial>, AssetId<Mesh>)>,
+    /// Material (con su textura) y malla preparados. Los assets de una tesela no
+    /// cambian, así que basta con confirmarlo una vez.
     ready: HashSet<AssetId<FarTileMaterial>>,
+    /// Teselas vivas (las que se dibujan): las escribe el mundo principal.
+    live_entities: Vec<Entity>,
+    /// Hay pipeline de teselas lejanas compilada en todas las vistas (todas las
+    /// teselas comparten la misma); se recalcula cada frame en el de render.
+    is_pipeline_ready: bool,
 }
 
 impl Readiness {
@@ -200,9 +208,11 @@ struct NearReadiness(Arc<Mutex<NearReady>>);
 
 #[derive(Default)]
 struct NearReady {
+    /// Todas las entidades cercanas con malla, reescritas cada frame.
     candidates: Vec<NearDrawable>,
-    /// Pares (entidad, malla): una malla nueva (remallado tras cavar) vuelve a
-    /// necesitar confirmación.
+    /// Pares (entidad, malla) dibujables según el último frame de render; se
+    /// recalcula entero cada frame (una malla nueva tras cavar, un cambio de
+    /// vista o de material invalidan lo anterior).
     ready: HashSet<(Entity, AssetId<Mesh>)>,
 }
 
@@ -363,9 +373,11 @@ fn mark_ready_far_tiles(
     readiness: Res<FarReadiness>,
     materials: Res<ErasedRenderAssets<PreparedMaterial>>,
     meshes: Res<RenderAssets<RenderMesh>>,
+    view_pipelines: Res<SpecializedMaterialPipelineCache>,
+    pipeline_cache: Res<PipelineCache>,
 ) {
     let mut readiness = readiness.0.lock().unwrap();
-    let Readiness { watching, ready } = &mut *readiness;
+    let Readiness { watching, ready, live_entities, is_pipeline_ready } = &mut *readiness;
     watching.retain(|&(material, mesh)| {
         let is_ready = materials.get(material).is_some() && meshes.get(mesh).is_some();
         if is_ready {
@@ -373,6 +385,26 @@ fn mark_ready_far_tiles(
         }
         !is_ready
     });
+    // Una tesela que entra oculta aún no tiene pipeline propia; usará la misma
+    // que las vivas, así que basta con que alguna viva la tenga compilada en
+    // cada vista (si cambia la clave de la vista, p. ej. MSAA/HDR, se espera).
+    *is_pipeline_ready = !view_pipelines.is_empty()
+        && view_pipelines.values().all(|view| {
+            live_entities
+                .iter()
+                .any(|&entity| view_pipeline_state(view, entity, &pipeline_cache) == Some(true))
+        });
+}
+
+/// Pipeline de `entity` en una vista: `None` si esa vista aún no la ha
+/// especializado (fuera de cámara, recién creada), `Some(compilada)` si sí.
+fn view_pipeline_state(
+    view: &SpecializedMaterialViewPipelineCache,
+    entity: Entity,
+    pipeline_cache: &PipelineCache,
+) -> Option<bool> {
+    view.get(&MainEntity::from(entity))
+        .map(|(_, id)| pipeline_cache.get_render_pipeline(*id).is_some())
 }
 
 /// Aplica los intercambios que `plan_swaps` da por listos: en el mismo frame se
@@ -386,11 +418,15 @@ fn swap_far_tiles(
     let FarTiles { desired, tiles, .. } = &mut *far;
     let live: HashSet<TileKey> = tiles.iter().filter(|(_, tile)| tile.is_live).map(|(key, _)| *key).collect();
     if live == *desired {
+        readiness.0.lock().unwrap().live_entities =
+            tiles.values().filter(|tile| tile.is_live).map(|tile| tile.entity).collect();
         return;
     }
     let mut readiness = readiness.0.lock().unwrap();
+    // Sin teselas vivas no hay nada que retirar ni pipeline que comprobar aún.
+    let is_pipeline_ready = readiness.is_pipeline_ready || live.is_empty();
     let (show, retire) = plan_swaps(&live, desired, |key| {
-        tiles.get(key).is_some_and(|tile| readiness.ready.contains(&tile.material))
+        is_pipeline_ready && tiles.get(key).is_some_and(|tile| readiness.ready.contains(&tile.material))
     });
     for key in show {
         if let Some(tile) = tiles.get_mut(&key) {
@@ -406,17 +442,20 @@ fn swap_far_tiles(
             readiness.forget(tile.material);
         }
     }
+    readiness.live_entities = tiles.values().filter(|tile| tile.is_live).map(|tile| tile.entity).collect();
 }
 
 /// Calcula qué columnas de chunk dibuja ya el terreno cercano y oculta las
 /// teselas de nivel 0 que quedan enteras bajo él (su shader no pintaría nada,
 /// pero escribir `frag_depth` desactiva el early-z y lo pagaría igual).
 ///
-/// Una columna es del cercano si su LOD se puede dibujar, o si TODOS los chunks
-/// Real de su rango vertical están vacíos o se pueden dibujar ("se puede
-/// dibujar" = visible y confirmado por `mark_ready_near_entities` con su malla
-/// actual). Mientras no, la dibuja el lejano: en la carga eso puede solaparse
-/// con los chunks ya listos de la columna, pero nunca deja un hueco.
+/// Una columna es del cercano si su LOD se puede dibujar (y no está oculto con
+/// F4), o si TODOS los chunks Real de su rango vertical están vacíos o se pueden
+/// dibujar ("se puede dibujar" = confirmado por `mark_ready_near_entities` con
+/// su malla actual). La visibilidad de los chunks Real NO cuenta: el culling de
+/// cámara los oculta y los vuelve a mostrar al girar, y la columna no debe
+/// cambiar de dueño por eso. Mientras no esté completa la dibuja el lejano: en
+/// la carga eso puede solaparse con sus chunks ya listos, pero no deja hueco.
 #[allow(clippy::too_many_arguments)]
 fn update_near_coverage(
     mut coverage: ResMut<NearCoverage>,
@@ -431,24 +470,19 @@ fn update_near_coverage(
 ) {
     let mut near = near_readiness.0.lock().unwrap();
     let mut candidates = Vec::new();
-    let mut is_drawable = |entity: Entity| {
+    let mut is_drawable = |entity: Entity, needs_visible: bool| {
         let Ok((mesh, material, entity_visibility)) = drawables.get(entity) else {
             return false;
         };
-        if *entity_visibility == Visibility::Hidden {
-            return false;
-        }
-        let is_ready = near.ready.contains(&(entity, mesh.id()));
-        if !is_ready {
-            candidates.push(NearDrawable { entity, mesh: mesh.id(), material: material.id() });
-        }
-        is_ready
+        candidates.push(NearDrawable { entity, mesh: mesh.id(), material: material.id() });
+        let is_hidden = needs_visible && *entity_visibility == Visibility::Hidden;
+        !is_hidden && near.ready.contains(&(entity, mesh.id()))
     };
 
     let mut owned: HashSet<IVec2> = column_lods
         .columns
         .iter()
-        .filter(|(_, entity)| is_drawable(**entity))
+        .filter(|(_, entity)| is_drawable(**entity, true))
         .map(|(column, _)| *column)
         .collect();
     let y_range = real_chunk_y_range(*world_kind);
@@ -457,7 +491,7 @@ fn update_near_coverage(
     for (pos, entity) in &chunk_map.chunks {
         // Sin atajo para columnas con LOD: sus chunks Real deben ir quedando
         // confirmados para que, al retirarse el LOD, la columna siga cubierta.
-        if y_range.contains(&pos.y) && (empty_chunks.contains(*entity) || is_drawable(*entity)) {
+        if y_range.contains(&pos.y) && (empty_chunks.contains(*entity) || is_drawable(*entity, false)) {
             *complete_chunks.entry(pos.xz()).or_default() += 1;
         }
     }
@@ -468,7 +502,6 @@ fn update_near_coverage(
             .map(|(column, _)| column),
     );
     near.candidates = candidates;
-    near.ready.retain(|&(entity, mesh)| drawables.get(entity).is_ok_and(|(m, _, _)| m.id() == mesh));
     drop(near);
 
     let mut texels = vec![NOT_NEAR; (MASK_SIZE * MASK_SIZE) as usize];
@@ -497,10 +530,10 @@ fn update_near_coverage(
     }
 }
 
-/// Mundo de render, al final del frame: confirma los candidatos cercanos cuya
-/// malla y material están preparados y cuya pipeline está compilada en cada
-/// vista que ya los especializó. Uno que ninguna vista especializó no se está
-/// dibujando (fuera de cámara), así que bastan sus assets.
+/// Mundo de render, al final del frame: recalcula qué entidades cercanas se
+/// pueden dibujar con su malla actual: malla y material preparados, y en cada
+/// vista su pipeline compilada; si esa vista aún no la especializó (fuera de
+/// cámara), que otra entidad con su mismo material la tenga compilada allí.
 fn mark_ready_near_entities(
     readiness: Res<NearReadiness>,
     meshes: Res<RenderAssets<RenderMesh>>,
@@ -510,15 +543,27 @@ fn mark_ready_near_entities(
 ) {
     let mut readiness = readiness.0.lock().unwrap();
     let NearReady { candidates, ready } = &mut *readiness;
-    for drawable in candidates.drain(..) {
-        let main_entity = MainEntity::from(drawable.entity);
-        let is_pipeline_ready = view_pipelines.values().all(|view| {
-            view.get(&main_entity)
-                .is_none_or(|(_, id)| pipeline_cache.get_render_pipeline(*id).is_some())
-        });
-        if meshes.get(drawable.mesh).is_some()
+    let views: Vec<&SpecializedMaterialViewPipelineCache> = view_pipelines.values().collect();
+    let compiled_materials: Vec<HashSet<AssetId<ChunkMaterial>>> = views
+        .iter()
+        .map(|view| {
+            candidates
+                .iter()
+                .filter(|d| view_pipeline_state(view, d.entity, &pipeline_cache) == Some(true))
+                .map(|d| d.material)
+                .collect()
+        })
+        .collect();
+    ready.clear();
+    for drawable in candidates.iter() {
+        let is_pipeline_ready = !views.is_empty()
+            && views.iter().zip(&compiled_materials).all(|(view, compiled)| {
+                view_pipeline_state(view, drawable.entity, &pipeline_cache)
+                    .unwrap_or_else(|| compiled.contains(&drawable.material))
+            });
+        if is_pipeline_ready
+            && meshes.get(drawable.mesh).is_some()
             && materials.get(drawable.material).is_some()
-            && is_pipeline_ready
         {
             ready.insert((drawable.entity, drawable.mesh));
         }

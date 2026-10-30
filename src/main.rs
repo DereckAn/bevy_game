@@ -67,6 +67,7 @@ fn main() {
         .add_plugins(PlayerPlugin) // Añade nuestro plugin del jugador (movimiento, cámara)
         .add_plugins(SkyPlugin) // Añade el cielo (atmósfera, ciclo día/noche, nubes)
         .add_plugins(voxel::far_terrain::FarTerrainPlugin) // Terreno lejano trazado por rayos (prototipo)
+        .add_plugins(voxel::raycast_trees::RaycastTreesPlugin)
         .add_plugins(DebugPlugin) // Añade herramientas de debug y profiling
         .insert_resource(GameSettings::new()) // Inserta recurso global GameSettings en el mundo
         .insert_resource(WorldSeed::random()) // Semilla aleatoria: mapa distinto cada arranque

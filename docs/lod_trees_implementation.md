@@ -1,5 +1,26 @@
 # LOD Trees — Step-by-Step Implementation Plan
 
+## Current implementation: raycast tree LOD
+
+`RaycastTreesPlugin` now replaces the embedded pine/oak impostors in Medium and
+Low `LodChunk`s with a child proxy mesh. Each chunk uses one shared material and
+one mesh containing a box per tree. The shader intersects three finite cones
+and a trunk for pines, or a box crown and trunk for oaks, and writes hit depth.
+Palette colours, PBR lighting and distance fog use the same sources as terrain.
+
+Placement uses `tree_in_cell`, the existing voxel-aligned base height and tree
+height. A tree belongs only to the chunk containing its base (including negative
+coordinates), avoiding duplicate impostors from overlapping canopy searches.
+The child inherits the LOD transform and F4 visibility, and is removed with its
+parent. Near voxel trees are unchanged; this does not add vegetation to the
+kilometre-scale far-terrain rings. Other species and Minimal LOD remain excluded.
+
+Validation: `cargo test --lib raycast_trees`. In a Normal world, inspect trees
+around 102–205 m, toggle F4, walk through the Real/LOD transition, inspect from
+above and below, and compare noon/night and fog. GPU performance and actual
+pipeline compilation must be checked in-game; fewer triangles do not guarantee
+a faster forest. The historical mesh-impostor plan below is retained as context.
+
 Goal: show **distant trees** in the LOD terrain (out past the ~32-chunk Real band),
 as cheap **impostors** (a few triangles each), placed by the *same* deterministic
 `tree_in_cell` so they line up exactly with the detailed voxel trees when a chunk

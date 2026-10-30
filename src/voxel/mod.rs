@@ -29,6 +29,7 @@ pub mod palette_material;
 // WGSL, así que en el binario aún no lo llama nadie.
 #[allow(dead_code)]
 pub mod raymarch;
+pub mod raycast_trees;
 pub mod spatial_hash;
 pub mod tools;
 pub mod voxel_color;
